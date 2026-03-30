@@ -15,11 +15,14 @@ const LEAGUES = [
 const SEASON = 2025;
 
 async function apiFetch(path: string, apiKey: string) {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const url = `${API_BASE}${path}`;
+  console.log("Fetching:", url);
+  const res = await fetch(url, {
     headers: { "x-apisports-key": apiKey },
   });
   if (!res.ok) throw new Error(`API-Football error: ${res.status} ${await res.text()}`);
   const json = await res.json();
+  console.log(`Response for ${path}: ${json.results} results, errors: ${JSON.stringify(json.errors)}`);
   return json.response ?? [];
 }
 
