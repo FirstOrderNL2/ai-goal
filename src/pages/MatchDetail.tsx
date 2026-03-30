@@ -65,7 +65,10 @@ export default function MatchDetail() {
             </div>
 
             <div className="flex items-center justify-center gap-6 py-4">
-              <div className="text-center space-y-1 flex-1">
+              <div className="text-center space-y-2 flex-1">
+                {home_team?.logo_url && (
+                  <img src={home_team.logo_url} alt={home_team.name} className="h-12 w-12 object-contain mx-auto" />
+                )}
                 <p className="text-xl font-bold">{home_team?.name}</p>
                 <p className="text-xs text-muted-foreground">{home_team?.country}</p>
               </div>
@@ -78,7 +81,10 @@ export default function MatchDetail() {
                   </span>
                 )}
               </div>
-              <div className="text-center space-y-1 flex-1">
+              <div className="text-center space-y-2 flex-1">
+                {away_team?.logo_url && (
+                  <img src={away_team.logo_url} alt={away_team.name} className="h-12 w-12 object-contain mx-auto" />
+                )}
                 <p className="text-xl font-bold">{away_team?.name}</p>
                 <p className="text-xs text-muted-foreground">{away_team?.country}</p>
               </div>
