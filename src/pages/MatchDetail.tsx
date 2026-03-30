@@ -1,12 +1,13 @@
 import { useParams, Link } from "react-router-dom";
 import { Header } from "@/components/Header";
-import { useMatch, useCompletedMatches } from "@/hooks/useMatches";
+import { useMatch } from "@/hooks/useMatches";
+import { useHeadToHead } from "@/hooks/useH2H";
 import { ProbabilityBar } from "@/components/ProbabilityBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format } from "date-fns";
-import { ArrowLeft, TrendingUp, Target, BarChart3 } from "lucide-react";
+import { ArrowLeft, TrendingUp, Target, BarChart3, Swords } from "lucide-react";
 
 export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
