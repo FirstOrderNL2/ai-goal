@@ -49,8 +49,8 @@ const Index = () => {
             disabled={sync.isPending || srSync.isPending}
             className="shrink-0"
           >
-            <RefreshCw className={`h-4 w-4 mr-1 ${sync.isPending ? "animate-spin" : ""}`} />
-            {sync.isPending ? "Syncing…" : "Sync Live Data"}
+            <RefreshCw className={`h-4 w-4 mr-1 ${(sync.isPending || srSync.isPending) ? "animate-spin" : ""}`} />
+            {(sync.isPending || srSync.isPending) ? "Syncing…" : "Sync Live Data"}
           </Button>
         </div>
 
