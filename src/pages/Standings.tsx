@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { Header } from "@/components/Header";
 import { useStandings } from "@/hooks/useSportradar";
+import { LEAGUE_SEASONS } from "@/lib/seasons";
+import { resolveTeamName } from "@/lib/seasons";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -11,12 +15,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Loader2, Trophy } from "lucide-react";
-
-const LEAGUE_SEASONS: Record<string, { label: string; seasonId: string }> = {
-  premier_league: { label: "Premier League", seasonId: "sr:season:118689" },
-  la_liga: { label: "La Liga", seasonId: "sr:season:118691" },
-  serie_a: { label: "Serie A", seasonId: "sr:season:118699" },
-};
 
 interface StandingRow {
   rank: number;
@@ -39,12 +37,32 @@ export default function Standings() {
   const config = LEAGUE_SEASONS[league];
   const { data, isLoading, error } = useStandings(config.seasonId);
 
-  // Sportradar standings structure: data.standings[0].groups[0].team_standings
+  // Fetch all teams for logo matching
+  const { data: teams } = useQuery({
+    queryKey: ["teams-all"],
+    queryFn: async () => {
+      const { data } = await supabase.from("teams").select("name, logo_url");
+      return data ?? [];
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const teamLogoMap = new Map<string, string>();
+  teams?.forEach((t) => {
+    if (t.logo_url) {
+      teamLogoMap.set(t.name.toLowerCase(), t.logo_url);
+    }
+  });
+
+  function getLogoForCompetitor(name: string): string | undefined {
+    const resolved = resolveTeamName(name);
+    return teamLogoMap.get(resolved) ?? teamLogoMap.get(name.toLowerCase());
+  }
+
   const standings: StandingRow[] = (() => {
     if (!data?.standings) return [];
     const firstStanding = data.standings[0];
     if (!firstStanding) return [];
-    // Could be groups or direct team_standings
     if (firstStanding.groups) {
       return firstStanding.groups[0]?.team_standings ?? [];
     }
@@ -107,30 +125,38 @@ export default function Standings() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {standings.map((row) => (
-                  <TableRow key={row.competitor?.id ?? row.rank}>
-                    <TableCell className="font-medium text-muted-foreground">
-                      {row.rank}
-                    </TableCell>
-                    <TableCell>
-                      <span className="font-medium text-sm">
-                        {row.competitor?.name ?? "Unknown"}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-center">{row.played}</TableCell>
-                    <TableCell className="text-center">{row.win}</TableCell>
-                    <TableCell className="text-center">{row.draw}</TableCell>
-                    <TableCell className="text-center">{row.loss}</TableCell>
-                    <TableCell className="text-center">{row.goals_for}</TableCell>
-                    <TableCell className="text-center">{row.goals_against}</TableCell>
-                    <TableCell className="text-center font-medium">
-                      {row.goal_diff > 0 ? `+${row.goal_diff}` : row.goal_diff}
-                    </TableCell>
-                    <TableCell className="text-center font-bold text-primary">
-                      {row.points}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {standings.map((row) => {
+                  const logo = getLogoForCompetitor(row.competitor?.name ?? "");
+                  return (
+                    <TableRow key={row.competitor?.id ?? row.rank}>
+                      <TableCell className="font-medium text-muted-foreground">
+                        {row.rank}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {logo && (
+                            <img src={logo} alt="" className="h-5 w-5 object-contain" />
+                          )}
+                          <span className="font-medium text-sm">
+                            {row.competitor?.name ?? "Unknown"}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">{row.played}</TableCell>
+                      <TableCell className="text-center">{row.win}</TableCell>
+                      <TableCell className="text-center">{row.draw}</TableCell>
+                      <TableCell className="text-center">{row.loss}</TableCell>
+                      <TableCell className="text-center">{row.goals_for}</TableCell>
+                      <TableCell className="text-center">{row.goals_against}</TableCell>
+                      <TableCell className="text-center font-medium">
+                        {row.goal_diff > 0 ? `+${row.goal_diff}` : row.goal_diff}
+                      </TableCell>
+                      <TableCell className="text-center font-bold text-primary">
+                        {row.points}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
