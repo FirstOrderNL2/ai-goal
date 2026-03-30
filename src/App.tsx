@@ -8,6 +8,7 @@ import MatchDetail from "./pages/MatchDetail";
 import Accuracy from "./pages/Accuracy";
 import Teams from "./pages/Teams";
 import StatsBomb from "./pages/StatsBomb";
+import Standings from "./pages/Standings";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
