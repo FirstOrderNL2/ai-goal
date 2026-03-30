@@ -1,49 +1,94 @@
 
 
-# Integrate API-Football Real Data
+# Integrate Sportradar Soccer API
 
-## Overview
-Replace the current mock/seed data with real data from API-Football v3. Create an edge function that proxies requests to API-Football (since CORS prevents direct browser calls), fetches real fixtures, teams, predictions, and odds, then syncs them into the existing database tables.
+## Analysis
 
-## Step 1: Store API Key as Secret
-Use the `add_secret` tool to securely store `API_FOOTBALL_KEY` with value `610cc87b22122f5698d9e8db617ae4d4`.
+From your screenshot, you have a Sportradar trial (Mar 30 – Apr 29, 2026) with:
+- **Soccer Base** — competitions, schedules, standings, probabilities, H2H, lineups, fun facts
+- **Soccer Extended Base** — 100+ extended stats, xG-level data, AI match insights, momentum
 
-## Step 2: Edge Function — `sync-football-data`
-Create `supabase/functions/sync-football-data/index.ts` that:
+**Base URL:** `https://api.sportradar.com/soccer/trial/v4/en/` (Base) and `https://api.sportradar.com/soccer-extended/trial/v4/en/` (Extended)
+**Auth:** API key passed as query param `?api_key={key}`
 
-1. **Fetches fixtures** from `/fixtures?league={id}&season=2025&next=15` for leagues 39, 140, 135 (upcoming) and `/fixtures?league={id}&season=2025&last=20` (completed)
-2. **Fetches teams** from the fixture responses (team data is embedded in fixture responses)
-3. **Fetches predictions** from `/predictions?fixture={id}` for each upcoming fixture — this endpoint returns real win/draw/loss percentages and goal predictions
-4. **Fetches odds** from `/odds?fixture={id}` for each upcoming fixture
-5. **Upserts** all data into existing `teams`, `matches`, `predictions`, `odds` tables
-6. Returns a summary of what was synced
+**Key Sportradar competition IDs** (format `sr:competition:ID`):
+- Premier League: `sr:competition:17`
+- La Liga: `sr:competition:8`
+- Serie A: `sr:competition:23`
 
-API-Football auth: `x-apisports-key: {API_KEY}` header on all GET requests.
+## What Sportradar Adds Over API-Football
 
-## Step 3: Edge Function — `get-football-data`
-Create a lightweight proxy edge function for on-demand frontend queries (e.g., head-to-head, match statistics) that the frontend can call when viewing match details.
+| Feature | API-Football (existing) | Sportradar (new) |
+|---------|------------------------|------------------|
+| Win probabilities | Via `/predictions` | Season Probabilities feed — all matches at once |
+| Standings | Available | Available |
+| H2H | Available | Competitor vs Competitor feed |
+| Extended stats | Limited | 100+ data points (passes, tackles, dribbles, xG) |
+| Match insights | None | AI-generated previews and summaries |
+| Fun facts | None | Sport Event Fun Facts |
+| Over/Under stats | Manual calc | Season Over/Under Statistics feed |
+| Lineups/formations | Available | Available with formations |
 
-## Step 4: Update Frontend
-- Add a "Sync Data" button (or auto-sync on page load with cache) that calls the sync edge function
-- Update `useMatches` hooks to trigger a sync if data is stale
-- Update MatchDetail page to fetch real H2H data and match statistics via the proxy function
-- Use real team logos from `https://media.api-sports.io/football/teams/{api_team_id}.png` — store the API team ID in the teams table
+## Plan
 
-## Step 5: Database Migration
-Add columns to support real API data:
-- `teams`: add `api_football_id` (integer), update `logo_url` with real URLs
-- `matches`: add `api_football_id` (integer), `round` (text)
-- Map API league names to our league values
+### Step 1: Store API Key
+Store `SPORTRADAR_API_KEY` as a backend secret (value from your screenshot: `BHd8....4Xvm` — you'll paste the full key).
+
+### Step 2: Create Edge Function — `get-sportradar-data`
+A proxy edge function similar to `get-football-data`, but for Sportradar endpoints.
+
+**Whitelisted endpoints:**
+- `/competitions.json` — list competitions
+- `/seasons/{id}/schedules.json` — season schedule
+- `/seasons/{id}/probabilities.json` — win probabilities for all matches
+- `/seasons/{id}/standings.json` — standings
+- `/seasons/{id}/over_under_statistics.json` — O/U stats
+- `/sport_events/{id}/summary.json` — match summary with stats
+- `/sport_events/{id}/fun_facts.json` — fun facts
+- `/sport_events/{id}/lineups.json` — lineups
+- `/competitors/{id}/versus/{id}/summaries.json` — H2H
+- `/competitors/{id}/profile.json` — team profile
+
+For Extended API (separate base URL):
+- `/sport_events/{id}/extended_summary.json` — extended stats
+- `/sport_events/{id}/insights.json` — AI match insights
+
+### Step 3: Create Sync Edge Function — `sync-sportradar-data`
+Fetches season probabilities and standings from Sportradar and upserts into the existing `predictions` and `matches` tables. This complements the API-Football sync by adding Sportradar's probability data alongside the existing predictions.
+
+- Fetch `/seasons/{id}/probabilities.json` for each league
+- Map Sportradar team/match IDs to our DB (store `sportradar_id` on teams/matches)
+- Upsert probabilities into `predictions` table (or a new `sportradar_predictions` column set)
+
+### Step 4: Database Migration
+- Add `sportradar_id` column to `teams` table (text, unique, nullable)
+- Add `sportradar_id` column to `matches` table (text, unique, nullable)
+- Optionally add `fun_facts` (text[]) and `ai_insights` (text) columns to `matches`
+
+### Step 5: Update Frontend
+- Add Sportradar data sections to **MatchDetail** page:
+  - **Fun Facts** card — fetched on-demand via proxy
+  - **AI Insights** card — pre-match preview from Extended API
+  - **Extended Stats** — passes, tackles, dribbles for completed matches
+  - **Lineups** with formations
+- Add **Standings** page/section using Sportradar standings feed
+- Show Sportradar probabilities alongside API-Football predictions for comparison
+
+### Step 6: Create Frontend Hooks
+- `useSportradarData(endpoint, params)` — generic proxy hook
+- `useFunFacts(sportradarEventId)` — fun facts for a match
+- `useMatchInsights(sportradarEventId)` — AI insights
+- `useStandings(seasonId)` — league standings
 
 ## Technical Details
 
-**API Response Mapping:**
-- Fixture → `matches` table (date, home/away team refs, goals, status)
-- Predictions endpoint → `predictions` table (home_win, draw, away_win, expected goals from `goals.home`/`goals.away`)  
-- Odds endpoint → `odds` table (home_win_odds, draw_odds, away_win_odds from first bookmaker)
-- Team from fixture → `teams` table (name, logo, country, league)
+**API URL patterns:**
+```text
+Base:     https://api.sportradar.com/soccer/trial/v4/en/{path}?api_key={key}
+Extended: https://api.sportradar.com/soccer-extended/trial/v4/en/{path}?api_key={key}
+```
 
-**Rate Limits:** Free plan = 100 requests/day. The sync function should batch intelligently — fetch fixtures first (3 calls for 3 leagues), then predictions per upcoming fixture. ~20 upcoming fixtures = ~23 total calls per sync.
+**Rate limits:** Trial tier — typically 1 request/second, 1000 requests/day. The proxy function will need to respect this.
 
-**CORS:** Edge functions handle CORS. Frontend calls edge function, not API-Football directly.
+**ID mapping challenge:** Sportradar uses `sr:competitor:X` and `sr:sport_event:X` format IDs, while API-Football uses numeric IDs. Team mapping will be done by name matching during the first sync, then stored as `sportradar_id` for future lookups.
 
