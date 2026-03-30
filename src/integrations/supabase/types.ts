@@ -16,7 +16,9 @@ export type Database = {
     Tables: {
       matches: {
         Row: {
+          ai_accuracy_score: number | null
           ai_insights: string | null
+          ai_post_match_review: string | null
           api_football_id: number | null
           created_at: string
           fun_facts: string[] | null
@@ -34,7 +36,9 @@ export type Database = {
           xg_home: number | null
         }
         Insert: {
+          ai_accuracy_score?: number | null
           ai_insights?: string | null
+          ai_post_match_review?: string | null
           api_football_id?: number | null
           created_at?: string
           fun_facts?: string[] | null
@@ -52,7 +56,9 @@ export type Database = {
           xg_home?: number | null
         }
         Update: {
+          ai_accuracy_score?: number | null
           ai_insights?: string | null
+          ai_post_match_review?: string | null
           api_football_id?: number | null
           created_at?: string
           fun_facts?: string[] | null

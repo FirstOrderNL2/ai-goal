@@ -1,0 +1,1 @@
+ALTER TABLE public.matches ADD COLUMN ai_post_match_review text, ADD COLUMN ai_accuracy_score numeric;
