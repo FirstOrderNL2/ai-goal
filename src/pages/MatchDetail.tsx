@@ -210,6 +210,12 @@ export default function MatchDetail() {
           </Card>
         )}
         {h2hLoading && <Skeleton className="h-48" />}
+
+        {/* Sportradar Fun Facts */}
+        <FunFactsCard sportradarEventId={match.sportradar_id} />
+
+        {/* Sportradar AI Insights */}
+        <MatchInsightsCard sportradarEventId={match.sportradar_id} />
       </main>
     </div>
   );
