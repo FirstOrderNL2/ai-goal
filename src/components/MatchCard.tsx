@@ -30,7 +30,10 @@ export function MatchCard({ match }: MatchCardProps) {
 
           {/* Teams */}
           <div className="flex items-center justify-between gap-2">
-            <div className="flex-1 text-right">
+            <div className="flex-1 flex items-center justify-end gap-2">
+              {home_team?.logo_url && (
+                <img src={home_team.logo_url} alt={home_team.name} className="h-6 w-6 object-contain" />
+              )}
               <p className="text-sm font-semibold truncate">{home_team?.name ?? "TBD"}</p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -42,7 +45,10 @@ export function MatchCard({ match }: MatchCardProps) {
                 </span>
               )}
             </div>
-            <div className="flex-1">
+            <div className="flex-1 flex items-center gap-2">
+              {away_team?.logo_url && (
+                <img src={away_team.logo_url} alt={away_team.name} className="h-6 w-6 object-contain" />
+              )}
               <p className="text-sm font-semibold truncate">{away_team?.name ?? "TBD"}</p>
             </div>
           </div>
