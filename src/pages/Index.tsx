@@ -3,8 +3,11 @@ import { Header } from "@/components/Header";
 import { MatchCard } from "@/components/MatchCard";
 import { LeagueFilter } from "@/components/LeagueFilter";
 import { useUpcomingMatches, useCompletedMatches } from "@/hooks/useMatches";
+import { useSyncFootballData } from "@/hooks/useSync";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Activity, Clock } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Activity, Clock, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 
 const Index = () => {
   const [league, setLeague] = useState("all");
