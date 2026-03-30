@@ -18,6 +18,8 @@ export interface Match {
   xg_away: number | null;
   status: string;
   league: string;
+  api_football_id: number | null;
+  round: string | null;
   home_team?: Team;
   away_team?: Team;
   prediction?: Prediction;
