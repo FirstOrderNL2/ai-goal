@@ -5,6 +5,7 @@ export interface Team {
   country: string;
   logo_url: string | null;
   api_football_id: number | null;
+  sportradar_id: string | null;
 }
 
 export interface Match {
