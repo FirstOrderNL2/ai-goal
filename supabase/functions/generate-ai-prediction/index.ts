@@ -105,23 +105,42 @@ ${relevantReviews.length > 0
 Apply the lessons above. Avoid repeating the same mistakes.`;
     }
 
+    const homeName = match.home_team?.name ?? "Home";
+    const awayName = match.away_team?.name ?? "Away";
+
+    const homeFormStr = homeForm?.map((m: any) => {
+      const isHome = m.team_home_id === match.team_home_id;
+      const gf = isHome ? m.goals_home : m.goals_away;
+      const ga = isHome ? m.goals_away : m.goals_home;
+      const r = gf! > ga! ? "W" : gf === ga ? "D" : "L";
+      return `${r} (${gf}-${ga})`;
+    }) ?? [];
+
+    const awayFormStr = awayForm?.map((m: any) => {
+      const isHome = m.team_home_id === match.team_away_id;
+      const gf = isHome ? m.goals_home : m.goals_away;
+      const ga = isHome ? m.goals_away : m.goals_home;
+      const r = gf! > ga! ? "W" : gf === ga ? "D" : "L";
+      return `${r} (${gf}-${ga})`;
+    }) ?? [];
+
     const prompt = `You are an expert football analyst. Analyze this match and provide detailed insights.
 
-Match: ${context.match.homeTeam} vs ${context.match.awayTeam}
-League: ${context.match.league}
-Date: ${context.match.date}
-${context.match.status === "completed" ? `Final Score: ${context.match.score}` : "Status: Upcoming"}
-${context.match.xg ? `xG: ${context.match.xg}` : ""}
+Match: ${homeName} vs ${awayName}
+League: ${match.league}
+Date: ${match.match_date}
+${match.status === "completed" ? `Final Score: ${match.goals_home}-${match.goals_away}` : "Status: Upcoming"}
+${match.xg_home != null ? `xG: ${match.xg_home}-${match.xg_away}` : ""}
 
-${context.prediction ? `Model Prediction: Home ${context.prediction.homeWin}, Draw ${context.prediction.draw}, Away ${context.prediction.awayWin}
-Expected Goals: ${context.prediction.expectedGoals}
-Over/Under 2.5: ${context.prediction.overUnder25}
-Model Confidence: ${context.prediction.confidence}` : "No prediction data available."}
+${prediction ? `Model Prediction: Home ${Math.round(prediction.home_win * 100)}%, Draw ${Math.round(prediction.draw * 100)}%, Away ${Math.round(prediction.away_win * 100)}%
+Expected Goals: ${prediction.expected_goals_home}-${prediction.expected_goals_away}
+Over/Under 2.5: ${prediction.over_under_25}
+Model Confidence: ${Math.round(prediction.model_confidence * 100)}%` : "No prediction data available."}
 
-${context.odds ? `Odds: Home ${context.odds.home}, Draw ${context.odds.draw}, Away ${context.odds.away}` : ""}
+${odds ? `Odds: Home ${odds.home_win_odds}, Draw ${odds.draw_odds}, Away ${odds.away_win_odds}` : ""}
 
-${context.homeRecentForm?.length ? `${context.match.homeTeam} recent form: ${context.homeRecentForm.join(", ")}` : ""}
-${context.awayRecentForm?.length ? `${context.match.awayTeam} recent form: ${context.awayRecentForm.join(", ")}` : ""}
+${homeFormStr.length ? `${homeName} recent form: ${homeFormStr.join(", ")}` : ""}
+${awayFormStr.length ? `${awayName} recent form: ${awayFormStr.join(", ")}` : ""}
 ${learningBlock}
 
 Provide a concise analysis (3-5 paragraphs) covering:
