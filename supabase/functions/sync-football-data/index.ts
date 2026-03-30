@@ -12,10 +12,9 @@ const LEAGUES = [
   { id: 140, name: "La Liga", country: "Spain" },
   { id: 135, name: "Serie A", country: "Italy" },
 ];
-const SEASON = 2024;
-
-// Free plan: seasons 2022-2024, no next/last params, but from/to works
-// We'll fetch recent completed matches and upcoming matches from 2024-2025 season
+// Dynamic season: Aug+ = current year, else previous year
+const now = new Date();
+const SEASON = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
 
 async function apiFetch(path: string, apiKey: string) {
   const url = `${API_BASE}${path}`;
