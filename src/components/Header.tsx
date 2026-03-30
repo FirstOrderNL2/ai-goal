@@ -1,8 +1,9 @@
 import { Link, useLocation } from "react-router-dom";
-import { Activity, BarChart3, Shield, Users, Database } from "lucide-react";
+import { Activity, BarChart3, Shield, Users, Database, Trophy } from "lucide-react";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: Activity },
+  { to: "/standings", label: "Standings", icon: Trophy },
   { to: "/accuracy", label: "Accuracy", icon: BarChart3 },
   { to: "/teams", label: "Teams", icon: Users },
   { to: "/statsbomb", label: "StatsBomb", icon: Database },

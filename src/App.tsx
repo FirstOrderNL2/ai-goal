@@ -8,6 +8,7 @@ import MatchDetail from "./pages/MatchDetail";
 import Accuracy from "./pages/Accuracy";
 import Teams from "./pages/Teams";
 import StatsBomb from "./pages/StatsBomb";
+import Standings from "./pages/Standings";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -24,6 +25,7 @@ const App = () => (
           <Route path="/accuracy" element={<Accuracy />} />
           <Route path="/teams" element={<Teams />} />
           <Route path="/statsbomb" element={<StatsBomb />} />
+          <Route path="/standings" element={<Standings />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
