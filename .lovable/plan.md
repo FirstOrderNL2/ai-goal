@@ -1,94 +1,63 @@
 
 
-# Integrate Sportradar Soccer API
+# StatsBomb Open Data Integration + Fix Runtime Error
 
-## Analysis
+## Analysis: StatsBomb Open Data
 
-From your screenshot, you have a Sportradar trial (Mar 30 – Apr 29, 2026) with:
-- **Soccer Base** — competitions, schedules, standings, probabilities, H2H, lineups, fun facts
-- **Soccer Extended Base** — 100+ extended stats, xG-level data, AI match insights, momentum
+StatsBomb provides **free, high-quality football event data** as static JSON files hosted on GitHub. No API key needed — data is fetched directly from raw GitHub URLs.
 
-**Base URL:** `https://api.sportradar.com/soccer/trial/v4/en/` (Base) and `https://api.sportradar.com/soccer-extended/trial/v4/en/` (Extended)
-**Auth:** API key passed as query param `?api_key={key}`
+**Data structure:**
+- `competitions.json` — list of all available competitions/seasons
+- `data/matches/{competition_id}/{season_id}.json` — match listings per season
+- `data/events/{match_id}.json` — detailed event-level data (passes, shots, tackles, etc.)
+- `data/lineups/{match_id}.json` — lineup data per match
+- `data/three-sixty/{match_id}.json` — StatsBomb 360 freeze-frame data
 
-**Key Sportradar competition IDs** (format `sr:competition:ID`):
-- Premier League: `sr:competition:17`
-- La Liga: `sr:competition:8`
-- Serie A: `sr:competition:23`
+**Available competitions include:** Premier League, La Liga, Bundesliga, Champions League, World Cup, Women's Super League, and more. Covers select seasons with granular event data (every pass, shot, dribble, tackle with x/y coordinates).
 
-## What Sportradar Adds Over API-Football
-
-| Feature | API-Football (existing) | Sportradar (new) |
-|---------|------------------------|------------------|
-| Win probabilities | Via `/predictions` | Season Probabilities feed — all matches at once |
-| Standings | Available | Available |
-| H2H | Available | Competitor vs Competitor feed |
-| Extended stats | Limited | 100+ data points (passes, tackles, dribbles, xG) |
-| Match insights | None | AI-generated previews and summaries |
-| Fun facts | None | Sport Event Fun Facts |
-| Over/Under stats | Manual calc | Season Over/Under Statistics feed |
-| Lineups/formations | Available | Available with formations |
+**Key value for your project:** StatsBomb provides deep event-level data (shot maps, pass networks, xG per shot) that neither API-Football nor Sportradar offer for free. This is historical data only (no live/upcoming matches), but it's excellent for enriching match analysis and building visualizations.
 
 ## Plan
 
-### Step 1: Store API Key
-Store `SPORTRADAR_API_KEY` as a backend secret (value from your screenshot: `BHd8....4Xvm` — you'll paste the full key).
+### Step 1: Fix Runtime Error (hooks violation)
+The `MatchDetail.tsx` component calls `useHeadToHead` after early returns on lines 18 and 30. Move all hooks to the top of the component, before any conditional returns.
 
-### Step 2: Create Edge Function — `get-sportradar-data`
-A proxy edge function similar to `get-football-data`, but for Sportradar endpoints.
+### Step 2: Create StatsBomb Data Fetching Utility
+Create `src/lib/statsbomb.ts` with functions to fetch from raw GitHub URLs:
+- `fetchCompetitions()` — get all available competitions
+- `fetchMatches(competitionId, seasonId)` — get matches for a season
+- `fetchEvents(matchId)` — get event data for a match
+- `fetchLineups(matchId)` — get lineups for a match
 
-**Whitelisted endpoints:**
-- `/competitions.json` — list competitions
-- `/seasons/{id}/schedules.json` — season schedule
-- `/seasons/{id}/probabilities.json` — win probabilities for all matches
-- `/seasons/{id}/standings.json` — standings
-- `/seasons/{id}/over_under_statistics.json` — O/U stats
-- `/sport_events/{id}/summary.json` — match summary with stats
-- `/sport_events/{id}/fun_facts.json` — fun facts
-- `/sport_events/{id}/lineups.json` — lineups
-- `/competitors/{id}/versus/{id}/summaries.json` — H2H
-- `/competitors/{id}/profile.json` — team profile
+Base URL: `https://raw.githubusercontent.com/statsbomb/open-data/master/data/`
 
-For Extended API (separate base URL):
-- `/sport_events/{id}/extended_summary.json` — extended stats
-- `/sport_events/{id}/insights.json` — AI match insights
+No edge function needed — these are public static files, fetchable directly from the browser.
 
-### Step 3: Create Sync Edge Function — `sync-sportradar-data`
-Fetches season probabilities and standings from Sportradar and upserts into the existing `predictions` and `matches` tables. This complements the API-Football sync by adding Sportradar's probability data alongside the existing predictions.
+### Step 3: Create Frontend Hooks
+- `useStatsBombCompetitions()` — list available competitions
+- `useStatsBombMatches(competitionId, seasonId)` — matches in a season
+- `useStatsBombEvents(matchId)` — event data for a match
 
-- Fetch `/seasons/{id}/probabilities.json` for each league
-- Map Sportradar team/match IDs to our DB (store `sportradar_id` on teams/matches)
-- Upsert probabilities into `predictions` table (or a new `sportradar_predictions` column set)
+### Step 4: Add StatsBomb Data Section to MatchDetail
+For matches that can be linked to StatsBomb data (by team name matching), show:
+- **Shot map** — all shots with xG values plotted on a pitch
+- **Key events** timeline — goals, cards, substitutions
+- **Pass statistics** — completion rates, key passes
 
-### Step 4: Database Migration
-- Add `sportradar_id` column to `teams` table (text, unique, nullable)
-- Add `sportradar_id` column to `matches` table (text, unique, nullable)
-- Optionally add `fun_facts` (text[]) and `ai_insights` (text) columns to `matches`
-
-### Step 5: Update Frontend
-- Add Sportradar data sections to **MatchDetail** page:
-  - **Fun Facts** card — fetched on-demand via proxy
-  - **AI Insights** card — pre-match preview from Extended API
-  - **Extended Stats** — passes, tackles, dribbles for completed matches
-  - **Lineups** with formations
-- Add **Standings** page/section using Sportradar standings feed
-- Show Sportradar probabilities alongside API-Football predictions for comparison
-
-### Step 6: Create Frontend Hooks
-- `useSportradarData(endpoint, params)` — generic proxy hook
-- `useFunFacts(sportradarEventId)` — fun facts for a match
-- `useMatchInsights(sportradarEventId)` — AI insights
-- `useStandings(seasonId)` — league standings
+### Step 5: Add StatsBomb Explorer Page (optional)
+A new `/statsbomb` route letting users browse StatsBomb's free competitions, view historical matches, and explore event data — useful for research and analysis beyond the prediction dashboard.
 
 ## Technical Details
 
-**API URL patterns:**
+**No API key required.** Data is fetched via plain HTTP GET from GitHub raw URLs:
 ```text
-Base:     https://api.sportradar.com/soccer/trial/v4/en/{path}?api_key={key}
-Extended: https://api.sportradar.com/soccer-extended/trial/v4/en/{path}?api_key={key}
+https://raw.githubusercontent.com/statsbomb/open-data/master/data/competitions.json
+https://raw.githubusercontent.com/statsbomb/open-data/master/data/matches/{comp_id}/{season_id}.json
+https://raw.githubusercontent.com/statsbomb/open-data/master/data/events/{match_id}.json
+https://raw.githubusercontent.com/statsbomb/open-data/master/data/lineups/{match_id}.json
 ```
 
-**Rate limits:** Trial tier — typically 1 request/second, 1000 requests/day. The proxy function will need to respect this.
+**Matching to existing data:** StatsBomb uses its own match/team IDs. Linking to your existing matches will be done by team name + date matching. Not all matches will have StatsBomb data — only those in covered competitions/seasons.
 
-**ID mapping challenge:** Sportradar uses `sr:competitor:X` and `sr:sport_event:X` format IDs, while API-Football uses numeric IDs. Team mapping will be done by name matching during the first sync, then stored as `sportradar_id` for future lookups.
+**License:** Free for non-commercial use. Must credit "StatsBomb" and use their logo when publishing analysis based on this data.
 
