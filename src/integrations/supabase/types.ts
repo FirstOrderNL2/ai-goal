@@ -16,12 +16,14 @@ export type Database = {
     Tables: {
       matches: {
         Row: {
+          api_football_id: number | null
           created_at: string
           goals_away: number | null
           goals_home: number | null
           id: string
           league: string
           match_date: string
+          round: string | null
           status: string
           team_away_id: string
           team_home_id: string
@@ -29,12 +31,14 @@ export type Database = {
           xg_home: number | null
         }
         Insert: {
+          api_football_id?: number | null
           created_at?: string
           goals_away?: number | null
           goals_home?: number | null
           id?: string
           league: string
           match_date: string
+          round?: string | null
           status?: string
           team_away_id: string
           team_home_id: string
@@ -42,12 +46,14 @@ export type Database = {
           xg_home?: number | null
         }
         Update: {
+          api_football_id?: number | null
           created_at?: string
           goals_away?: number | null
           goals_home?: number | null
           id?: string
           league?: string
           match_date?: string
+          round?: string | null
           status?: string
           team_away_id?: string
           team_home_id?: string
@@ -155,6 +161,7 @@ export type Database = {
       }
       teams: {
         Row: {
+          api_football_id: number | null
           country: string
           created_at: string
           id: string
@@ -163,6 +170,7 @@ export type Database = {
           name: string
         }
         Insert: {
+          api_football_id?: number | null
           country: string
           created_at?: string
           id?: string
@@ -171,6 +179,7 @@ export type Database = {
           name: string
         }
         Update: {
+          api_football_id?: number | null
           country?: string
           created_at?: string
           id?: string
