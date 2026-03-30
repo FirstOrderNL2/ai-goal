@@ -1,0 +1,1 @@
+ALTER TABLE predictions ADD CONSTRAINT predictions_match_id_unique UNIQUE (match_id);
