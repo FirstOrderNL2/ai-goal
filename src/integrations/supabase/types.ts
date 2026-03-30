@@ -14,7 +14,172 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      matches: {
+        Row: {
+          created_at: string
+          goals_away: number | null
+          goals_home: number | null
+          id: string
+          league: string
+          match_date: string
+          status: string
+          team_away_id: string
+          team_home_id: string
+          xg_away: number | null
+          xg_home: number | null
+        }
+        Insert: {
+          created_at?: string
+          goals_away?: number | null
+          goals_home?: number | null
+          id?: string
+          league: string
+          match_date: string
+          status?: string
+          team_away_id: string
+          team_home_id: string
+          xg_away?: number | null
+          xg_home?: number | null
+        }
+        Update: {
+          created_at?: string
+          goals_away?: number | null
+          goals_home?: number | null
+          id?: string
+          league?: string
+          match_date?: string
+          status?: string
+          team_away_id?: string
+          team_home_id?: string
+          xg_away?: number | null
+          xg_home?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "matches_team_away_id_fkey"
+            columns: ["team_away_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "matches_team_home_id_fkey"
+            columns: ["team_home_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      odds: {
+        Row: {
+          away_win_odds: number
+          created_at: string
+          draw_odds: number
+          home_win_odds: number
+          id: string
+          match_id: string
+        }
+        Insert: {
+          away_win_odds: number
+          created_at?: string
+          draw_odds: number
+          home_win_odds: number
+          id?: string
+          match_id: string
+        }
+        Update: {
+          away_win_odds?: number
+          created_at?: string
+          draw_odds?: number
+          home_win_odds?: number
+          id?: string
+          match_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "odds_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: true
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      predictions: {
+        Row: {
+          away_win: number
+          created_at: string
+          draw: number
+          expected_goals_away: number
+          expected_goals_home: number
+          home_win: number
+          id: string
+          match_id: string
+          model_confidence: number
+          over_under_25: string
+        }
+        Insert: {
+          away_win: number
+          created_at?: string
+          draw: number
+          expected_goals_away: number
+          expected_goals_home: number
+          home_win: number
+          id?: string
+          match_id: string
+          model_confidence?: number
+          over_under_25?: string
+        }
+        Update: {
+          away_win?: number
+          created_at?: string
+          draw?: number
+          expected_goals_away?: number
+          expected_goals_home?: number
+          home_win?: number
+          id?: string
+          match_id?: string
+          model_confidence?: number
+          over_under_25?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "predictions_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: true
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      teams: {
+        Row: {
+          country: string
+          created_at: string
+          id: string
+          league: string
+          logo_url: string | null
+          name: string
+        }
+        Insert: {
+          country: string
+          created_at?: string
+          id?: string
+          league: string
+          logo_url?: string | null
+          name: string
+        }
+        Update: {
+          country?: string
+          created_at?: string
+          id?: string
+          league?: string
+          logo_url?: string | null
+          name?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
