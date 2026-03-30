@@ -217,6 +217,9 @@ export default function MatchDetail() {
         )}
         {h2hLoading && <Skeleton className="h-48" />}
 
+        {/* AI Insights */}
+        <AIInsightsCard matchId={match.id} existingInsights={match.ai_insights} />
+
         {/* Sportradar Fun Facts */}
         <FunFactsCard sportradarEventId={match.sportradar_id} />
 
