@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Header } from "@/components/Header";
-import { useSportMonksStandings } from "@/hooks/useSportMonks";
+import { useStandings } from "@/hooks/useSportradar";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -12,57 +12,44 @@ import {
 } from "@/components/ui/table";
 import { Loader2, Trophy } from "lucide-react";
 
-// SportMonks season IDs — these should be updated each season or fetched dynamically
-const LEAGUE_SEASONS: Record<string, { label: string; seasonId: number }> = {
-  premier_league: { label: "Premier League", seasonId: 23614 },
-  la_liga: { label: "La Liga", seasonId: 23686 },
-  serie_a: { label: "Serie A", seasonId: 23698 },
+const LEAGUE_SEASONS: Record<string, { label: string; seasonId: string }> = {
+  premier_league: { label: "Premier League", seasonId: "sr:season:118689" },
+  la_liga: { label: "La Liga", seasonId: "sr:season:118691" },
+  serie_a: { label: "Serie A", seasonId: "sr:season:118699" },
 };
 
-interface StandingDetail {
-  type_id: number;
-  value: number;
-}
-
 interface StandingRow {
-  position: number;
-  points: number;
-  participant: {
-    id: number;
+  rank: number;
+  competitor: {
+    id: string;
     name: string;
-    image_path?: string;
   };
-  details: StandingDetail[];
+  played: number;
+  win: number;
+  draw: number;
+  loss: number;
+  goals_for: number;
+  goals_against: number;
+  goal_diff: number;
+  points: number;
 }
-
-function getDetail(details: StandingDetail[], typeId: number): number {
-  return details.find((d) => d.type_id === typeId)?.value ?? 0;
-}
-
-// SportMonks detail type IDs
-const TYPE_WINS = 130;
-const TYPE_DRAWS = 131;
-const TYPE_LOSSES = 132;
-const TYPE_GF = 133;
-const TYPE_GA = 134;
 
 export default function Standings() {
   const [league, setLeague] = useState("premier_league");
   const config = LEAGUE_SEASONS[league];
-  const { data, isLoading, error } = useSportMonksStandings(config.seasonId);
+  const { data, isLoading, error } = useStandings(config.seasonId);
 
-  // SportMonks returns standings data nested
+  // Sportradar standings structure: data.standings[0].groups[0].team_standings
   const standings: StandingRow[] = (() => {
-    if (!data?.data) return [];
-    // data.data is array of standing groups; take first group's standings
-    const groups = data.data;
-    if (Array.isArray(groups) && groups.length > 0) {
-      // Each group has a `standings` or `details` array, or the rows are directly in it
-      const first = groups[0];
-      if (first.standings) return first.standings;
-      if (first.details) return first.details;
-      // Some structures return rows directly
-      if (first.position !== undefined) return groups;
+    if (!data?.standings) return [];
+    const firstStanding = data.standings[0];
+    if (!firstStanding) return [];
+    // Could be groups or direct team_standings
+    if (firstStanding.groups) {
+      return firstStanding.groups[0]?.team_standings ?? [];
+    }
+    if (firstStanding.team_standings) {
+      return firstStanding.team_standings;
     }
     return [];
   })();
@@ -98,17 +85,18 @@ export default function Standings() {
 
         {error && (
           <p className="text-destructive text-sm">
-            Failed to load standings. Check your SportMonks API key.
+            Failed to load standings. The Sportradar trial API may be rate-limited.
           </p>
         )}
 
         {!isLoading && standings.length > 0 && (
-          <div className="rounded-lg border border-border bg-card">
+          <div className="rounded-lg border border-border bg-card overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-12">#</TableHead>
                   <TableHead>Team</TableHead>
+                  <TableHead className="text-center w-12">P</TableHead>
                   <TableHead className="text-center w-12">W</TableHead>
                   <TableHead className="text-center w-12">D</TableHead>
                   <TableHead className="text-center w-12">L</TableHead>
@@ -119,47 +107,30 @@ export default function Standings() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {standings.map((row) => {
-                  const w = getDetail(row.details ?? [], TYPE_WINS);
-                  const d = getDetail(row.details ?? [], TYPE_DRAWS);
-                  const l = getDetail(row.details ?? [], TYPE_LOSSES);
-                  const gf = getDetail(row.details ?? [], TYPE_GF);
-                  const ga = getDetail(row.details ?? [], TYPE_GA);
-                  const gd = gf - ga;
-
-                  return (
-                    <TableRow key={row.participant?.id ?? row.position}>
-                      <TableCell className="font-medium text-muted-foreground">
-                        {row.position}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          {row.participant?.image_path && (
-                            <img
-                              src={row.participant.image_path}
-                              alt={row.participant.name}
-                              className="h-5 w-5 object-contain"
-                            />
-                          )}
-                          <span className="font-medium text-sm">
-                            {row.participant?.name ?? "Unknown"}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-center">{w}</TableCell>
-                      <TableCell className="text-center">{d}</TableCell>
-                      <TableCell className="text-center">{l}</TableCell>
-                      <TableCell className="text-center">{gf}</TableCell>
-                      <TableCell className="text-center">{ga}</TableCell>
-                      <TableCell className="text-center font-medium">
-                        {gd > 0 ? `+${gd}` : gd}
-                      </TableCell>
-                      <TableCell className="text-center font-bold text-primary">
-                        {row.points}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {standings.map((row) => (
+                  <TableRow key={row.competitor?.id ?? row.rank}>
+                    <TableCell className="font-medium text-muted-foreground">
+                      {row.rank}
+                    </TableCell>
+                    <TableCell>
+                      <span className="font-medium text-sm">
+                        {row.competitor?.name ?? "Unknown"}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-center">{row.played}</TableCell>
+                    <TableCell className="text-center">{row.win}</TableCell>
+                    <TableCell className="text-center">{row.draw}</TableCell>
+                    <TableCell className="text-center">{row.loss}</TableCell>
+                    <TableCell className="text-center">{row.goals_for}</TableCell>
+                    <TableCell className="text-center">{row.goals_against}</TableCell>
+                    <TableCell className="text-center font-medium">
+                      {row.goal_diff > 0 ? `+${row.goal_diff}` : row.goal_diff}
+                    </TableCell>
+                    <TableCell className="text-center font-bold text-primary">
+                      {row.points}
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           </div>
