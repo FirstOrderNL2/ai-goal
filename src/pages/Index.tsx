@@ -4,6 +4,7 @@ import { MatchCard } from "@/components/MatchCard";
 import { LeagueFilter } from "@/components/LeagueFilter";
 import { useUpcomingMatches, useCompletedMatches } from "@/hooks/useMatches";
 import { useSyncFootballData } from "@/hooks/useSync";
+import { useSyncSportradarData } from "@/hooks/useSportradar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Activity, Clock, RefreshCw } from "lucide-react";
