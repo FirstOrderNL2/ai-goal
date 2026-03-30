@@ -24,6 +24,8 @@ export interface Match {
   sportradar_id: string | null;
   fun_facts: string[] | null;
   ai_insights: string | null;
+  ai_post_match_review: string | null;
+  ai_accuracy_score: number | null;
   home_team?: Team;
   away_team?: Team;
   prediction?: Prediction;
