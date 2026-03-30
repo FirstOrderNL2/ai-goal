@@ -1,0 +1,94 @@
+import { Link } from "react-router-dom";
+import { format } from "date-fns";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { ProbabilityBar } from "./ProbabilityBar";
+import type { Match } from "@/lib/types";
+import { TrendingUp, TrendingDown, ArrowRight } from "lucide-react";
+
+interface MatchCardProps {
+  match: Match;
+}
+
+export function MatchCard({ match }: MatchCardProps) {
+  const { home_team, away_team, prediction, odds } = match;
+  const isUpcoming = match.status === "upcoming";
+
+  return (
+    <Link to={`/match/${match.id}`}>
+      <Card className="group border-border/50 bg-card transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
+        <CardContent className="p-4 space-y-3">
+          {/* League & Date */}
+          <div className="flex items-center justify-between">
+            <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
+              {match.league}
+            </Badge>
+            <span className="text-xs text-muted-foreground">
+              {format(new Date(match.match_date), "MMM d, HH:mm")}
+            </span>
+          </div>
+
+          {/* Teams */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex-1 text-right">
+              <p className="text-sm font-semibold truncate">{home_team?.name ?? "TBD"}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {isUpcoming ? (
+                <span className="text-xs font-bold text-primary px-2 py-0.5 rounded bg-primary/10">VS</span>
+              ) : (
+                <span className="text-lg font-bold tabular-nums">
+                  {match.goals_home} - {match.goals_away}
+                </span>
+              )}
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-semibold truncate">{away_team?.name ?? "TBD"}</p>
+            </div>
+          </div>
+
+          {/* Prediction */}
+          {prediction && (
+            <>
+              <ProbabilityBar
+                homeWin={Number(prediction.home_win)}
+                draw={Number(prediction.draw)}
+                awayWin={Number(prediction.away_win)}
+              />
+
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1 text-muted-foreground">
+                  <TrendingUp className="h-3 w-3" />
+                  <span>xG: {Number(prediction.expected_goals_home).toFixed(1)} - {Number(prediction.expected_goals_away).toFixed(1)}</span>
+                </div>
+                <Badge
+                  variant={prediction.over_under_25 === "over" ? "default" : "outline"}
+                  className="text-[10px]"
+                >
+                  {prediction.over_under_25 === "over" ? "O2.5" : "U2.5"}
+                </Badge>
+                <div className="flex items-center gap-1 text-muted-foreground">
+                  <span>{Math.round(Number(prediction.model_confidence) * 100)}%</span>
+                  <span className="text-[10px]">conf</span>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Odds */}
+          {odds && (
+            <div className="flex justify-between text-[10px] text-muted-foreground border-t border-border/50 pt-2">
+              <span>H {Number(odds.home_win_odds).toFixed(2)}</span>
+              <span>D {Number(odds.draw_odds).toFixed(2)}</span>
+              <span>A {Number(odds.away_win_odds).toFixed(2)}</span>
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
