@@ -5,6 +5,7 @@ import { useHeadToHead } from "@/hooks/useH2H";
 import { ProbabilityBar } from "@/components/ProbabilityBar";
 import { FunFactsCard } from "@/components/FunFactsCard";
 import { MatchInsightsCard } from "@/components/MatchInsightsCard";
+import { StatsBombSection } from "@/components/StatsBombSection";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,6 +15,14 @@ import { ArrowLeft, TrendingUp, Target, BarChart3, Swords } from "lucide-react";
 export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: match, isLoading } = useMatch(id!);
+
+  // All hooks must be called before any early returns
+  const home_team = match?.home_team;
+  const away_team = match?.away_team;
+  const { data: h2h, isLoading: h2hLoading } = useHeadToHead(
+    home_team?.api_football_id,
+    away_team?.api_football_id
+  );
 
   if (isLoading) {
     return (
@@ -38,12 +47,8 @@ export default function MatchDetail() {
     );
   }
 
-  const { home_team, away_team, prediction, odds } = match;
+  const { prediction, odds } = match;
   const isUpcoming = match.status === "upcoming";
-  const { data: h2h, isLoading: h2hLoading } = useHeadToHead(
-    home_team?.api_football_id,
-    away_team?.api_football_id
-  );
 
   return (
     <div className="min-h-screen bg-background">
@@ -216,6 +221,13 @@ export default function MatchDetail() {
 
         {/* Sportradar AI Insights */}
         <MatchInsightsCard sportradarEventId={match.sportradar_id} />
+
+        {/* StatsBomb Data */}
+        <StatsBombSection
+          homeTeamName={home_team?.name}
+          awayTeamName={away_team?.name}
+          matchDate={match.match_date}
+        />
       </main>
     </div>
   );
