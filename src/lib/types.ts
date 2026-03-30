@@ -4,6 +4,7 @@ export interface Team {
   league: string;
   country: string;
   logo_url: string | null;
+  api_football_id: number | null;
 }
 
 export interface Match {
