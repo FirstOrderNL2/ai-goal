@@ -29,6 +29,7 @@ Deno.serve(async (req) => {
 
     // Whitelist allowed endpoints
     const allowed = [
+      "/fixtures",
       "/fixtures/headtohead",
       "/fixtures/statistics",
       "/fixtures/events",
@@ -36,6 +37,8 @@ Deno.serve(async (req) => {
       "/fixtures/players",
       "/teams/statistics",
       "/standings",
+      "/predictions",
+      "/odds",
     ];
 
     const cleanEndpoint = endpoint.split("?")[0];
