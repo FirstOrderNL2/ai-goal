@@ -1,83 +1,72 @@
 
 
-# Project Status Review and Next Phase Plan
+# AI Self-Learning Prediction System
 
-## Current Bugs and Issues
+## What We're Building
 
-### 1. React forwardRef Warnings (Medium)
-Console shows repeated warnings: "Function components cannot be given refs" for `ProbabilityBar`, `Badge`, and `MatchCard`. These come from `MatchCard` being used inside a `<Link>` component which passes a ref to its child.
+Two new capabilities that make the AI analyst smarter over time:
 
-**Fix**: Wrap `MatchCard` with `React.forwardRef`, or restructure the `Link`/`Card` nesting so the ref target is a native element.
+1. **Post-Match Review** — After a match completes, the AI automatically analyzes whether its prediction was right or wrong, explains why, and scores itself
+2. **Learning Memory** — Past prediction reviews are fed back into future predictions so the AI avoids repeating mistakes
 
-### 2. Standings Page — Hardcoded Sportradar Season IDs (Medium)
-Season IDs (`sr:season:118689`, etc.) are hardcoded. When the 2025/26 season starts, these will break. The sync function has the same issue.
+## Database Changes
 
-**Fix**: Derive season IDs dynamically, or at minimum centralize them in one config.
+Add two new columns to the `matches` table:
+- `ai_post_match_review` (text) — stores the AI's self-assessment after the match
+- `ai_accuracy_score` (numeric) — 0-100 score the AI gives itself for each prediction
 
-### 3. Team Name Matching Fragility (Medium)
-Sportradar sync matches teams by exact lowercase name. Names like "Inter Milan" vs "Internazionale" or "Atlético Madrid" vs "Atletico Madrid" will fail to match, leaving `sportradar_id` null for those teams. This means no fun facts, no insights, no probabilities for those matches.
+## New Edge Function: `generate-post-match-review`
 
-### 4. Predictions Upsert — Missing Unique Constraint (High)
-The `sync-football-data` and `sync-sportradar-data` functions both upsert to `predictions` with `onConflict: "match_id"`, but the `predictions` table schema shows **no unique constraint** on `match_id`. This means upserts silently fail or create duplicates.
+Triggered manually (button on match detail) or could be automated later. It:
+1. Fetches the match result, the original `ai_insights` (pre-match prediction), the prediction probabilities, xG, and odds
+2. Fetches the actual outcome (score, xG)
+3. Builds a prompt asking the AI to:
+   - Compare its prediction vs what actually happened
+   - Grade itself (0-100 accuracy score)
+   - Explain what it got right, what it missed, and what factors it underestimated
+   - Note lessons for future predictions of similar matchups
+4. Saves `ai_post_match_review` and `ai_accuracy_score` to the match
 
-**Fix**: Add `ALTER TABLE predictions ADD CONSTRAINT predictions_match_id_unique UNIQUE (match_id);`
+## Updated Edge Function: `generate-ai-prediction`
 
-### 5. Sportradar xG Always Zero (Low)
-In `sync-sportradar-data`, `expected_goals_home` and `expected_goals_away` are hardcoded to `0` when upserting predictions from Sportradar probabilities. This overwrites any real xG data from API-Football.
+Enhanced to include a "learning context" section in the prompt:
+1. Before generating a new prediction, query the last 10 completed matches that have `ai_post_match_review` 
+2. Summarize the AI's recent accuracy (average score, common mistakes)
+3. If any of those reviewed matches involved the same teams, include those specific lessons
+4. Append this as a "LEARNING FROM PAST PREDICTIONS" section in the prompt so the AI self-corrects
 
-### 6. SportMonks Integration Unused (Low)
-The edge function and hook exist but aren't actively used anywhere since Standings was switched to Sportradar. The SportMonks free plan doesn't cover the tracked leagues. This is dead code unless the user upgrades.
+## Updated UI: `AIInsightsCard`
 
-### 7. No Foreign Keys on Matches (Low)
-`matches.team_home_id` and `matches.team_away_id` have no foreign key to `teams.id`. Orphaned references are possible.
+Add a second section for completed matches:
+- If match is completed and no post-match review exists: show a "Generate Post-Match Review" button
+- If review exists: show the review text with the accuracy score as a colored badge (green 70+, yellow 40-69, red 0-39)
+- Both pre-match prediction and post-match review are visible on the same card with clear separation
 
----
+## Updated Types
 
-## What is Built (Completed Phases)
+Add `ai_post_match_review` and `ai_accuracy_score` to the `Match` interface in `src/lib/types.ts`.
 
-| Feature | Status |
+## File Changes Summary
+
+| File | Change |
 |---|---|
-| Database schema (teams, matches, predictions, odds) | Done |
-| API-Football sync (fixtures, teams, predictions) | Done |
-| Sportradar sync (probabilities, team/match ID mapping) | Done |
-| SportMonks edge function + hook | Done (unused) |
-| Dashboard with upcoming/completed matches | Done |
-| Match detail page (predictions, odds, H2H, xG) | Done |
-| AI insights generation (Gemini via Lovable AI) | Done |
-| StatsBomb open data (shot maps, key events, pass stats) | Done |
-| Sportradar fun facts + insights | Done |
-| Standings page (Sportradar) | Done |
-| Accuracy tracking page | Done |
-| Teams directory with logos | Done |
+| DB migration | Add `ai_post_match_review` text + `ai_accuracy_score` numeric to `matches` |
+| `supabase/functions/generate-post-match-review/index.ts` | New edge function |
+| `supabase/functions/generate-ai-prediction/index.ts` | Add learning context from past reviews |
+| `src/components/AIInsightsCard.tsx` | Add post-match review UI section |
+| `src/lib/types.ts` | Add two new fields to Match interface |
 
----
+## How the Learning Loop Works
 
-## Next Phase Plan
+```text
+Pre-match:
+  [Past reviews + lessons] → AI prompt → prediction saved
 
-### Phase 1: Fix Critical Bugs (Priority)
+Post-match:
+  [Original prediction + actual result] → AI prompt → review + score saved
+                                                          ↓
+                                              Fed into next prediction
+```
 
-1. **Add `match_id` unique constraint** on `predictions` table — prevents duplicate/failed upserts
-2. **Fix forwardRef warnings** — wrap `MatchCard` with `forwardRef` so `Link` doesn't throw warnings
-3. **Fix Sportradar xG overwrite** — preserve existing xG values when Sportradar syncs (only update if current values are 0/null)
-
-### Phase 2: Data Quality Improvements
-
-4. **Add team name aliases for matching** — create a name alias map (e.g., "Inter Milan" = "Internazionale", "Atletico Madrid" = "Atlético Madrid") in the Sportradar sync so more teams get matched
-5. **Centralize season ID config** — move all season IDs to a single shared config or a `seasons` DB table so they only need updating in one place
-
-### Phase 3: New Features
-
-6. **Add team logos to Standings table** — match Sportradar competitor names to the `teams` table and show `logo_url` in the standings rows
-7. **Live match status** — show "Live", "HT", "FT" badges on match cards using the `status` field, with auto-refresh for in-progress matches
-8. **Head-to-Head on match detail improvements** — show H2H win/draw/loss summary stats, not just the match list
-9. **Dark/light theme toggle** — add a theme switcher to the header
-10. **Mobile nav improvements** — on the current 411px viewport, nav labels are hidden but icons are cramped. Add a hamburger menu or bottom tab bar for mobile.
-
-### Technical Details
-
-- **Unique constraint migration**: `ALTER TABLE predictions ADD CONSTRAINT predictions_match_id_unique UNIQUE (match_id);`
-- **forwardRef fix**: Wrap `MatchCard` export with `React.forwardRef` and spread the ref onto the outer `Link` or `Card` element
-- **xG preservation**: In `sync-sportradar-data`, change the upsert to only set `expected_goals_home/away` when the existing values are null/0, or skip those fields entirely from the Sportradar upsert
-- **Team alias map**: A simple `Record<string, string>` mapping alternate names to canonical names, applied before the `teamsByName.get()` lookup
-- **Standings logos**: Query `teams` table by matching competitor name, then render `logo_url` in the table row
+The AI doesn't train a model — it uses its own written reviews as "memory" that gets injected into future prompts, creating a natural feedback loop where it learns from mistakes in plain language.
 
