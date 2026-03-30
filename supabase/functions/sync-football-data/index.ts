@@ -12,7 +12,7 @@ const LEAGUES = [
   { id: 140, name: "La Liga", country: "Spain" },
   { id: 135, name: "Serie A", country: "Italy" },
 ];
-const SEASON = 2024;
+const SEASON = 2025;
 
 async function apiFetch(path: string, apiKey: string) {
   const res = await fetch(`${API_BASE}${path}`, {
