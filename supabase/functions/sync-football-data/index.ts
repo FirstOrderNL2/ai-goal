@@ -49,9 +49,13 @@ Deno.serve(async (req) => {
 
     // Fetch matches from recent rounds and upcoming rounds of 2024-25 season
     // Completed: Nov-Dec 2024, Upcoming: Jan-May 2025
+    // Dynamic date ranges based on season
+    const seasonStart = `${SEASON}-08-01`;
+    const seasonEnd = `${SEASON + 1}-07-31`;
+    const today = new Date().toISOString().slice(0, 10);
     const dateRanges = [
-      { from: "2024-11-01", to: "2024-12-31", type: "completed" },
-      { from: "2025-01-01", to: "2025-05-31", type: "upcoming" },
+      { from: seasonStart, to: today, type: "completed" },
+      { from: today, to: seasonEnd, type: "upcoming" },
     ];
 
     for (const league of LEAGUES) {

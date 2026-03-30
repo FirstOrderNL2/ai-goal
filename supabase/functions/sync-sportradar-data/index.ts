@@ -10,9 +10,9 @@ const BASE_URL = "https://api.sportradar.com/soccer/trial/v4/en";
 
 // Season IDs for 2024/2025 — these map to the leagues we track
 const LEAGUE_SEASONS: Record<string, { seasonId: string; league: string; country: string }> = {
-  "sr:competition:17": { seasonId: "sr:season:118689", league: "premier_league", country: "England" },
-  "sr:competition:8": { seasonId: "sr:season:118691", league: "la_liga", country: "Spain" },
-  "sr:competition:23": { seasonId: "sr:season:118699", league: "serie_a", country: "Italy" },
+  "sr:competition:17": { seasonId: "sr:season:118689", league: "Premier League", country: "England" },
+  "sr:competition:8": { seasonId: "sr:season:118691", league: "La Liga", country: "Spain" },
+  "sr:competition:23": { seasonId: "sr:season:118699", league: "Serie A", country: "Italy" },
 };
 
 async function srFetch(path: string, apiKey: string) {

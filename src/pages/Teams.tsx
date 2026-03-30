@@ -46,9 +46,13 @@ export default function Teams() {
                 {leagueTeams!.map((team) => (
                   <Card key={team.id} className="border-border/50">
                     <CardContent className="flex items-center gap-3 p-4">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary font-bold text-sm">
-                        {team.name.slice(0, 2).toUpperCase()}
-                      </div>
+                      {team.logo_url ? (
+                        <img src={team.logo_url} alt={team.name} className="h-10 w-10 object-contain" />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary font-bold text-sm">
+                          {team.name.slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold truncate">{team.name}</p>
                         <p className="text-xs text-muted-foreground">{team.country}</p>
