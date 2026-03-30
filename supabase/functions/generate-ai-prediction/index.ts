@@ -54,61 +54,29 @@ Deno.serve(async (req) => {
       .single();
 
     // Fetch recent form (last 5 matches for each team)
-    const { data: homeForm } = await supabase
-      .from("matches")
-      .select("goals_home, goals_away, team_home_id, team_away_id, status, xg_home, xg_away")
-      .or(`team_home_id.eq.${match.team_home_id},team_away_id.eq.${match.team_home_id}`)
-      .eq("status", "completed")
-      .order("match_date", { ascending: false })
-      .limit(5);
-
-    const { data: awayForm } = await supabase
-      .from("matches")
-      .select("goals_home, goals_away, team_home_id, team_away_id, status, xg_home, xg_away")
-      .or(`team_home_id.eq.${match.team_away_id},team_away_id.eq.${match.team_away_id}`)
-      .eq("status", "completed")
-      .order("match_date", { ascending: false })
-      .limit(5);
-
-    // Build context for AI
-    const context = {
-      match: {
-        date: match.match_date,
-        league: match.league,
-        homeTeam: match.home_team?.name,
-        awayTeam: match.away_team?.name,
-        status: match.status,
-        score: match.status === "completed" ? `${match.goals_home}-${match.goals_away}` : null,
-        xg: match.xg_home != null ? `${match.xg_home}-${match.xg_away}` : null,
-      },
-      prediction: prediction
-        ? {
-            homeWin: `${Math.round(prediction.home_win * 100)}%`,
-            draw: `${Math.round(prediction.draw * 100)}%`,
-            awayWin: `${Math.round(prediction.away_win * 100)}%`,
-            expectedGoals: `${prediction.expected_goals_home}-${prediction.expected_goals_away}`,
-            overUnder25: prediction.over_under_25,
-            confidence: `${Math.round(prediction.model_confidence * 100)}%`,
-          }
-        : null,
-      odds: odds
-        ? { home: odds.home_win_odds, draw: odds.draw_odds, away: odds.away_win_odds }
-        : null,
-      homeRecentForm: homeForm?.map((m) => {
-        const isHome = m.team_home_id === match.team_home_id;
-        const goalsFor = isHome ? m.goals_home : m.goals_away;
-        const goalsAgainst = isHome ? m.goals_away : m.goals_home;
-        const result = goalsFor! > goalsAgainst! ? "W" : goalsFor === goalsAgainst ? "D" : "L";
-        return `${result} (${goalsFor}-${goalsAgainst})`;
-      }),
-      awayRecentForm: awayForm?.map((m) => {
-        const isHome = m.team_home_id === match.team_away_id;
-        const goalsFor = isHome ? m.goals_home : m.goals_away;
-        const goalsAgainst = isHome ? m.goals_away : m.goals_home;
-        const result = goalsFor! > goalsAgainst! ? "W" : goalsFor === goalsAgainst ? "D" : "L";
-        return `${result} (${goalsFor}-${goalsAgainst})`;
-      }),
-    };
+    const [{ data: homeForm }, { data: awayForm }, { data: pastReviews }] = await Promise.all([
+      supabase
+        .from("matches")
+        .select("goals_home, goals_away, team_home_id, team_away_id, status, xg_home, xg_away")
+        .or(`team_home_id.eq.${match.team_home_id},team_away_id.eq.${match.team_home_id}`)
+        .eq("status", "completed")
+        .order("match_date", { ascending: false })
+        .limit(5),
+      supabase
+        .from("matches")
+        .select("goals_home, goals_away, team_home_id, team_away_id, status, xg_home, xg_away")
+        .or(`team_home_id.eq.${match.team_away_id},team_away_id.eq.${match.team_away_id}`)
+        .eq("status", "completed")
+        .order("match_date", { ascending: false })
+        .limit(5),
+      supabase
+        .from("matches")
+        .select("ai_post_match_review, ai_accuracy_score, team_home_id, team_away_id, league, home_team:teams!matches_team_home_id_fkey(name), away_team:teams!matches_team_away_id_fkey(name)")
+        .not("ai_post_match_review", "is", null)
+        .eq("status", "completed")
+        .order("match_date", { ascending: false })
+        .limit(10),
+    ]);
 
     const prompt = `You are an expert football analyst. Analyze this match and provide detailed insights.
 
