@@ -170,9 +170,18 @@ Deno.serve(async (req) => {
                 parseFloat(p.predictions.percent.draw?.replace("%", "") ?? "0") / 100;
               const awayWin =
                 parseFloat(p.predictions.percent.away?.replace("%", "") ?? "0") / 100;
-              const xgHome = parseFloat(p.predictions.goals?.home ?? "1.2");
-              const xgAway = parseFloat(p.predictions.goals?.away ?? "1.0");
-              const totalXg = xgHome + xgAway;
+
+              // Use team goal averages for xG (predictions.goals contains goal lines, not xG)
+              const homeGoalAvg = parseFloat(
+                p.teams?.home?.league?.goals?.for?.average?.total ?? "1.3"
+              );
+              const awayGoalAvg = parseFloat(
+                p.teams?.away?.league?.goals?.for?.average?.total ?? "1.1"
+              );
+              const totalXg = homeGoalAvg + awayGoalAvg;
+
+              // Parse under_over line from API
+              const ouLine = parseFloat(p.predictions?.under_over ?? "2.5");
 
               const { error: pe } = await supabase.from("predictions").upsert(
                 {
@@ -180,8 +189,8 @@ Deno.serve(async (req) => {
                   home_win: homeWin,
                   draw: draw,
                   away_win: awayWin,
-                  expected_goals_home: xgHome,
-                  expected_goals_away: xgAway,
+                  expected_goals_home: homeGoalAvg,
+                  expected_goals_away: awayGoalAvg,
                   over_under_25: totalXg > 2.5 ? "over" : "under",
                   model_confidence: Math.max(homeWin, draw, awayWin),
                 },
