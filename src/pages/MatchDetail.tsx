@@ -181,6 +181,33 @@ export default function MatchDetail() {
             </CardContent>
           </Card>
         )}
+
+        {/* Head to Head */}
+        {(h2h && h2h.length > 0) && (
+          <Card className="border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Swords className="h-4 w-4 text-primary" />
+                Head to Head ({h2h.length} matches)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {h2h.slice(0, 5).map((m) => (
+                <div key={m.fixture.id} className="flex items-center justify-between text-sm rounded-lg bg-muted p-2.5">
+                  <span className="text-xs text-muted-foreground w-20">
+                    {format(new Date(m.fixture.date), "MMM d, yyyy")}
+                  </span>
+                  <span className="font-medium truncate flex-1 text-right">{m.teams.home.name}</span>
+                  <span className="font-bold tabular-nums px-3">
+                    {m.goals.home} - {m.goals.away}
+                  </span>
+                  <span className="font-medium truncate flex-1">{m.teams.away.name}</span>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+        {h2hLoading && <Skeleton className="h-48" />}
       </main>
     </div>
   );
