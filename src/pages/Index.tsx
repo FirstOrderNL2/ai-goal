@@ -46,7 +46,7 @@ const Index = () => {
             variant="outline"
             size="sm"
             onClick={handleSync}
-            disabled={sync.isPending}
+            disabled={sync.isPending || srSync.isPending}
             className="shrink-0"
           >
             <RefreshCw className={`h-4 w-4 mr-1 ${sync.isPending ? "animate-spin" : ""}`} />
