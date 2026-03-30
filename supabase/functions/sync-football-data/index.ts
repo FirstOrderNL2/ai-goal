@@ -12,10 +12,9 @@ const LEAGUES = [
   { id: 140, name: "La Liga", country: "Spain" },
   { id: 135, name: "Serie A", country: "Italy" },
 ];
-const SEASON = 2024;
-
-// Free plan: seasons 2022-2024, no next/last params, but from/to works
-// We'll fetch recent completed matches and upcoming matches from 2024-2025 season
+// Dynamic season: Aug+ = current year, else previous year
+const now = new Date();
+const SEASON = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
 
 async function apiFetch(path: string, apiKey: string) {
   const url = `${API_BASE}${path}`;
@@ -50,9 +49,13 @@ Deno.serve(async (req) => {
 
     // Fetch matches from recent rounds and upcoming rounds of 2024-25 season
     // Completed: Nov-Dec 2024, Upcoming: Jan-May 2025
+    // Dynamic date ranges based on season
+    const seasonStart = `${SEASON}-08-01`;
+    const seasonEnd = `${SEASON + 1}-07-31`;
+    const today = new Date().toISOString().slice(0, 10);
     const dateRanges = [
-      { from: "2024-11-01", to: "2024-12-31", type: "completed" },
-      { from: "2025-01-01", to: "2025-05-31", type: "upcoming" },
+      { from: seasonStart, to: today, type: "completed" },
+      { from: today, to: seasonEnd, type: "upcoming" },
     ];
 
     for (const league of LEAGUES) {

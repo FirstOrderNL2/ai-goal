@@ -2,11 +2,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 async function srProxy(path: string) {
-  const { data, error } = await supabase.functions.invoke("get-sportradar-data", {
-    body: null,
-    headers: {},
-  });
-  // We need to use query params, so construct manually
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
   const url = `https://${projectId}.supabase.co/functions/v1/get-sportradar-data?path=${encodeURIComponent(path)}`;
