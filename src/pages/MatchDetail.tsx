@@ -1,12 +1,13 @@
 import { useParams, Link } from "react-router-dom";
 import { Header } from "@/components/Header";
-import { useMatch, useCompletedMatches } from "@/hooks/useMatches";
+import { useMatch } from "@/hooks/useMatches";
+import { useHeadToHead } from "@/hooks/useH2H";
 import { ProbabilityBar } from "@/components/ProbabilityBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format } from "date-fns";
-import { ArrowLeft, TrendingUp, Target, BarChart3 } from "lucide-react";
+import { ArrowLeft, TrendingUp, Target, BarChart3, Swords } from "lucide-react";
 
 export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
@@ -37,6 +38,10 @@ export default function MatchDetail() {
 
   const { home_team, away_team, prediction, odds } = match;
   const isUpcoming = match.status === "upcoming";
+  const { data: h2h, isLoading: h2hLoading } = useHeadToHead(
+    home_team?.api_football_id,
+    away_team?.api_football_id
+  );
 
   return (
     <div className="min-h-screen bg-background">
@@ -60,7 +65,10 @@ export default function MatchDetail() {
             </div>
 
             <div className="flex items-center justify-center gap-6 py-4">
-              <div className="text-center space-y-1 flex-1">
+              <div className="text-center space-y-2 flex-1">
+                {home_team?.logo_url && (
+                  <img src={home_team.logo_url} alt={home_team.name} className="h-12 w-12 object-contain mx-auto" />
+                )}
                 <p className="text-xl font-bold">{home_team?.name}</p>
                 <p className="text-xs text-muted-foreground">{home_team?.country}</p>
               </div>
@@ -73,7 +81,10 @@ export default function MatchDetail() {
                   </span>
                 )}
               </div>
-              <div className="text-center space-y-1 flex-1">
+              <div className="text-center space-y-2 flex-1">
+                {away_team?.logo_url && (
+                  <img src={away_team.logo_url} alt={away_team.name} className="h-12 w-12 object-contain mx-auto" />
+                )}
                 <p className="text-xl font-bold">{away_team?.name}</p>
                 <p className="text-xs text-muted-foreground">{away_team?.country}</p>
               </div>
@@ -170,6 +181,33 @@ export default function MatchDetail() {
             </CardContent>
           </Card>
         )}
+
+        {/* Head to Head */}
+        {(h2h && h2h.length > 0) && (
+          <Card className="border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Swords className="h-4 w-4 text-primary" />
+                Head to Head ({h2h.length} matches)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {h2h.slice(0, 5).map((m) => (
+                <div key={m.fixture.id} className="flex items-center justify-between text-sm rounded-lg bg-muted p-2.5">
+                  <span className="text-xs text-muted-foreground w-20">
+                    {format(new Date(m.fixture.date), "MMM d, yyyy")}
+                  </span>
+                  <span className="font-medium truncate flex-1 text-right">{m.teams.home.name}</span>
+                  <span className="font-bold tabular-nums px-3">
+                    {m.goals.home} - {m.goals.away}
+                  </span>
+                  <span className="font-medium truncate flex-1">{m.teams.away.name}</span>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+        {h2hLoading && <Skeleton className="h-48" />}
       </main>
     </div>
   );
