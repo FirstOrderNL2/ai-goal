@@ -13,6 +13,14 @@ const Index = () => {
   const [league, setLeague] = useState("all");
   const { data: upcoming, isLoading: loadingUp } = useUpcomingMatches(league);
   const { data: completed, isLoading: loadingDone } = useCompletedMatches(league);
+  const sync = useSyncFootballData();
+
+  const handleSync = () => {
+    sync.mutate(undefined, {
+      onSuccess: (data) => toast.success(`Synced! ${data?.summary?.matches ?? 0} matches updated.`),
+      onError: (err) => toast.error(`Sync failed: ${err.message}`),
+    });
+  };
 
   return (
     <div className="min-h-screen bg-background">
