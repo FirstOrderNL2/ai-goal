@@ -38,6 +38,10 @@ export default function MatchDetail() {
 
   const { home_team, away_team, prediction, odds } = match;
   const isUpcoming = match.status === "upcoming";
+  const { data: h2h, isLoading: h2hLoading } = useHeadToHead(
+    home_team?.api_football_id,
+    away_team?.api_football_id
+  );
 
   return (
     <div className="min-h-screen bg-background">
