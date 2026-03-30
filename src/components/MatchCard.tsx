@@ -1,28 +1,40 @@
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProbabilityBar } from "./ProbabilityBar";
 import type { Match } from "@/lib/types";
-import { TrendingUp, TrendingDown, ArrowRight } from "lucide-react";
+import { TrendingUp, ArrowRight } from "lucide-react";
 
 interface MatchCardProps {
   match: Match;
 }
 
 export function MatchCard({ match }: MatchCardProps) {
+  const navigate = useNavigate();
   const { home_team, away_team, prediction, odds } = match;
   const isUpcoming = match.status === "upcoming";
+  const isLive = match.status === "live" || match.status === "1H" || match.status === "2H" || match.status === "HT";
 
   return (
-    <Link to={`/match/${match.id}`}>
+    <div onClick={() => navigate(`/match/${match.id}`)} className="cursor-pointer">
       <Card className="group border-border/50 bg-card transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
         <CardContent className="p-4 space-y-3">
           {/* League & Date */}
           <div className="flex items-center justify-between">
-            <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
-              {match.league}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
+                {match.league}
+              </Badge>
+              {isLive && (
+                <Badge className="text-[10px] bg-destructive text-destructive-foreground animate-pulse">
+                  LIVE
+                </Badge>
+              )}
+              {match.status === "FT" && (
+                <Badge variant="outline" className="text-[10px]">FT</Badge>
+              )}
+            </div>
             <span className="text-xs text-muted-foreground">
               {format(new Date(match.match_date), "MMM d, HH:mm")}
             </span>
@@ -95,6 +107,6 @@ export function MatchCard({ match }: MatchCardProps) {
           </div>
         </CardContent>
       </Card>
-    </Link>
+    </div>
   );
 }
