@@ -12,7 +12,10 @@ const LEAGUES = [
   { id: 140, name: "La Liga", country: "Spain" },
   { id: 135, name: "Serie A", country: "Italy" },
 ];
-const SEASON = 2025;
+const SEASON = 2024;
+
+// Free plan: seasons 2022-2024, no next/last params, but from/to works
+// We'll fetch recent completed matches and upcoming matches from 2024-2025 season
 
 async function apiFetch(path: string, apiKey: string) {
   const url = `${API_BASE}${path}`;
@@ -22,7 +25,10 @@ async function apiFetch(path: string, apiKey: string) {
   });
   if (!res.ok) throw new Error(`API-Football error: ${res.status} ${await res.text()}`);
   const json = await res.json();
-  console.log(`Response for ${path}: ${json.results} results, errors: ${JSON.stringify(json.errors)}`);
+  if (json.errors && Object.keys(json.errors).length > 0) {
+    console.error("API errors:", JSON.stringify(json.errors));
+  }
+  console.log(`Results for ${path}: ${json.results}`);
   return json.response ?? [];
 }
 
@@ -42,14 +48,28 @@ Deno.serve(async (req) => {
 
     const summary = { teams: 0, matches: 0, predictions: 0, odds: 0 };
 
-    for (const league of LEAGUES) {
-      // Fetch upcoming & completed fixtures
-      const [upcoming, completed] = await Promise.all([
-        apiFetch(`/fixtures?league=${league.id}&season=${SEASON}&next=15`, apiKey),
-        apiFetch(`/fixtures?league=${league.id}&season=${SEASON}&last=20`, apiKey),
-      ]);
+    // Fetch matches from recent rounds and upcoming rounds of 2024-25 season
+    // Completed: Nov-Dec 2024, Upcoming: Jan-May 2025
+    const dateRanges = [
+      { from: "2024-11-01", to: "2024-12-31", type: "completed" },
+      { from: "2025-01-01", to: "2025-05-31", type: "upcoming" },
+    ];
 
-      const allFixtures = [...upcoming, ...completed];
+    for (const league of LEAGUES) {
+      const allFixtures: any[] = [];
+
+      for (const range of dateRanges) {
+        const fixtures = await apiFetch(
+          `/fixtures?league=${league.id}&season=${SEASON}&from=${range.from}&to=${range.to}`,
+          apiKey
+        );
+        for (const f of fixtures) {
+          f._rangeType = range.type;
+        }
+        allFixtures.push(...fixtures);
+      }
+
+      if (allFixtures.length === 0) continue;
 
       // Upsert teams
       const teamsMap = new Map<number, any>();
@@ -71,10 +91,10 @@ Deno.serve(async (req) => {
       if (teamsMap.size > 0) {
         const { error: te } = await supabase
           .from("teams")
-          .upsert(
-            Array.from(teamsMap.values()),
-            { onConflict: "api_football_id", ignoreDuplicates: false }
-          );
+          .upsert(Array.from(teamsMap.values()), {
+            onConflict: "api_football_id",
+            ignoreDuplicates: false,
+          });
         if (te) console.error("teams upsert error:", te);
         else summary.teams += teamsMap.size;
       }
@@ -87,29 +107,36 @@ Deno.serve(async (req) => {
         .in("api_football_id", apiIds);
       const teamUuidMap = new Map<number, string>();
       for (const t of dbTeams ?? []) {
-        teamUuidMap.set(t.api_football_id, t.id);
+        teamUuidMap.set(t.api_football_id!, t.id);
       }
 
       // Upsert matches
-      const matchRows = allFixtures.map((f: any) => {
-        const isFinished = f.fixture.status.short === "FT";
-        return {
-          api_football_id: f.fixture.id,
-          match_date: f.fixture.date,
-          team_home_id: teamUuidMap.get(f.teams.home.id),
-          team_away_id: teamUuidMap.get(f.teams.away.id),
-          goals_home: isFinished ? f.goals.home : null,
-          goals_away: isFinished ? f.goals.away : null,
-          status: isFinished ? "completed" : "upcoming",
-          league: league.name,
-          round: f.league.round ?? null,
-        };
-      }).filter((m: any) => m.team_home_id && m.team_away_id);
+      const matchRows = allFixtures
+        .map((f: any) => {
+          const isFinished = f.fixture.status.short === "FT";
+          // For completed season matches from "upcoming" range, still mark as completed
+          const status = isFinished ? "completed" : "upcoming";
+          return {
+            api_football_id: f.fixture.id,
+            match_date: f.fixture.date,
+            team_home_id: teamUuidMap.get(f.teams.home.id),
+            team_away_id: teamUuidMap.get(f.teams.away.id),
+            goals_home: isFinished ? f.goals.home : null,
+            goals_away: isFinished ? f.goals.away : null,
+            status,
+            league: league.name,
+            round: f.league.round ?? null,
+          };
+        })
+        .filter((m: any) => m.team_home_id && m.team_away_id);
 
       if (matchRows.length > 0) {
         const { error: me } = await supabase
           .from("matches")
-          .upsert(matchRows, { onConflict: "api_football_id", ignoreDuplicates: false });
+          .upsert(matchRows, {
+            onConflict: "api_football_id",
+            ignoreDuplicates: false,
+          });
         if (me) console.error("matches upsert error:", me);
         else summary.matches += matchRows.length;
       }
@@ -122,80 +149,50 @@ Deno.serve(async (req) => {
         .in("api_football_id", fixtureIds);
       const matchUuidMap = new Map<number, string>();
       for (const m of dbMatches ?? []) {
-        matchUuidMap.set(m.api_football_id, m.id);
+        matchUuidMap.set(m.api_football_id!, m.id);
       }
 
-      // Fetch predictions for upcoming only (to save API calls)
-      for (const f of upcoming.slice(0, 5)) {
+      // Fetch predictions for a subset (save API calls, 5 per league)
+      const fixturesForPredictions = allFixtures.slice(0, 5);
+      for (const f of fixturesForPredictions) {
         try {
-          const preds = await apiFetch(`/predictions?fixture=${f.fixture.id}`, apiKey);
+          const preds = await apiFetch(
+            `/predictions?fixture=${f.fixture.id}`,
+            apiKey
+          );
           if (preds.length > 0) {
             const p = preds[0];
             const matchId = matchUuidMap.get(f.fixture.id);
             if (matchId) {
-              const homeWin = parseFloat(p.predictions.percent.home?.replace("%", "") ?? "0") / 100;
-              const draw = parseFloat(p.predictions.percent.draw?.replace("%", "") ?? "0") / 100;
-              const awayWin = parseFloat(p.predictions.percent.away?.replace("%", "") ?? "0") / 100;
+              const homeWin =
+                parseFloat(p.predictions.percent.home?.replace("%", "") ?? "0") / 100;
+              const draw =
+                parseFloat(p.predictions.percent.draw?.replace("%", "") ?? "0") / 100;
+              const awayWin =
+                parseFloat(p.predictions.percent.away?.replace("%", "") ?? "0") / 100;
               const xgHome = parseFloat(p.predictions.goals?.home ?? "1.2");
               const xgAway = parseFloat(p.predictions.goals?.away ?? "1.0");
               const totalXg = xgHome + xgAway;
 
-              const { error: pe } = await supabase
-                .from("predictions")
-                .upsert(
-                  {
-                    match_id: matchId,
-                    home_win: homeWin,
-                    draw: draw,
-                    away_win: awayWin,
-                    expected_goals_home: xgHome,
-                    expected_goals_away: xgAway,
-                    over_under_25: totalXg > 2.5 ? "over" : "under",
-                    model_confidence: Math.max(homeWin, draw, awayWin),
-                  },
-                  { onConflict: "match_id" }
-                );
+              const { error: pe } = await supabase.from("predictions").upsert(
+                {
+                  match_id: matchId,
+                  home_win: homeWin,
+                  draw: draw,
+                  away_win: awayWin,
+                  expected_goals_home: xgHome,
+                  expected_goals_away: xgAway,
+                  over_under_25: totalXg > 2.5 ? "over" : "under",
+                  model_confidence: Math.max(homeWin, draw, awayWin),
+                },
+                { onConflict: "match_id" }
+              );
               if (pe) console.error("prediction upsert error:", pe);
               else summary.predictions++;
             }
           }
         } catch (e) {
-          console.error(`prediction fetch error for fixture ${f.fixture.id}:`, e);
-        }
-      }
-
-      // Fetch odds for upcoming (first 5 to save API calls)
-      for (const f of upcoming.slice(0, 5)) {
-        try {
-          const oddsData = await apiFetch(`/odds?fixture=${f.fixture.id}`, apiKey);
-          if (oddsData.length > 0) {
-            const bookmaker = oddsData[0].bookmakers?.[0];
-            const matchWinner = bookmaker?.bets?.find((b: any) => b.name === "Match Winner");
-            if (matchWinner) {
-              const matchId = matchUuidMap.get(f.fixture.id);
-              if (matchId) {
-                const homeOdds = parseFloat(matchWinner.values.find((v: any) => v.value === "Home")?.odd ?? "2.0");
-                const drawOdds = parseFloat(matchWinner.values.find((v: any) => v.value === "Draw")?.odd ?? "3.0");
-                const awayOdds = parseFloat(matchWinner.values.find((v: any) => v.value === "Away")?.odd ?? "3.5");
-
-                const { error: oe } = await supabase
-                  .from("odds")
-                  .upsert(
-                    {
-                      match_id: matchId,
-                      home_win_odds: homeOdds,
-                      draw_odds: drawOdds,
-                      away_win_odds: awayOdds,
-                    },
-                    { onConflict: "match_id" }
-                  );
-                if (oe) console.error("odds upsert error:", oe);
-                else summary.odds++;
-              }
-            }
-          }
-        } catch (e) {
-          console.error(`odds fetch error for fixture ${f.fixture.id}:`, e);
+          console.error(`prediction error for ${f.fixture.id}:`, e);
         }
       }
     }
