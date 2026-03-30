@@ -4,6 +4,7 @@ import { MatchCard } from "@/components/MatchCard";
 import { LeagueFilter } from "@/components/LeagueFilter";
 import { useUpcomingMatches, useCompletedMatches } from "@/hooks/useMatches";
 import { useSyncFootballData } from "@/hooks/useSync";
+import { useSyncSportradarData } from "@/hooks/useSportradar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Activity, Clock, RefreshCw } from "lucide-react";
@@ -14,11 +15,16 @@ const Index = () => {
   const { data: upcoming, isLoading: loadingUp } = useUpcomingMatches(league);
   const { data: completed, isLoading: loadingDone } = useCompletedMatches(league);
   const sync = useSyncFootballData();
+  const srSync = useSyncSportradarData();
 
   const handleSync = () => {
     sync.mutate(undefined, {
-      onSuccess: (data) => toast.success(`Synced! ${data?.summary?.matches ?? 0} matches updated.`),
-      onError: (err) => toast.error(`Sync failed: ${err.message}`),
+      onSuccess: (data) => toast.success(`API-Football synced! ${data?.summary?.matches ?? 0} matches.`),
+      onError: (err) => toast.error(`API-Football sync failed: ${err.message}`),
+    });
+    srSync.mutate(undefined, {
+      onSuccess: (data) => toast.success(`Sportradar synced! ${data?.summary?.probabilitiesSynced ?? 0} probabilities.`),
+      onError: (err) => toast.error(`Sportradar sync failed: ${err.message}`),
     });
   };
 
@@ -40,11 +46,11 @@ const Index = () => {
             variant="outline"
             size="sm"
             onClick={handleSync}
-            disabled={sync.isPending}
+            disabled={sync.isPending || srSync.isPending}
             className="shrink-0"
           >
-            <RefreshCw className={`h-4 w-4 mr-1 ${sync.isPending ? "animate-spin" : ""}`} />
-            {sync.isPending ? "Syncing…" : "Sync Live Data"}
+            <RefreshCw className={`h-4 w-4 mr-1 ${(sync.isPending || srSync.isPending) ? "animate-spin" : ""}`} />
+            {(sync.isPending || srSync.isPending) ? "Syncing…" : "Sync Live Data"}
           </Button>
         </div>
 

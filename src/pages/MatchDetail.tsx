@@ -3,6 +3,8 @@ import { Header } from "@/components/Header";
 import { useMatch } from "@/hooks/useMatches";
 import { useHeadToHead } from "@/hooks/useH2H";
 import { ProbabilityBar } from "@/components/ProbabilityBar";
+import { FunFactsCard } from "@/components/FunFactsCard";
+import { MatchInsightsCard } from "@/components/MatchInsightsCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -208,6 +210,12 @@ export default function MatchDetail() {
           </Card>
         )}
         {h2hLoading && <Skeleton className="h-48" />}
+
+        {/* Sportradar Fun Facts */}
+        <FunFactsCard sportradarEventId={match.sportradar_id} />
+
+        {/* Sportradar AI Insights */}
+        <MatchInsightsCard sportradarEventId={match.sportradar_id} />
       </main>
     </div>
   );

@@ -16,14 +16,17 @@ export type Database = {
     Tables: {
       matches: {
         Row: {
+          ai_insights: string | null
           api_football_id: number | null
           created_at: string
+          fun_facts: string[] | null
           goals_away: number | null
           goals_home: number | null
           id: string
           league: string
           match_date: string
           round: string | null
+          sportradar_id: string | null
           status: string
           team_away_id: string
           team_home_id: string
@@ -31,14 +34,17 @@ export type Database = {
           xg_home: number | null
         }
         Insert: {
+          ai_insights?: string | null
           api_football_id?: number | null
           created_at?: string
+          fun_facts?: string[] | null
           goals_away?: number | null
           goals_home?: number | null
           id?: string
           league: string
           match_date: string
           round?: string | null
+          sportradar_id?: string | null
           status?: string
           team_away_id: string
           team_home_id: string
@@ -46,14 +52,17 @@ export type Database = {
           xg_home?: number | null
         }
         Update: {
+          ai_insights?: string | null
           api_football_id?: number | null
           created_at?: string
+          fun_facts?: string[] | null
           goals_away?: number | null
           goals_home?: number | null
           id?: string
           league?: string
           match_date?: string
           round?: string | null
+          sportradar_id?: string | null
           status?: string
           team_away_id?: string
           team_home_id?: string
@@ -168,6 +177,7 @@ export type Database = {
           league: string
           logo_url: string | null
           name: string
+          sportradar_id: string | null
         }
         Insert: {
           api_football_id?: number | null
@@ -177,6 +187,7 @@ export type Database = {
           league: string
           logo_url?: string | null
           name: string
+          sportradar_id?: string | null
         }
         Update: {
           api_football_id?: number | null
@@ -186,6 +197,7 @@ export type Database = {
           league?: string
           logo_url?: string | null
           name?: string
+          sportradar_id?: string | null
         }
         Relationships: []
       }
