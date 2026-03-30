@@ -6,6 +6,7 @@ import { ProbabilityBar } from "@/components/ProbabilityBar";
 import { FunFactsCard } from "@/components/FunFactsCard";
 import { MatchInsightsCard } from "@/components/MatchInsightsCard";
 import { StatsBombSection } from "@/components/StatsBombSection";
+import { AIInsightsCard } from "@/components/AIInsightsCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
