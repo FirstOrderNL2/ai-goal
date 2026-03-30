@@ -1,63 +1,86 @@
 
 
-# StatsBomb Open Data Integration + Fix Runtime Error
+# Current Status & Next Phase Plan
 
-## Analysis: StatsBomb Open Data
+## Current Bugs and Issues
 
-StatsBomb provides **free, high-quality football event data** as static JSON files hosted on GitHub. No API key needed — data is fetched directly from raw GitHub URLs.
+### 1. Console Ref Warnings (Low severity)
+`MatchInsightsCard` and `StatsBombSection` are function components receiving refs from the parent. The console shows "Function components cannot be given refs" warnings. These need wrapping with `React.forwardRef` or the parent needs to stop passing refs.
 
-**Data structure:**
-- `competitions.json` — list of all available competitions/seasons
-- `data/matches/{competition_id}/{season_id}.json` — match listings per season
-- `data/events/{match_id}.json` — detailed event-level data (passes, shots, tackles, etc.)
-- `data/lineups/{match_id}.json` — lineup data per match
-- `data/three-sixty/{match_id}.json` — StatsBomb 360 freeze-frame data
+### 2. Sportradar Sync Partial Failure
+Edge function logs show `SR API error 500 for /seasons/sr:season:118691/probabilities.json` (La Liga). The sync continues but La Liga probabilities are missing. The code handles this gracefully (returns null), but the season IDs may be stale or Sportradar's trial may not cover all seasons. Should add fallback logic or update season IDs.
 
-**Available competitions include:** Premier League, La Liga, Bundesliga, Champions League, World Cup, Women's Super League, and more. Covers select seasons with granular event data (every pass, shot, dribble, tackle with x/y coordinates).
+### 3. Sportradar League Name Mismatch
+The sync function uses league names like `"premier_league"`, `"la_liga"`, `"serie_a"` but the DB and frontend use `"Premier League"`, `"La Liga"`, `"Serie A"`. This means Sportradar team name matching may fail since the league filter won't align. The `config.league` value in `sync-sportradar-data` should match the DB values.
 
-**Key value for your project:** StatsBomb provides deep event-level data (shot maps, pass networks, xG per shot) that neither API-Football nor Sportradar offer for free. This is historical data only (no live/upcoming matches), but it's excellent for enriching match analysis and building visualizations.
+### 4. Sync Season/Date Hardcoding
+`sync-football-data` hardcodes `SEASON = 2024` and date ranges `2024-11-01` to `2025-05-31`. These will become stale. Similarly, Sportradar season IDs are hardcoded. Should dynamically determine current season.
 
-## Plan
+### 5. Sportradar useSportradarData Hook Issue
+In `useSportradar.ts`, `srProxy` calls `supabase.functions.invoke` first (unused result), then manually constructs a fetch URL. The initial invoke call is dead code wasting a request.
 
-### Step 1: Fix Runtime Error (hooks violation)
-The `MatchDetail.tsx` component calls `useHeadToHead` after early returns on lines 18 and 30. Move all hooks to the top of the component, before any conditional returns.
+### 6. No Authentication
+All tables are public read-only. The sync functions use service role keys, but there's no user auth — anyone can trigger the sync button. Not critical for MVP but a concern.
 
-### Step 2: Create StatsBomb Data Fetching Utility
-Create `src/lib/statsbomb.ts` with functions to fetch from raw GitHub URLs:
-- `fetchCompetitions()` — get all available competitions
-- `fetchMatches(competitionId, seasonId)` — get matches for a season
-- `fetchEvents(matchId)` — get event data for a match
-- `fetchLineups(matchId)` — get lineups for a match
+### 7. Missing `unique` constraint on `predictions.match_id`
+The sync functions do `upsert` with `onConflict: "match_id"`, but the schema doesn't show a unique constraint on `predictions.match_id`. This would cause upserts to fail silently or insert duplicates.
 
-Base URL: `https://raw.githubusercontent.com/statsbomb/open-data/master/data/`
+### 8. Teams Logo Display
+The `Teams` page shows team initials instead of logos even though `logo_url` is stored. Should display actual logos.
 
-No edge function needed — these are public static files, fetchable directly from the browser.
+---
 
-### Step 3: Create Frontend Hooks
-- `useStatsBombCompetitions()` — list available competitions
-- `useStatsBombMatches(competitionId, seasonId)` — matches in a season
-- `useStatsBombEvents(matchId)` — event data for a match
+## Next Phase Plan
 
-### Step 4: Add StatsBomb Data Section to MatchDetail
-For matches that can be linked to StatsBomb data (by team name matching), show:
-- **Shot map** — all shots with xG values plotted on a pitch
-- **Key events** timeline — goals, cards, substitutions
-- **Pass statistics** — completion rates, key passes
+### Phase 1: Fix Existing Bugs (Priority)
 
-### Step 5: Add StatsBomb Explorer Page (optional)
-A new `/statsbomb` route letting users browse StatsBomb's free competitions, view historical matches, and explore event data — useful for research and analysis beyond the prediction dashboard.
+**1.1 Fix ref warnings** — Remove ref passing to `FunFactsCard`, `MatchInsightsCard`, and `StatsBombSection` in MatchDetail, or wrap them with `forwardRef`.
+
+**1.2 Fix Sportradar league name mismatch** — Update `sync-sportradar-data` to use `"Premier League"`, `"La Liga"`, `"Serie A"` instead of snake_case.
+
+**1.3 Remove dead invoke call** in `useSportradar.ts` `srProxy` function.
+
+**1.4 Add unique constraint on `predictions.match_id`** if missing, to ensure upserts work correctly.
+
+**1.5 Dynamic season dates** — Update `sync-football-data` to calculate current season dates dynamically instead of hardcoding.
+
+### Phase 2: AI-Powered Predictions (Core Feature)
+
+**2.1 Create AI prediction edge function** — Use Lovable AI (Gemini) to generate match predictions based on:
+- Team form (recent results from DB)
+- H2H history
+- Sportradar probabilities
+- API-Football predictions
+- StatsBomb historical data (if available)
+
+**2.2 AI insights generation** — Generate pre-match analysis text using Lovable AI, stored in `matches.ai_insights`. Show as a rich card on MatchDetail.
+
+**2.3 Prediction confidence scoring** — Combine multiple data sources (API-Football predictions, Sportradar probabilities, AI model output) into a blended confidence score.
+
+### Phase 3: UI/UX Improvements
+
+**3.1 Team logos on Teams page** — Display actual logos from `logo_url`.
+
+**3.2 Standings page** — New `/standings` route using Sportradar standings endpoint.
+
+**3.3 Lineups display** — Show formations and lineups on MatchDetail using Sportradar lineups endpoint.
+
+**3.4 Mobile responsiveness** — Current viewport is 411px; ensure all cards, filters, and navigation work well on mobile.
+
+**3.5 Dark/light theme toggle** — Add theme switching.
+
+### Phase 4: Data Pipeline Robustness
+
+**4.1 Scheduled sync** — Add a cron-like mechanism (pg_cron or manual) to auto-sync data daily.
+
+**4.2 Error handling & retry** — Better error handling in sync functions with retry logic for API failures.
+
+**4.3 Rate limit awareness** — Track API call counts to avoid exceeding free tier limits (100/day API-Football, 1000/day Sportradar).
 
 ## Technical Details
 
-**No API key required.** Data is fetched via plain HTTP GET from GitHub raw URLs:
-```text
-https://raw.githubusercontent.com/statsbomb/open-data/master/data/competitions.json
-https://raw.githubusercontent.com/statsbomb/open-data/master/data/matches/{comp_id}/{season_id}.json
-https://raw.githubusercontent.com/statsbomb/open-data/master/data/events/{match_id}.json
-https://raw.githubusercontent.com/statsbomb/open-data/master/data/lineups/{match_id}.json
-```
-
-**Matching to existing data:** StatsBomb uses its own match/team IDs. Linking to your existing matches will be done by team name + date matching. Not all matches will have StatsBomb data — only those in covered competitions/seasons.
-
-**License:** Free for non-commercial use. Must credit "StatsBomb" and use their logo when publishing analysis based on this data.
+- **AI predictions** will use an edge function calling `https://ai.gateway.lovable.dev/v1/chat/completions` with `google/gemini-3-flash-preview`, passing structured match context and using tool calling to extract structured prediction JSON.
+- **Unique constraint migration**: `ALTER TABLE predictions ADD CONSTRAINT predictions_match_id_unique UNIQUE (match_id);`
+- **Dynamic season**: Calculate from current date — if month >= 8, season = current year, else season = previous year.
+- The Sportradar league name fix is a one-line change per league in the `LEAGUE_SEASONS` config object.
 
