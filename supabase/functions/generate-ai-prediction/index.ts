@@ -78,6 +78,33 @@ Deno.serve(async (req) => {
         .limit(10),
     ]);
 
+    // Build learning context from past reviews
+    let learningBlock = "";
+    if (pastReviews && pastReviews.length > 0) {
+      const avgScore = pastReviews.reduce((s, r) => s + (Number(r.ai_accuracy_score) || 0), 0) / pastReviews.length;
+      const relevantReviews = pastReviews.filter(
+        (r) =>
+          r.team_home_id === match.team_home_id ||
+          r.team_away_id === match.team_away_id ||
+          r.team_home_id === match.team_away_id ||
+          r.team_away_id === match.team_home_id
+      );
+
+      learningBlock = `\n\nLEARNING FROM PAST PREDICTIONS (use these lessons to improve this prediction):
+Your recent average accuracy score: ${Math.round(avgScore)}/100 across ${pastReviews.length} reviewed matches.
+${relevantReviews.length > 0
+        ? `\nRelevant past reviews involving these teams:\n${relevantReviews
+            .map((r) => `- ${(r as any).home_team?.name ?? "?"} vs ${(r as any).away_team?.name ?? "?"} (score: ${r.ai_accuracy_score}/100): ${r.ai_post_match_review?.slice(0, 300)}...`)
+            .join("\n")}`
+        : `\nRecent reviews (other matches):\n${pastReviews
+            .slice(0, 3)
+            .map((r) => `- ${(r as any).home_team?.name ?? "?"} vs ${(r as any).away_team?.name ?? "?"} (score: ${r.ai_accuracy_score}/100): ${r.ai_post_match_review?.slice(0, 200)}...`)
+            .join("\n")}`
+      }
+
+Apply the lessons above. Avoid repeating the same mistakes.`;
+    }
+
     const prompt = `You are an expert football analyst. Analyze this match and provide detailed insights.
 
 Match: ${context.match.homeTeam} vs ${context.match.awayTeam}
@@ -95,6 +122,7 @@ ${context.odds ? `Odds: Home ${context.odds.home}, Draw ${context.odds.draw}, Aw
 
 ${context.homeRecentForm?.length ? `${context.match.homeTeam} recent form: ${context.homeRecentForm.join(", ")}` : ""}
 ${context.awayRecentForm?.length ? `${context.match.awayTeam} recent form: ${context.awayRecentForm.join(", ")}` : ""}
+${learningBlock}
 
 Provide a concise analysis (3-5 paragraphs) covering:
 1. Key factors that will influence the outcome
