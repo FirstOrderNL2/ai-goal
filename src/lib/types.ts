@@ -20,6 +20,9 @@ export interface Match {
   league: string;
   api_football_id: number | null;
   round: string | null;
+  sportradar_id: string | null;
+  fun_facts: string[] | null;
+  ai_insights: string | null;
   home_team?: Team;
   away_team?: Team;
   prediction?: Prediction;
