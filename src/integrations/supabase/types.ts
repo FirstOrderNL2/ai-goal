@@ -177,6 +177,7 @@ export type Database = {
           league: string
           logo_url: string | null
           name: string
+          sportmonks_id: number | null
           sportradar_id: string | null
         }
         Insert: {
@@ -187,6 +188,7 @@ export type Database = {
           league: string
           logo_url?: string | null
           name: string
+          sportmonks_id?: number | null
           sportradar_id?: string | null
         }
         Update: {
@@ -197,6 +199,7 @@ export type Database = {
           league?: string
           logo_url?: string | null
           name?: string
+          sportmonks_id?: number | null
           sportradar_id?: string | null
         }
         Relationships: []
