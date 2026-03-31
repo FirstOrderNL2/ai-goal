@@ -409,14 +409,22 @@ Deno.serve(async (req) => {
           const threeWay = markets.find((m: any) => m.name === "3way");
           if (!threeWay?.outcomes) continue;
 
-          const homeWin = threeWay.outcomes.find((o: any) => o.name === "home_team_winner")?.probability || 0;
-          const draw = threeWay.outcomes.find((o: any) => o.name === "draw")?.probability || 0;
-          const awayWin = threeWay.outcomes.find((o: any) => o.name === "away_team_winner")?.probability || 0;
+          let homeWin = threeWay.outcomes.find((o: any) => o.name === "home_team_winner")?.probability || 0;
+          let drawProb = threeWay.outcomes.find((o: any) => o.name === "draw")?.probability || 0;
+          let awayWin = threeWay.outcomes.find((o: any) => o.name === "away_team_winner")?.probability || 0;
+
+          // Sportradar returns percentages (e.g. 45) — convert to decimal for numeric(4,3)
+          if (homeWin > 1 || drawProb > 1 || awayWin > 1) {
+            homeWin = homeWin / 100;
+            drawProb = drawProb / 100;
+            awayWin = awayWin / 100;
+          }
 
           const ouMarket = markets.find((m: any) => m.name === "total" && m.specifier === "2.5");
           let overUnder = "under";
           if (ouMarket?.outcomes) {
-            const overProb = ouMarket.outcomes.find((o: any) => o.name === "over")?.probability || 0;
+            let overProb = ouMarket.outcomes.find((o: any) => o.name === "over")?.probability || 0;
+            if (overProb > 1) overProb = overProb / 100;
             overUnder = overProb > 0.5 ? "over" : "under";
           }
 
