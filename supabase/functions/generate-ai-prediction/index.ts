@@ -97,7 +97,10 @@ Deno.serve(async (req) => {
     const awayName = match.away_team?.name ?? "Away";
 
     // Fetch live web context (injuries, lineups, news)
-    const liveContext = await fetchMatchContext(homeName, awayName, match.league, match.match_date, supabaseUrl, serviceKey);
+    const liveContext = await fetchMatchContext(
+      homeName, awayName, match.league, match.match_date, supabaseUrl, serviceKey,
+      match.api_football_id, match.home_team?.api_football_id, match.away_team?.api_football_id
+    );
 
     // Build learning context from past reviews
     let learningBlock = "";

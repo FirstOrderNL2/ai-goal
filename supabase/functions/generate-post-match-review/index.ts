@@ -6,7 +6,44 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-async function fetchPostMatchContext(homeName: string, awayName: string, league: string, matchDate: string, supabaseUrl: string, serviceKey: string): Promise<string> {
+const API_BASE = "https://v3.football.api-sports.io";
+
+async function apiFootballFetch(path: string, apiKey: string): Promise<any[]> {
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: { "x-apisports-key": apiKey },
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return json.response ?? [];
+  } catch (e) {
+    console.error(`API-Football fetch failed for ${path}:`, e);
+    return [];
+  }
+}
+
+function formatStatistics(stats: any[]): string {
+  if (!stats.length) return "";
+  return stats.map((s: any) => {
+    const team = s.team?.name ?? "?";
+    const items = (s.statistics ?? []).map((st: any) => `${st.type}: ${st.value ?? "N/A"}`).join(", ");
+    return `${team}: ${items}`;
+  }).join("\n");
+}
+
+function formatEvents(events: any[]): string {
+  if (!events.length) return "";
+  return events.map((e: any) => {
+    const min = e.time?.elapsed ?? "?";
+    const team = e.team?.name ?? "?";
+    const player = e.player?.name ?? "?";
+    const type = e.type ?? "";
+    const detail = e.detail ?? "";
+    return `${min}' ${team} — ${type} (${detail}): ${player}`;
+  }).join("\n");
+}
+
+async function fetchPostMatchContext(homeName: string, awayName: string, league: string, matchDate: string): Promise<string> {
   try {
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
     if (!lovableApiKey) return "";
@@ -95,8 +132,25 @@ Deno.serve(async (req) => {
     const homeName = match.home_team?.name ?? "Home";
     const awayName = match.away_team?.name ?? "Away";
 
+    // ── Fetch structured match stats from API-Football ──
+    let matchStatsBlock = "";
+    const apiKey = Deno.env.get("API_FOOTBALL_KEY");
+    if (apiKey && match.api_football_id) {
+      const [stats, events] = await Promise.all([
+        apiFootballFetch(`/fixtures/statistics?fixture=${match.api_football_id}`, apiKey),
+        apiFootballFetch(`/fixtures/events?fixture=${match.api_football_id}`, apiKey),
+      ]);
+      const statsStr = formatStatistics(stats);
+      const eventsStr = formatEvents(events);
+      if (statsStr || eventsStr) {
+        matchStatsBlock = `\nMATCH STATISTICS (API-Football):
+${statsStr ? statsStr : ""}
+${eventsStr ? `\nMATCH EVENTS:\n${eventsStr}` : ""}`;
+      }
+    }
+
     // Fetch post-match web context
-    const postMatchContext = await fetchPostMatchContext(homeName, awayName, match.league, match.match_date, supabaseUrl, serviceKey);
+    const postMatchContext = await fetchPostMatchContext(homeName, awayName, match.league, match.match_date);
 
     const prompt = `You are an expert football analyst performing a post-match review of your own prediction. Be brutally honest about what you got right and wrong.
 
@@ -118,6 +172,7 @@ Over/Under 2.5: ${prediction.over_under_25}
 Model confidence: ${Math.round(prediction.model_confidence * 100)}%` : ""}
 
 ${odds ? `ODDS: Home ${odds.home_win_odds}, Draw ${odds.draw_odds}, Away ${odds.away_win_odds}` : ""}
+${matchStatsBlock}
 ${postMatchContext ? `\nPOST-MATCH REPORTS FROM THE WEB:\n${postMatchContext}` : ""}
 
 INSTRUCTIONS:
