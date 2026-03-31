@@ -12,6 +12,7 @@ const EXTENDED_URL = "https://api.sportradar.com/soccer-extended/trial/v4/en";
 // Whitelist patterns (regex)
 const allowedPatterns = [
   /^\/competitions\.json$/,
+  /^\/competitions\/sr:competition:\d+\/seasons\.json$/,
   /^\/seasons\/sr:season:\d+\/schedules\.json$/,
   /^\/seasons\/sr:season:\d+\/probabilities\.json$/,
   /^\/seasons\/sr:season:\d+\/standings\.json$/,

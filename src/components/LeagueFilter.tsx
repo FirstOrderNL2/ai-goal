@@ -5,6 +5,8 @@ const leagues = [
   { value: "Premier League", label: "Premier League" },
   { value: "La Liga", label: "La Liga" },
   { value: "Serie A", label: "Serie A" },
+  { value: "Bundesliga", label: "Bundesliga" },
+  { value: "Ligue 1", label: "Ligue 1" },
 ];
 
 interface LeagueFilterProps {
