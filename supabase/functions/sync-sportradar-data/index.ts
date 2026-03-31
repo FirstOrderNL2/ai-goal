@@ -431,10 +431,10 @@ Deno.serve(async (req) => {
           predUpserts.push({
             match_id: matchId,
             home_win: homeWin,
-            draw: draw,
+            draw: drawProb,
             away_win: awayWin,
             over_under_25: overUnder,
-            model_confidence: Math.max(homeWin, draw, awayWin),
+            model_confidence: Math.max(homeWin, drawProb, awayWin),
             expected_goals_home: 0,
             expected_goals_away: 0,
           });
