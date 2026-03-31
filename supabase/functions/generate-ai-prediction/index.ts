@@ -6,7 +6,11 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-async function fetchMatchContext(homeName: string, awayName: string, league: string, matchDate: string, supabaseUrl: string, serviceKey: string): Promise<string> {
+async function fetchMatchContext(
+  homeName: string, awayName: string, league: string, matchDate: string,
+  supabaseUrl: string, serviceKey: string,
+  apiFootballId?: number | null, homeTeamApiId?: number | null, awayTeamApiId?: number | null
+): Promise<string> {
   try {
     const res = await fetch(`${supabaseUrl}/functions/v1/fetch-match-context`, {
       method: "POST",
@@ -14,7 +18,12 @@ async function fetchMatchContext(homeName: string, awayName: string, league: str
         "Content-Type": "application/json",
         "Authorization": `Bearer ${serviceKey}`,
       },
-      body: JSON.stringify({ home_team: homeName, away_team: awayName, league, match_date: matchDate }),
+      body: JSON.stringify({
+        home_team: homeName, away_team: awayName, league, match_date: matchDate,
+        api_football_id: apiFootballId ?? undefined,
+        home_team_api_id: homeTeamApiId ?? undefined,
+        away_team_api_id: awayTeamApiId ?? undefined,
+      }),
     });
     if (!res.ok) return "";
     const data = await res.json();
