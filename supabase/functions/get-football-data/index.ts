@@ -39,6 +39,8 @@ Deno.serve(async (req) => {
       "/standings",
       "/predictions",
       "/odds",
+      "/injuries",
+      "/sidelined",
     ];
 
     const cleanEndpoint = endpoint.split("?")[0];
