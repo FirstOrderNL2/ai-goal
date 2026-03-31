@@ -445,7 +445,6 @@ Deno.serve(async (req) => {
         }
       }
     }
-    }
 
     // Fix stale "upcoming" matches with past dates
     const { error: fixError } = await supabase
