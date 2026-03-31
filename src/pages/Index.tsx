@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Header } from "@/components/Header";
 import { MatchCard } from "@/components/MatchCard";
 import { LeagueFilter } from "@/components/LeagueFilter";
@@ -10,6 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Activity, Clock, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
+const SYNC_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
+const SYNC_KEY = "last_auto_sync";
+
 const Index = () => {
   const [league, setLeague] = useState("all");
   const { data: upcoming, isLoading: loadingUp } = useUpcomingMatches(league);
@@ -17,15 +20,36 @@ const Index = () => {
   const sync = useSyncFootballData();
   const srSync = useSyncSportradarData();
 
-  const handleSync = () => {
+  const runSync = () => {
     sync.mutate(undefined, {
       onSuccess: (data) => toast.success(`API-Football synced! ${data?.summary?.matches ?? 0} matches.`),
       onError: (err) => toast.error(`API-Football sync failed: ${err.message}`),
     });
     srSync.mutate(undefined, {
-      onSuccess: (data) => toast.success(`Sportradar synced! ${data?.summary?.probabilitiesSynced ?? 0} probabilities.`),
+      onSuccess: (data) => {
+        const s = data?.summary;
+        toast.success(`Sportradar synced! ${s?.matchesCreated ?? 0} new, ${s?.probabilitiesSynced ?? 0} probabilities.`);
+      },
       onError: (err) => toast.error(`Sportradar sync failed: ${err.message}`),
     });
+  };
+
+  // Auto-sync on load with 30-min cooldown
+  useEffect(() => {
+    const lastSync = parseInt(localStorage.getItem(SYNC_KEY) || "0", 10);
+    const now = Date.now();
+    if (now - lastSync > SYNC_COOLDOWN_MS) {
+      localStorage.setItem(SYNC_KEY, String(now));
+      // Small delay to let the page render first
+      const t = setTimeout(() => runSync(), 1000);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSync = () => {
+    localStorage.setItem(SYNC_KEY, String(Date.now()));
+    runSync();
   };
 
   return (

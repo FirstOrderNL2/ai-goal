@@ -6,6 +6,49 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+async function fetchPostMatchContext(homeName: string, awayName: string, league: string, matchDate: string, supabaseUrl: string, serviceKey: string): Promise<string> {
+  try {
+    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
+    if (!lovableApiKey) return "";
+
+    const prompt = `Search for post-match reports and analysis of this football match:
+
+${homeName} vs ${awayName}
+League: ${league}
+Date: ${matchDate}
+
+Find:
+1. Match report summary (key events, goals, red cards, substitutions)
+2. Manager post-match quotes
+3. Standout player performances
+4. Any controversial decisions or VAR incidents
+5. Key statistics from the match
+
+Be specific and factual. Format as plain text paragraphs.`;
+
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${lovableApiKey}`,
+      },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 1500,
+        temperature: 0.3,
+      }),
+    });
+
+    if (!res.ok) return "";
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || "";
+  } catch (e) {
+    console.error("Failed to fetch post-match context:", e);
+    return "";
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -20,12 +63,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, serviceKey);
 
-    // Fetch match with teams
     const { data: match } = await supabase
       .from("matches")
       .select("*, home_team:teams!matches_team_home_id_fkey(*), away_team:teams!matches_team_away_id_fkey(*)")
@@ -46,7 +87,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch prediction and odds
     const [{ data: prediction }, { data: odds }] = await Promise.all([
       supabase.from("predictions").select("*").eq("match_id", match_id).single(),
       supabase.from("odds").select("*").eq("match_id", match_id).single(),
@@ -54,6 +94,9 @@ Deno.serve(async (req) => {
 
     const homeName = match.home_team?.name ?? "Home";
     const awayName = match.away_team?.name ?? "Away";
+
+    // Fetch post-match web context
+    const postMatchContext = await fetchPostMatchContext(homeName, awayName, match.league, match.match_date, supabaseUrl, serviceKey);
 
     const prompt = `You are an expert football analyst performing a post-match review of your own prediction. Be brutally honest about what you got right and wrong.
 
@@ -75,6 +118,7 @@ Over/Under 2.5: ${prediction.over_under_25}
 Model confidence: ${Math.round(prediction.model_confidence * 100)}%` : ""}
 
 ${odds ? `ODDS: Home ${odds.home_win_odds}, Draw ${odds.draw_odds}, Away ${odds.away_win_odds}` : ""}
+${postMatchContext ? `\nPOST-MATCH REPORTS FROM THE WEB:\n${postMatchContext}` : ""}
 
 INSTRUCTIONS:
 1. Compare your prediction against the actual result
@@ -127,20 +171,17 @@ Then your detailed review in flowing paragraphs (3-4 paragraphs). No markdown he
     const aiData = await aiResponse.json();
     const rawContent = aiData.choices?.[0]?.message?.content || "";
 
-    // Parse score from first line
     const lines = rawContent.trim().split("\n");
-    let accuracyScore = 50; // default
+    let accuracyScore = 50;
     let review = rawContent;
 
     const firstLine = lines[0]?.trim();
     const parsed = parseInt(firstLine, 10);
     if (!isNaN(parsed) && parsed >= 0 && parsed <= 100) {
       accuracyScore = parsed;
-      // Remove the score line and any blank lines after it
       review = lines.slice(1).join("\n").trim();
     }
 
-    // Save to matches table
     await supabase
       .from("matches")
       .update({ ai_post_match_review: review, ai_accuracy_score: accuracyScore })

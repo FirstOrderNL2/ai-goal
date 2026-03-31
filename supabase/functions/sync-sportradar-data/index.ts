@@ -8,14 +8,12 @@ const corsHeaders = {
 
 const BASE_URL = "https://api.sportradar.com/soccer/trial/v4/en";
 
-// Centralized season config (mirrors src/lib/seasons.ts for edge function)
 const LEAGUE_SEASONS: Record<string, { seasonId: string; league: string; country: string }> = {
   "sr:competition:17": { seasonId: "sr:season:118689", league: "Premier League", country: "England" },
   "sr:competition:8": { seasonId: "sr:season:118691", league: "La Liga", country: "Spain" },
   "sr:competition:23": { seasonId: "sr:season:118699", league: "Serie A", country: "Italy" },
 };
 
-// Team name aliases for fuzzy matching
 const TEAM_NAME_ALIASES: Record<string, string> = {
   "internazionale": "inter milan",
   "inter milano": "inter milan",
@@ -97,6 +95,14 @@ function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function mapStatus(srStatus: string | undefined): string {
+  if (!srStatus) return "upcoming";
+  const s = srStatus.toLowerCase();
+  if (s === "closed" || s === "ended") return "completed";
+  if (s === "live" || s === "inprogress" || s === "halftime") return "live";
+  return "upcoming";
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -110,13 +116,52 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    const summary = { teamsMatched: 0, matchesMatched: 0, probabilitiesSynced: 0, errors: [] as string[] };
+    const summary = { teamsCreated: 0, teamsMatched: 0, matchesCreated: 0, matchesMatched: 0, probabilitiesSynced: 0, errors: [] as string[] };
 
+    // Load existing teams into lookup maps
     const { data: existingTeams } = await supabase.from("teams").select("id, name, sportradar_id");
     const teamsByName = new Map<string, any>();
+    const teamsBySrId = new Map<string, any>();
     existingTeams?.forEach((t) => {
-      teamsByName.set(t.name.toLowerCase(), t);
+      teamsByName.set(resolveTeamName(t.name), t);
+      if (t.sportradar_id) teamsBySrId.set(t.sportradar_id, t);
     });
+
+    // Helper: find or create a team
+    async function findOrCreateTeam(comp: any, league: string, country: string) {
+      // Check by sportradar_id first
+      if (teamsBySrId.has(comp.id)) return teamsBySrId.get(comp.id);
+
+      // Check by resolved name
+      const resolved = resolveTeamName(comp.name);
+      if (teamsByName.has(resolved)) {
+        const existing = teamsByName.get(resolved);
+        if (!existing.sportradar_id) {
+          await supabase.from("teams").update({ sportradar_id: comp.id }).eq("id", existing.id);
+          existing.sportradar_id = comp.id;
+          teamsBySrId.set(comp.id, existing);
+          summary.teamsMatched++;
+        }
+        return existing;
+      }
+
+      // Create new team
+      const { data: newTeam, error } = await supabase
+        .from("teams")
+        .insert({ name: comp.name, league, country, sportradar_id: comp.id })
+        .select("id, name, sportradar_id")
+        .single();
+
+      if (error) {
+        summary.errors.push(`Team insert error (${comp.name}): ${error.message}`);
+        return null;
+      }
+
+      teamsByName.set(resolveTeamName(newTeam.name), newTeam);
+      teamsBySrId.set(comp.id, newTeam);
+      summary.teamsCreated++;
+      return newTeam;
+    }
 
     for (const [_compId, config] of Object.entries(LEAGUE_SEASONS)) {
       console.log(`Syncing ${config.league} (${config.seasonId})...`);
@@ -131,46 +176,82 @@ Deno.serve(async (req) => {
 
       for (const sched of schedData.schedules) {
         const event = sched.sport_event;
+        const status = sched.sport_event_status;
         if (!event?.competitors || event.competitors.length < 2) continue;
 
         const homeComp = event.competitors.find((c: any) => c.qualifier === "home");
         const awayComp = event.competitors.find((c: any) => c.qualifier === "away");
         if (!homeComp || !awayComp) continue;
 
-        // Use alias-resolved names for matching
-        const homeResolved = resolveTeamName(homeComp.name);
-        const awayResolved = resolveTeamName(awayComp.name);
-        const homeTeam = teamsByName.get(homeResolved) ?? teamsByName.get(homeComp.name.toLowerCase());
-        const awayTeam = teamsByName.get(awayResolved) ?? teamsByName.get(awayComp.name.toLowerCase());
+        const homeTeam = await findOrCreateTeam(homeComp, config.league, config.country);
+        const awayTeam = await findOrCreateTeam(awayComp, config.league, config.country);
+        if (!homeTeam || !awayTeam) continue;
 
-        if (homeTeam && !homeTeam.sportradar_id) {
-          await supabase.from("teams").update({ sportradar_id: homeComp.id }).eq("id", homeTeam.id);
-          homeTeam.sportradar_id = homeComp.id;
-          summary.teamsMatched++;
-        }
-        if (awayTeam && !awayTeam.sportradar_id) {
-          await supabase.from("teams").update({ sportradar_id: awayComp.id }).eq("id", awayTeam.id);
-          awayTeam.sportradar_id = awayComp.id;
-          summary.teamsMatched++;
-        }
+        // Check if match already exists (by sportradar_id or by teams+date)
+        const { data: existingBySrId } = await supabase
+          .from("matches")
+          .select("id, sportradar_id, status")
+          .eq("sportradar_id", event.id)
+          .limit(1);
 
-        if (homeTeam && awayTeam) {
-          const eventDate = event.start_time?.substring(0, 10);
-          if (eventDate) {
-            const { data: matchRows } = await supabase
-              .from("matches")
-              .select("id, sportradar_id")
-              .eq("team_home_id", homeTeam.id)
-              .eq("team_away_id", awayTeam.id)
-              .gte("match_date", eventDate + "T00:00:00")
-              .lte("match_date", eventDate + "T23:59:59")
-              .limit(1);
-
-            if (matchRows && matchRows.length > 0 && !matchRows[0].sportradar_id) {
-              await supabase.from("matches").update({ sportradar_id: event.id }).eq("id", matchRows[0].id);
-              summary.matchesMatched++;
-            }
+        if (existingBySrId && existingBySrId.length > 0) {
+          // Update scores if completed
+          const matchStatus = mapStatus(status?.status);
+          const updateData: any = { status: matchStatus };
+          if (matchStatus === "completed" && status?.home_score != null) {
+            updateData.goals_home = status.home_score;
+            updateData.goals_away = status.away_score;
           }
+          await supabase.from("matches").update(updateData).eq("id", existingBySrId[0].id);
+          summary.matchesMatched++;
+          continue;
+        }
+
+        // Check by teams + date
+        const eventDate = event.start_time?.substring(0, 10);
+        if (eventDate) {
+          const { data: existingByTeams } = await supabase
+            .from("matches")
+            .select("id, sportradar_id")
+            .eq("team_home_id", homeTeam.id)
+            .eq("team_away_id", awayTeam.id)
+            .gte("match_date", eventDate + "T00:00:00")
+            .lte("match_date", eventDate + "T23:59:59")
+            .limit(1);
+
+          if (existingByTeams && existingByTeams.length > 0) {
+            if (!existingByTeams[0].sportradar_id) {
+              await supabase.from("matches").update({ sportradar_id: event.id }).eq("id", existingByTeams[0].id);
+            }
+            summary.matchesMatched++;
+            continue;
+          }
+        }
+
+        // Create new match
+        const matchStatus = mapStatus(status?.status);
+        const matchData: any = {
+          team_home_id: homeTeam.id,
+          team_away_id: awayTeam.id,
+          match_date: event.start_time || `${eventDate}T00:00:00Z`,
+          league: config.league,
+          status: matchStatus,
+          sportradar_id: event.id,
+          round: event.sport_event_context?.round?.number
+            ? `Regular Season - ${event.sport_event_context.round.number}`
+            : null,
+        };
+
+        if (matchStatus === "completed" && status?.home_score != null) {
+          matchData.goals_home = status.home_score;
+          matchData.goals_away = status.away_score;
+        }
+
+        const { error: matchError } = await supabase.from("matches").insert(matchData);
+        if (matchError) {
+          summary.errors.push(`Match insert error: ${matchError.message}`);
+        } else {
+          summary.matchesCreated++;
         }
       }
 
@@ -208,7 +289,6 @@ Deno.serve(async (req) => {
             overUnder = overProb > 0.5 ? "over" : "under";
           }
 
-          // Check if existing prediction has real xG values — don't overwrite with zeros
           const { data: existingPred } = await supabase
             .from("predictions")
             .select("expected_goals_home, expected_goals_away")
@@ -227,7 +307,6 @@ Deno.serve(async (req) => {
             model_confidence: Math.max(homeWin, draw, awayWin),
           };
 
-          // Only set xG if no real values exist
           if (!hasRealXg) {
             upsertData.expected_goals_home = 0;
             upsertData.expected_goals_away = 0;
