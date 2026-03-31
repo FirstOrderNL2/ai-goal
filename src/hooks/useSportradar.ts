@@ -55,14 +55,48 @@ export function useSportradarH2H(
   return useSportradarData(path, !!competitorId1 && !!competitorId2);
 }
 
+const LEAGUE_KEYS = ["premier_league", "la_liga", "serie_a", "bundesliga", "ligue_1"];
+
 export function useSyncSportradarData() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("sync-sportradar-data");
-      if (error) throw error;
-      return data;
+      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      const combinedSummary = { teamsCreated: 0, teamsMatched: 0, matchesCreated: 0, matchesMatched: 0, probabilitiesSynced: 0, errors: [] as string[] };
+
+      // Sync one league at a time to avoid timeouts
+      for (const key of LEAGUE_KEYS) {
+        try {
+          const url = `https://${projectId}.supabase.co/functions/v1/sync-sportradar-data?league=${key}`;
+          const res = await fetch(url, {
+            method: "POST",
+            headers: {
+              "apikey": anonKey,
+              "Authorization": `Bearer ${anonKey}`,
+              "Content-Type": "application/json",
+            },
+          });
+          if (!res.ok) {
+            combinedSummary.errors.push(`${key}: HTTP ${res.status}`);
+            continue;
+          }
+          const data = await res.json();
+          if (data.summary) {
+            combinedSummary.teamsCreated += data.summary.teamsCreated || 0;
+            combinedSummary.teamsMatched += data.summary.teamsMatched || 0;
+            combinedSummary.matchesCreated += data.summary.matchesCreated || 0;
+            combinedSummary.matchesMatched += data.summary.matchesMatched || 0;
+            combinedSummary.probabilitiesSynced += data.summary.probabilitiesSynced || 0;
+            if (data.summary.errors?.length) combinedSummary.errors.push(...data.summary.errors);
+          }
+        } catch (e: any) {
+          combinedSummary.errors.push(`${key}: ${e.message}`);
+        }
+      }
+
+      return { summary: combinedSummary };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["matches"] });

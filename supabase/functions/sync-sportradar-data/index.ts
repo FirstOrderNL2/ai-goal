@@ -8,13 +8,16 @@ const corsHeaders = {
 
 const BASE_URL = "https://api.sportradar.com/soccer/trial/v4/en";
 
-const LEAGUE_SEASONS: Record<string, { seasonId: string; league: string; country: string }> = {
-  "sr:competition:17": { seasonId: "sr:season:118689", league: "Premier League", country: "England" },
-  "sr:competition:8": { seasonId: "sr:season:118691", league: "La Liga", country: "Spain" },
-  "sr:competition:23": { seasonId: "sr:season:118699", league: "Serie A", country: "Italy" },
+const ALL_LEAGUES: Record<string, { seasonId: string; league: string; country: string }> = {
+  premier_league: { seasonId: "sr:season:118689", league: "Premier League", country: "England" },
+  la_liga: { seasonId: "sr:season:118691", league: "La Liga", country: "Spain" },
+  serie_a: { seasonId: "sr:season:118699", league: "Serie A", country: "Italy" },
+  bundesliga: { seasonId: "sr:season:118697", league: "Bundesliga", country: "Germany" },
+  ligue_1: { seasonId: "sr:season:118693", league: "Ligue 1", country: "France" },
 };
 
 const TEAM_NAME_ALIASES: Record<string, string> = {
+  // England
   "internazionale": "inter milan",
   "inter milano": "inter milan",
   "fc internazionale milano": "inter milan",
@@ -35,8 +38,40 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   "newcastle united": "newcastle",
   "brighton and hove albion": "brighton",
   "brighton & hove albion": "brighton",
+  "aston villa fc": "aston villa",
+  "nottingham forest fc": "nottingham forest",
+  "leicester city fc": "leicester city",
+  "leicester city": "leicester",
+  "crystal palace fc": "crystal palace",
+  "everton fc": "everton",
+  "fulham fc": "fulham",
+  "bournemouth": "afc bournemouth",
+  "afc bournemouth": "bournemouth",
+  "ipswich town fc": "ipswich town",
+  "ipswich town": "ipswich",
+  "southampton fc": "southampton",
+  "brentford fc": "brentford",
+  // Spain
   "real madrid cf": "real madrid",
   "fc barcelona": "barcelona",
+  "rcd espanyol": "espanyol",
+  "real sociedad de fútbol": "real sociedad",
+  "real betis balompié": "real betis",
+  "real betis": "betis",
+  "villarreal cf": "villarreal",
+  "sevilla fc": "sevilla",
+  "valencia cf": "valencia",
+  "ca osasuna": "osasuna",
+  "rcd mallorca": "mallorca",
+  "celta de vigo": "celta vigo",
+  "rc celta de vigo": "celta vigo",
+  "getafe cf": "getafe",
+  "deportivo alavés": "alaves",
+  "deportivo alaves": "alaves",
+  "girona fc": "girona",
+  "athletic club": "athletic bilbao",
+  "athletic de bilbao": "athletic bilbao",
+  // Italy
   "juventus fc": "juventus",
   "ac milan": "milan",
   "ssc napoli": "napoli",
@@ -47,21 +82,6 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   "torino fc": "torino",
   "bologna fc 1909": "bologna",
   "bologna fc": "bologna",
-  "athletic club": "athletic bilbao",
-  "athletic de bilbao": "athletic bilbao",
-  "sevilla fc": "sevilla",
-  "villarreal cf": "villarreal",
-  "real betis balompié": "real betis",
-  "celta de vigo": "celta vigo",
-  "rc celta de vigo": "celta vigo",
-  "valencia cf": "valencia",
-  "ca osasuna": "osasuna",
-  "rcd mallorca": "mallorca",
-  "rcd espanyol": "espanyol",
-  "getafe cf": "getafe",
-  "deportivo alavés": "alaves",
-  "deportivo alaves": "alaves",
-  "girona fc": "girona",
   "genoa cfc": "genoa",
   "udinese calcio": "udinese",
   "empoli fc": "empoli",
@@ -73,6 +93,69 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   "como 1907": "como",
   "venezia fc": "venezia",
   "ac monza": "monza",
+  // Germany
+  "fc bayern münchen": "bayern munich",
+  "fc bayern munich": "bayern munich",
+  "bayern münchen": "bayern munich",
+  "borussia dortmund": "dortmund",
+  "bvb borussia dortmund": "dortmund",
+  "bayer 04 leverkusen": "bayer leverkusen",
+  "bayer leverkusen": "leverkusen",
+  "rb leipzig": "leipzig",
+  "rasenballsport leipzig": "leipzig",
+  "vfb stuttgart": "stuttgart",
+  "eintracht frankfurt": "frankfurt",
+  "sg eintracht frankfurt": "frankfurt",
+  "borussia mönchengladbach": "monchengladbach",
+  "borussia monchengladbach": "monchengladbach",
+  "vfl wolfsburg": "wolfsburg",
+  "sc freiburg": "freiburg",
+  "sport-club freiburg": "freiburg",
+  "1. fc union berlin": "union berlin",
+  "fc union berlin": "union berlin",
+  "tsg 1899 hoffenheim": "hoffenheim",
+  "tsg hoffenheim": "hoffenheim",
+  "1. fsv mainz 05": "mainz",
+  "fsv mainz 05": "mainz",
+  "fc augsburg": "augsburg",
+  "1. fc heidenheim 1846": "heidenheim",
+  "fc heidenheim": "heidenheim",
+  "sv werder bremen": "werder bremen",
+  "werder bremen": "bremen",
+  "vfl bochum 1848": "bochum",
+  "vfl bochum": "bochum",
+  "fc st. pauli": "st. pauli",
+  "holstein kiel": "kiel",
+  // France
+  "paris saint-germain": "psg",
+  "paris saint-germain fc": "psg",
+  "olympique de marseille": "marseille",
+  "olympique marseille": "marseille",
+  "as monaco": "monaco",
+  "as monaco fc": "monaco",
+  "olympique lyonnais": "lyon",
+  "olympique lyon": "lyon",
+  "losc lille": "lille",
+  "losc lille métropole": "lille",
+  "stade rennais fc": "rennes",
+  "stade rennais": "rennes",
+  "rc lens": "lens",
+  "racing club de lens": "lens",
+  "ogc nice": "nice",
+  "rc strasbourg alsace": "strasbourg",
+  "rc strasbourg": "strasbourg",
+  "fc nantes": "nantes",
+  "stade brestois 29": "brest",
+  "stade brest": "brest",
+  "toulouse fc": "toulouse",
+  "montpellier hsc": "montpellier",
+  "montpellier hérault sc": "montpellier",
+  "le havre ac": "le havre",
+  "stade de reims": "reims",
+  "as saint-étienne": "saint-etienne",
+  "as saint-etienne": "saint-etienne",
+  "angers sco": "angers",
+  "aj auxerre": "auxerre",
 };
 
 function resolveTeamName(name: string): string {
@@ -95,11 +178,17 @@ function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function mapStatus(srStatus: string | undefined): string {
-  if (!srStatus) return "upcoming";
-  const s = srStatus.toLowerCase();
-  if (s === "closed" || s === "ended") return "completed";
-  if (s === "live" || s === "inprogress" || s === "halftime") return "live";
+function mapStatus(srStatus: string | undefined, matchDate?: string): string {
+  if (srStatus) {
+    const s = srStatus.toLowerCase();
+    if (s === "closed" || s === "ended") return "completed";
+    if (s === "live" || s === "inprogress" || s === "halftime") return "live";
+  }
+  // If match date is in the past, treat as completed
+  if (matchDate) {
+    const d = new Date(matchDate);
+    if (d < new Date()) return "completed";
+  }
   return "upcoming";
 }
 
@@ -116,6 +205,17 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
+    // Support optional ?league= param for per-league sync
+    const url = new URL(req.url);
+    const leagueParam = url.searchParams.get("league");
+
+    let leaguesToSync: Record<string, { seasonId: string; league: string; country: string }>;
+    if (leagueParam && ALL_LEAGUES[leagueParam]) {
+      leaguesToSync = { [leagueParam]: ALL_LEAGUES[leagueParam] };
+    } else {
+      leaguesToSync = ALL_LEAGUES;
+    }
+
     const summary = { teamsCreated: 0, teamsMatched: 0, matchesCreated: 0, matchesMatched: 0, probabilitiesSynced: 0, errors: [] as string[] };
 
     // Load existing teams into lookup maps
@@ -127,12 +227,9 @@ Deno.serve(async (req) => {
       if (t.sportradar_id) teamsBySrId.set(t.sportradar_id, t);
     });
 
-    // Helper: find or create a team
     async function findOrCreateTeam(comp: any, league: string, country: string) {
-      // Check by sportradar_id first
       if (teamsBySrId.has(comp.id)) return teamsBySrId.get(comp.id);
 
-      // Check by resolved name
       const resolved = resolveTeamName(comp.name);
       if (teamsByName.has(resolved)) {
         const existing = teamsByName.get(resolved);
@@ -145,7 +242,6 @@ Deno.serve(async (req) => {
         return existing;
       }
 
-      // Create new team
       const { data: newTeam, error } = await supabase
         .from("teams")
         .insert({ name: comp.name, league, country, sportradar_id: comp.id })
@@ -163,7 +259,7 @@ Deno.serve(async (req) => {
       return newTeam;
     }
 
-    for (const [_compId, config] of Object.entries(LEAGUE_SEASONS)) {
+    for (const [_key, config] of Object.entries(leaguesToSync)) {
       console.log(`Syncing ${config.league} (${config.seasonId})...`);
 
       const schedData = await srFetch(`/seasons/${config.seasonId}/schedules.json`, apiKey);
@@ -187,7 +283,10 @@ Deno.serve(async (req) => {
         const awayTeam = await findOrCreateTeam(awayComp, config.league, config.country);
         if (!homeTeam || !awayTeam) continue;
 
-        // Check if match already exists (by sportradar_id or by teams+date)
+        const eventDate = event.start_time?.substring(0, 10);
+        const matchStatus = mapStatus(status?.status, event.start_time);
+
+        // Check if match already exists by sportradar_id
         const { data: existingBySrId } = await supabase
           .from("matches")
           .select("id, sportradar_id, status")
@@ -195,8 +294,6 @@ Deno.serve(async (req) => {
           .limit(1);
 
         if (existingBySrId && existingBySrId.length > 0) {
-          // Update scores if completed
-          const matchStatus = mapStatus(status?.status);
           const updateData: any = { status: matchStatus };
           if (matchStatus === "completed" && status?.home_score != null) {
             updateData.goals_home = status.home_score;
@@ -208,7 +305,6 @@ Deno.serve(async (req) => {
         }
 
         // Check by teams + date
-        const eventDate = event.start_time?.substring(0, 10);
         if (eventDate) {
           const { data: existingByTeams } = await supabase
             .from("matches")
@@ -229,7 +325,6 @@ Deno.serve(async (req) => {
         }
 
         // Create new match
-        const matchStatus = mapStatus(status?.status);
         const matchData: any = {
           team_home_id: homeTeam.id,
           team_away_id: awayTeam.id,
@@ -324,6 +419,17 @@ Deno.serve(async (req) => {
           }
         }
       }
+    }
+
+    // Fix stale "upcoming" matches with past dates
+    const { error: fixError } = await supabase
+      .from("matches")
+      .update({ status: "completed" })
+      .eq("status", "upcoming")
+      .lt("match_date", new Date().toISOString());
+
+    if (fixError) {
+      summary.errors.push(`Fix stale matches error: ${fixError.message}`);
     }
 
     return new Response(JSON.stringify({ success: true, summary }), {
