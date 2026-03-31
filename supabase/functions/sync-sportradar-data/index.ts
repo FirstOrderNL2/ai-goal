@@ -270,6 +270,23 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Pre-load existing matches for this league to avoid per-match DB queries
+      const { data: existingMatches } = await supabase
+        .from("matches")
+        .select("id, sportradar_id, team_home_id, team_away_id, match_date, status")
+        .eq("league", config.league);
+
+      const matchesBySrId = new Map<string, any>();
+      const matchesByKey = new Map<string, any>();
+      existingMatches?.forEach((m) => {
+        if (m.sportradar_id) matchesBySrId.set(m.sportradar_id, m);
+        const dateKey = m.match_date?.substring(0, 10);
+        matchesByKey.set(`${m.team_home_id}_${m.team_away_id}_${dateKey}`, m);
+      });
+
+      const newMatches: any[] = [];
+      const updateBatch: { id: string; data: any }[] = [];
+
       for (const sched of schedData.schedules) {
         const event = sched.sport_event;
         const status = sched.sport_event_status;
@@ -286,45 +303,31 @@ Deno.serve(async (req) => {
         const eventDate = event.start_time?.substring(0, 10);
         const matchStatus = mapStatus(status?.status, event.start_time);
 
-        // Check if match already exists by sportradar_id
-        const { data: existingBySrId } = await supabase
-          .from("matches")
-          .select("id, sportradar_id, status")
-          .eq("sportradar_id", event.id)
-          .limit(1);
-
-        if (existingBySrId && existingBySrId.length > 0) {
+        // Check existing by sportradar_id
+        if (matchesBySrId.has(event.id)) {
+          const existing = matchesBySrId.get(event.id);
           const updateData: any = { status: matchStatus };
           if (matchStatus === "completed" && status?.home_score != null) {
             updateData.goals_home = status.home_score;
             updateData.goals_away = status.away_score;
           }
-          await supabase.from("matches").update(updateData).eq("id", existingBySrId[0].id);
+          updateBatch.push({ id: existing.id, data: updateData });
           summary.matchesMatched++;
           continue;
         }
 
         // Check by teams + date
-        if (eventDate) {
-          const { data: existingByTeams } = await supabase
-            .from("matches")
-            .select("id, sportradar_id")
-            .eq("team_home_id", homeTeam.id)
-            .eq("team_away_id", awayTeam.id)
-            .gte("match_date", eventDate + "T00:00:00")
-            .lte("match_date", eventDate + "T23:59:59")
-            .limit(1);
-
-          if (existingByTeams && existingByTeams.length > 0) {
-            if (!existingByTeams[0].sportradar_id) {
-              await supabase.from("matches").update({ sportradar_id: event.id }).eq("id", existingByTeams[0].id);
-            }
-            summary.matchesMatched++;
-            continue;
+        const teamDateKey = `${homeTeam.id}_${awayTeam.id}_${eventDate}`;
+        if (matchesByKey.has(teamDateKey)) {
+          const existing = matchesByKey.get(teamDateKey);
+          if (!existing.sportradar_id) {
+            updateBatch.push({ id: existing.id, data: { sportradar_id: event.id } });
           }
+          summary.matchesMatched++;
+          continue;
         }
 
-        // Create new match
+        // New match
         const matchData: any = {
           team_home_id: homeTeam.id,
           team_away_id: awayTeam.id,
@@ -342,31 +345,64 @@ Deno.serve(async (req) => {
           matchData.goals_away = status.away_score;
         }
 
-        const { error: matchError } = await supabase.from("matches").insert(matchData);
-        if (matchError) {
-          summary.errors.push(`Match insert error: ${matchError.message}`);
+        newMatches.push(matchData);
+      }
+
+      // Batch insert new matches
+      if (newMatches.length > 0) {
+        const { error: insertErr, data: inserted } = await supabase
+          .from("matches")
+          .insert(newMatches)
+          .select("id, sportradar_id");
+        if (insertErr) {
+          summary.errors.push(`Batch match insert error: ${insertErr.message}`);
         } else {
-          summary.matchesCreated++;
+          summary.matchesCreated += inserted?.length || 0;
+          inserted?.forEach((m) => {
+            if (m.sportradar_id) matchesBySrId.set(m.sportradar_id, m);
+          });
         }
       }
+
+      // Batch updates (do them in parallel chunks)
+      const updatePromises = updateBatch.map((u) =>
+        supabase.from("matches").update(u.data).eq("id", u.id)
+      );
+      await Promise.all(updatePromises);
 
       // Fetch probabilities
       const probData = await srFetch(`/seasons/${config.seasonId}/probabilities.json`, apiKey);
       await delay(1200);
 
       if (probData?.sport_event_probabilities) {
+        // Pre-load existing predictions for matched sportradar IDs
+        const srIds = probData.sport_event_probabilities
+          .map((p: any) => p.sport_event?.id)
+          .filter(Boolean);
+
+        // Build a map of sportradar_id -> match_id from our loaded data
+        const srToMatchId = new Map<string, string>();
+        matchesBySrId.forEach((m, srId) => srToMatchId.set(srId, m.id));
+
+        // Also check DB for any we don't have cached
+        const missingSrIds = srIds.filter((id: string) => !srToMatchId.has(id));
+        if (missingSrIds.length > 0) {
+          const { data: extraMatches } = await supabase
+            .from("matches")
+            .select("id, sportradar_id")
+            .in("sportradar_id", missingSrIds);
+          extraMatches?.forEach((m) => {
+            if (m.sportradar_id) srToMatchId.set(m.sportradar_id, m.id);
+          });
+        }
+
+        const predUpserts: any[] = [];
+
         for (const prob of probData.sport_event_probabilities) {
           const eventId = prob.sport_event?.id;
-          if (!eventId) continue;
+          if (!eventId || !srToMatchId.has(eventId)) continue;
 
-          const { data: matchRows } = await supabase
-            .from("matches")
-            .select("id")
-            .eq("sportradar_id", eventId)
-            .limit(1);
-
-          if (!matchRows || matchRows.length === 0) continue;
-
+          const matchId = srToMatchId.get(eventId)!;
           const markets = prob.markets;
           if (!markets) continue;
 
@@ -384,41 +420,31 @@ Deno.serve(async (req) => {
             overUnder = overProb > 0.5 ? "over" : "under";
           }
 
-          const { data: existingPred } = await supabase
-            .from("predictions")
-            .select("expected_goals_home, expected_goals_away")
-            .eq("match_id", matchRows[0].id)
-            .limit(1);
-
-          const hasRealXg = existingPred && existingPred.length > 0 &&
-            (Number(existingPred[0].expected_goals_home) > 0 || Number(existingPred[0].expected_goals_away) > 0);
-
-          const upsertData: any = {
-            match_id: matchRows[0].id,
+          predUpserts.push({
+            match_id: matchId,
             home_win: homeWin,
             draw: draw,
             away_win: awayWin,
             over_under_25: overUnder,
             model_confidence: Math.max(homeWin, draw, awayWin),
-          };
+            expected_goals_home: 0,
+            expected_goals_away: 0,
+          });
+        }
 
-          if (!hasRealXg) {
-            upsertData.expected_goals_home = 0;
-            upsertData.expected_goals_away = 0;
-          }
-
+        if (predUpserts.length > 0) {
           const { error } = await supabase.from("predictions").upsert(
-            upsertData,
-            { onConflict: "match_id" }
+            predUpserts,
+            { onConflict: "match_id", ignoreDuplicates: false }
           );
-
           if (error) {
-            summary.errors.push(`Prediction upsert error: ${error.message}`);
+            summary.errors.push(`Batch prediction upsert error: ${error.message}`);
           } else {
-            summary.probabilitiesSynced++;
+            summary.probabilitiesSynced += predUpserts.length;
           }
         }
       }
+    }
     }
 
     // Fix stale "upcoming" matches with past dates
