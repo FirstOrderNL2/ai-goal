@@ -1,0 +1,1 @@
+TRUNCATE public.odds, public.predictions, public.matches, public.teams CASCADE;
