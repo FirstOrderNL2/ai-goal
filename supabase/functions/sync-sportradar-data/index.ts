@@ -9,11 +9,11 @@ const corsHeaders = {
 const BASE_URL = "https://api.sportradar.com/soccer/trial/v4/en";
 
 const ALL_LEAGUES: Record<string, { seasonId: string; league: string; country: string }> = {
-  premier_league: { seasonId: "sr:season:118689", league: "Premier League", country: "England" },
-  la_liga: { seasonId: "sr:season:118691", league: "La Liga", country: "Spain" },
-  serie_a: { seasonId: "sr:season:118699", league: "Serie A", country: "Italy" },
-  bundesliga: { seasonId: "sr:season:118697", league: "Bundesliga", country: "Germany" },
-  ligue_1: { seasonId: "sr:season:118693", league: "Ligue 1", country: "France" },
+  premier_league: { seasonId: "sr:season:130281", league: "Premier League", country: "England" },
+  la_liga: { seasonId: "sr:season:130805", league: "La Liga", country: "Spain" },
+  serie_a: { seasonId: "sr:season:130971", league: "Serie A", country: "Italy" },
+  bundesliga: { seasonId: "sr:season:130571", league: "Bundesliga", country: "Germany" },
+  ligue_1: { seasonId: "sr:season:131609", league: "Ligue 1", country: "France" },
 };
 
 const TEAM_NAME_ALIASES: Record<string, string> = {

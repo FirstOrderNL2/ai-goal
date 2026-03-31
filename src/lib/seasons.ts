@@ -2,31 +2,31 @@
 export const LEAGUE_SEASONS: Record<string, { label: string; seasonId: string; league: string; country: string }> = {
   premier_league: {
     label: "Premier League",
-    seasonId: "sr:season:118689",
+    seasonId: "sr:season:130281",
     league: "Premier League",
     country: "England",
   },
   la_liga: {
     label: "La Liga",
-    seasonId: "sr:season:118691",
+    seasonId: "sr:season:130805",
     league: "La Liga",
     country: "Spain",
   },
   serie_a: {
     label: "Serie A",
-    seasonId: "sr:season:118699",
+    seasonId: "sr:season:130971",
     league: "Serie A",
     country: "Italy",
   },
   bundesliga: {
     label: "Bundesliga",
-    seasonId: "sr:season:118697",
+    seasonId: "sr:season:130571",
     league: "Bundesliga",
     country: "Germany",
   },
   ligue_1: {
     label: "Ligue 1",
-    seasonId: "sr:season:118693",
+    seasonId: "sr:season:131609",
     league: "Ligue 1",
     country: "France",
   },
