@@ -6,6 +6,25 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+async function fetchMatchContext(homeName: string, awayName: string, league: string, matchDate: string, supabaseUrl: string, serviceKey: string): Promise<string> {
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/fetch-match-context`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({ home_team: homeName, away_team: awayName, league, match_date: matchDate }),
+    });
+    if (!res.ok) return "";
+    const data = await res.json();
+    return data.context || "";
+  } catch (e) {
+    console.error("Failed to fetch match context:", e);
+    return "";
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -20,10 +39,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, serviceKey);
 
     // Fetch match with teams
     const { data: match } = await supabase
@@ -39,22 +57,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch prediction data
-    const { data: prediction } = await supabase
-      .from("predictions")
-      .select("*")
-      .eq("match_id", match_id)
-      .single();
-
-    // Fetch odds
-    const { data: odds } = await supabase
-      .from("odds")
-      .select("*")
-      .eq("match_id", match_id)
-      .single();
-
-    // Fetch recent form (last 5 matches for each team)
-    const [{ data: homeForm }, { data: awayForm }, { data: pastReviews }] = await Promise.all([
+    // Fetch prediction, odds, form, past reviews in parallel
+    const [{ data: prediction }, { data: odds }, { data: homeForm }, { data: awayForm }, { data: pastReviews }] = await Promise.all([
+      supabase.from("predictions").select("*").eq("match_id", match_id).single(),
+      supabase.from("odds").select("*").eq("match_id", match_id).single(),
       supabase
         .from("matches")
         .select("goals_home, goals_away, team_home_id, team_away_id, status, xg_home, xg_away")
@@ -77,6 +83,12 @@ Deno.serve(async (req) => {
         .order("match_date", { ascending: false })
         .limit(10),
     ]);
+
+    const homeName = match.home_team?.name ?? "Home";
+    const awayName = match.away_team?.name ?? "Away";
+
+    // Fetch live web context (injuries, lineups, news)
+    const liveContext = await fetchMatchContext(homeName, awayName, match.league, match.match_date, supabaseUrl, serviceKey);
 
     // Build learning context from past reviews
     let learningBlock = "";
@@ -104,9 +116,6 @@ ${relevantReviews.length > 0
 
 Apply the lessons above. Avoid repeating the same mistakes.`;
     }
-
-    const homeName = match.home_team?.name ?? "Home";
-    const awayName = match.away_team?.name ?? "Away";
 
     const homeFormStr = homeForm?.map((m: any) => {
       const isHome = m.team_home_id === match.team_home_id;
@@ -141,12 +150,13 @@ ${odds ? `Odds: Home ${odds.home_win_odds}, Draw ${odds.draw_odds}, Away ${odds.
 
 ${homeFormStr.length ? `${homeName} recent form: ${homeFormStr.join(", ")}` : ""}
 ${awayFormStr.length ? `${awayName} recent form: ${awayFormStr.join(", ")}` : ""}
+${liveContext ? `\nLIVE MATCH CONTEXT (injuries, suspensions, lineups, team news from the web):\n${liveContext}` : ""}
 ${learningBlock}
 
 Provide a concise analysis (3-5 paragraphs) covering:
-1. Key factors that will influence the outcome
+1. Key factors that will influence the outcome (including injuries and suspensions if known)
 2. Team form and momentum analysis
-3. Tactical considerations
+3. Tactical considerations and expected lineups
 4. Your prediction with reasoning
 5. Value bets if odds are available
 
@@ -164,20 +174,32 @@ Keep it professional, data-driven, and insightful. Do NOT use markdown headers o
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
         messages: [{ role: "user", content: prompt }],
-        max_tokens: 1000,
+        max_tokens: 1200,
         temperature: 0.7,
       }),
     });
 
     if (!aiResponse.ok) {
+      const status = aiResponse.status;
       const errText = await aiResponse.text();
-      throw new Error(`AI API error: ${aiResponse.status} ${errText}`);
+      if (status === 429) {
+        return new Response(JSON.stringify({ error: "Rate limited, please try again later." }), {
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (status === 402) {
+        return new Response(JSON.stringify({ error: "AI credits exhausted. Add funds in Settings > Workspace > Usage." }), {
+          status: 402,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`AI API error: ${status} ${errText}`);
     }
 
     const aiData = await aiResponse.json();
     const insights = aiData.choices?.[0]?.message?.content || "Unable to generate insights.";
 
-    // Save to matches table
     await supabase
       .from("matches")
       .update({ ai_insights: insights })
