@@ -1,53 +1,75 @@
 
 
-# Add Bundesliga & Ligue 1 + Fix Incomplete Imports
+# Enrich AI Predictions with API-Football Data
 
-## Problems
+## Overview
 
-1. Only 3 leagues configured (PL, La Liga, Serie A) — Bundesliga and Ligue 1 are missing
-2. The sync function times out before finishing all leagues because the Sportradar trial API requires 1.2s delays between calls, and processing 3 leagues with schedules + probabilities already causes shutdowns
-3. Some matches from 2024 show as "upcoming" because the Sportradar status was missing during sync — the `mapStatus` function defaults to "upcoming"
+The API-Football v3 API has several endpoints that provide structured, real-time data that the AI currently gets via a less reliable web-search approach. We will integrate three key API-Football endpoints directly into the AI prediction pipeline to provide hard data alongside the existing web context.
 
-## Solution
+## Key API-Football Endpoints to Use
 
-### 1. Add Bundesliga & Ligue 1 to all config files
+1. **`/injuries`** — Current injuries by team/league/fixture (player name, type, reason)
+2. **`/fixtures/lineups`** — Confirmed lineups (available 20-40 min before kickoff, or after match)
+3. **`/predictions`** — API-Football's own prediction data (win %, goals, form, comparison stats)
+4. **`/fixtures/statistics`** — Match statistics for completed matches (shots, possession, cards)
+5. **`/fixtures/events`** — Goals, cards, substitutions for completed matches
 
-Add two new leagues with their Sportradar competition and season IDs:
-- **Bundesliga**: `sr:competition:35`, season `sr:season:118697`
-- **Ligue 1**: `sr:competition:34`, season `sr:season:118693`
+## Plan
 
-Files to update:
-- `src/lib/seasons.ts` — add entries + team aliases for German/French clubs
-- `supabase/functions/sync-sportradar-data/index.ts` — add to LEAGUE_SEASONS + team aliases
-- `src/components/LeagueFilter.tsx` — add Bundesliga and Ligue 1 buttons
+### 1. Add new endpoints to the proxy whitelist
 
-### 2. Fix sync timeout by supporting per-league sync
+**File: `supabase/functions/get-football-data/index.ts`**
+- Add `/injuries` and `/sidelined` to the allowed endpoints list (they're not whitelisted today)
 
-The edge function times out when processing 5 leagues sequentially (each needs 2 API calls with 1.2s delays). Fix by:
-- Accept an optional `league` query parameter so the frontend can sync one league at a time
-- If no parameter, sync all (for backward compatibility)
-- Update the frontend auto-sync to call each league sequentially or accept the longer time
+### 2. Create a new function to fetch structured API-Football context
 
-### 3. Fix stale "upcoming" matches
+**File: `supabase/functions/fetch-match-context/index.ts`** (modify existing)
 
-Add logic in the sync to check: if match date is in the past and status is still "upcoming", mark it as "completed" (Sportradar may have returned the status but the sync timed out before processing it). This catches matches that slipped through.
+Currently this function only uses AI web search. Enhance it to also call API-Football endpoints directly for hard data before the AI call:
 
-### 4. Add German & French team aliases
+- If match has `api_football_id`, fetch from API-Football:
+  - `/injuries?fixture={id}` — injured/doubtful players for this specific fixture
+  - `/fixtures/lineups?fixture={id}` — confirmed lineups if available
+  - `/predictions?fixture={id}` — API-Football's own prediction with team comparison stats (attack, defense, form, etc.)
+- If match only has team `api_football_id`s (no fixture ID), use:
+  - `/injuries?league={id}&season={year}` — current injuries by league
+  - Filter to relevant teams
+- Prepend this structured data to the prompt so the AI gets verified facts, not just web-searched guesses
+- Keep the existing AI web search as a fallback/supplement for info API-Football doesn't cover (weather, transfer rumors, morale)
 
-Add common aliases for Bundesliga and Ligue 1 teams:
-- Bayern München / FC Bayern Munich → bayern munich
-- Borussia Dortmund → dortmund
-- Paris Saint-Germain → PSG
-- Olympique de Marseille → marseille
-- etc.
+### 3. Update sync to store `api_football_id` on Sportradar-created matches
 
-## Files Changed
+**File: `supabase/functions/sync-sportradar-data/index.ts`**
+
+Currently Sportradar-created matches have no `api_football_id`. Add a step that tries to match them to API-Football fixtures by team names and date, so the enrichment in step 2 can work.
+
+Alternatively, update `sync-football-data` to also add Bundesliga (78) and Ligue 1 (61) league IDs, so API-Football fixtures are synced for all 5 leagues and matched via `api_football_id`.
+
+### 4. Enrich post-match reviews with match statistics
+
+**File: `supabase/functions/generate-post-match-review/index.ts`**
+
+For completed matches with `api_football_id`, fetch:
+- `/fixtures/statistics?fixture={id}` — possession, shots, passes
+- `/fixtures/events?fixture={id}` — goals, cards, subs timeline
+
+Include this structured data in the post-match review prompt so the AI can compare its prediction against actual match events.
+
+### 5. Update sync-football-data with all 5 leagues
+
+**File: `supabase/functions/sync-football-data/index.ts`**
+
+Add Bundesliga (`id: 78`) and Ligue 1 (`id: 61`) to the `LEAGUES` array so API-Football fixtures are available for all leagues, not just PL/La Liga/Serie A.
+
+## File Changes Summary
 
 | File | Change |
 |---|---|
-| `src/lib/seasons.ts` | Add bundesliga + ligue_1 entries, competition mappings, and team aliases |
-| `supabase/functions/sync-sportradar-data/index.ts` | Add 2 leagues, add team aliases, add optional `league` param, fix stale upcoming matches |
-| `src/components/LeagueFilter.tsx` | Add Bundesliga and Ligue 1 filter buttons |
+| `supabase/functions/get-football-data/index.ts` | Add `/injuries`, `/sidelined` to whitelist |
+| `supabase/functions/fetch-match-context/index.ts` | Call API-Football for injuries, lineups, predictions before AI web search |
+| `supabase/functions/sync-football-data/index.ts` | Add Bundesliga + Ligue 1 league IDs |
+| `supabase/functions/generate-post-match-review/index.ts` | Fetch match statistics + events for completed matches |
+| `supabase/functions/generate-ai-prediction/index.ts` | Pass `api_football_id` to context function |
 
-No database changes needed.
+No database migrations needed.
 
