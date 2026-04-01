@@ -1,72 +1,49 @@
 
 
-# Add International Competitions + Fix Missing Logos & Stats
+# Focus on 20 Upcoming Matches + Auto-Learning AI
 
-## Problems Found
+## Two Changes
 
-1. **No logos**: All 102 teams have `logo_url = NULL` and `api_football_id = NULL`. The Sportradar sync creates teams but does not fetch logos. The API-Football sync (which has logos) never ran successfully after the DB truncation, or its team names don't match the Sportradar-created names, so no upsert happened.
+### 1. Limit Homepage to Next 20 Upcoming Matches
 
-2. **No stats (predictions) showing**: There are 999 predictions in the DB, so predictions exist. The issue is likely that the `MatchCard` renders predictions correctly but the probability values may be displayed oddly, or some matches simply lack predictions. Need to verify on the frontend.
+Currently the Index page fetches ALL upcoming matches (potentially hundreds across 8 competitions). This is slow and overwhelming.
 
-3. **Missing international competitions**: Only 5 domestic leagues are configured. User wants World Cup Qualifiers, World Cup, and international friendlies.
+**Changes:**
+- `src/hooks/useMatches.ts` — Add `.limit(20)` to the upcoming matches query
+- `src/pages/Index.tsx` — Show a "View All" link if there are more matches; also limit completed to 12
 
-## Plan
+### 2. Automated AI Learning Loop
 
-### 1. Fix Team Logos by Cross-Matching API-Football Data
+Currently the AI learns from past reviews only when a user manually clicks "Generate Review" on each completed match. To make this automatic:
 
-The `sync-football-data` function already fetches `logo_url` from API-Football, but teams created by Sportradar have different names (e.g., "Arsenal FC" vs "Arsenal") and no `api_football_id`, so the upsert on `api_football_id` creates duplicates or skips.
+**Create a new edge function `supabase/functions/auto-review-matches/index.ts`** that:
+1. Finds the 5 most recent completed matches that have `ai_insights` (a pre-match prediction was made) but no `ai_post_match_review` yet
+2. For each, calls `generate-post-match-review` internally to score the prediction vs actual result
+3. Stores the accuracy score and review — these are then automatically picked up as learning context by `generate-ai-prediction` (which already reads `ai_post_match_review` and `ai_accuracy_score` from the last 10 reviewed matches)
 
-**Fix in `supabase/functions/sync-football-data/index.ts`:**
-- After fetching fixtures from API-Football, before upserting teams, try to match existing DB teams by resolved name (using the alias map)
-- If a match is found, update the existing team's `api_football_id` and `logo_url` instead of inserting a duplicate
-- This bridges the gap between Sportradar-created teams (no logo) and API-Football data (has logo)
+**Trigger it automatically** by calling this function after each sync completes (in `src/hooks/useSportradar.ts` or `src/pages/Index.tsx`).
 
-### 2. Add International Competitions to Sportradar Sync
+This closes the feedback loop: Sync → New results arrive → Auto-review scores past predictions → Future predictions incorporate those lessons.
 
-Add these competitions to `ALL_LEAGUES` in the sync function and `LEAGUE_SEASONS` in `seasons.ts`:
+**Also create `supabase/functions/auto-predict-upcoming/index.ts`** that:
+1. Finds upcoming matches within the next 7 days that have no `ai_insights` yet
+2. Calls `generate-ai-prediction` for each (with rate-limit delays between calls)
+3. Ensures every upcoming match has a prediction before the user even opens it
 
-- **FIFA World Cup 2026 Qualifiers (UEFA)**: `sr:competition:36` — need to discover current season ID
-- **FIFA World Cup 2026 Qualifiers (CONMEBOL)**: `sr:competition:37`
-- **FIFA World Cup 2026 Qualifiers (AFC)**: `sr:competition:852`
-- **International Friendlies**: `sr:competition:36` variant or separate
-
-We'll need to call the Sportradar `/competitions/{id}/seasons.json` endpoint to discover the correct season IDs for these. Since this is a trial API, we may be limited to certain competitions.
-
-**Alternative approach**: Use API-Football for international competitions since it supports:
-- League ID `1` = FIFA World Cup
-- League ID `32` = World Cup Qualifiers (Europe)  
-- League ID `34` = World Cup Qualifiers (South America)
-- League ID `10` = International Friendlies
-
-**Files to update:**
-- `supabase/functions/sync-sportradar-data/index.ts` — add international competitions
-- `supabase/functions/sync-football-data/index.ts` — add international league IDs
-- `src/lib/seasons.ts` — add international entries
-- `src/components/LeagueFilter.tsx` — add filter buttons for international comps
-- `src/hooks/useSportradar.ts` — add new league keys to the sync loop
-
-### 3. Fix Logo Sync Pipeline
-
-**New step in `sync-sportradar-data/index.ts`** (or a separate small function):
-- After creating teams from Sportradar, call the API-Football `/teams?league={id}&season={year}` endpoint for each league
-- Match by team name (using aliases) and update `logo_url` and `api_football_id`
-- This ensures every team gets a logo regardless of which data source created it
-
-### 4. Update LeagueFilter
-
-Add buttons for:
-- "WC Qualifiers"
-- "Friendlies"
+**Frontend integration:**
+- After sync completes successfully, call `auto-review-matches` then `auto-predict-upcoming` in sequence
+- Show a subtle toast: "AI analyzing matches..."
+- Add a small indicator on the Index page showing AI learning status (e.g., "AI has reviewed X matches, avg accuracy: Y%")
 
 ## Files Changed
 
 | File | Change |
 |---|---|
-| `supabase/functions/sync-football-data/index.ts` | Add international league IDs (WCQ Europe `32`, WCQ South America `34`, Friendlies `10`); fix team matching to update existing Sportradar-created teams with `logo_url` and `api_football_id` |
-| `supabase/functions/sync-sportradar-data/index.ts` | Add international competition entries; after team sync, attempt API-Football logo fetch for teams missing logos |
-| `src/lib/seasons.ts` | Add international competition configs |
-| `src/components/LeagueFilter.tsx` | Add WC Qualifiers and Friendlies filter buttons |
-| `src/hooks/useSportradar.ts` | Add international league keys to `LEAGUE_KEYS` array |
+| `src/hooks/useMatches.ts` | Add `.limit(20)` to upcoming query |
+| `src/pages/Index.tsx` | Show count, add "View All" link, trigger auto-review/predict after sync |
+| `supabase/functions/auto-review-matches/index.ts` | New: auto-review completed matches that had predictions |
+| `supabase/functions/auto-predict-upcoming/index.ts` | New: auto-generate AI insights for upcoming matches within 7 days |
+| `src/hooks/useSportradar.ts` | Chain auto-review + auto-predict after sync success |
 
-No database migrations needed.
+No database changes needed.
 
