@@ -74,8 +74,10 @@ export default function MatchDetail() {
 
             <div className="flex items-center justify-center gap-6 py-4">
               <div className="text-center space-y-2 flex-1">
-                {home_team?.logo_url && (
-                  <img src={home_team.logo_url} alt={home_team.name} className="h-12 w-12 object-contain mx-auto" />
+                {home_team?.logo_url ? (
+                  <img src={home_team.logo_url} alt={home_team.name} className="h-12 w-12 object-contain mx-auto" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                ) : (
+                  <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center text-lg font-bold text-muted-foreground mx-auto">{home_team?.name?.charAt(0) ?? "?"}</div>
                 )}
                 <p className="text-xl font-bold">{home_team?.name}</p>
                 <p className="text-xs text-muted-foreground">{home_team?.country}</p>
