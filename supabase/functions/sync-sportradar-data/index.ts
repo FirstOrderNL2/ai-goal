@@ -19,6 +19,10 @@ const ALL_LEAGUES: Record<string, { seasonId: string; league: string; country: s
   wc_qualifiers_conmebol: { seasonId: "sr:season:109025", league: "WC Qualifiers CONMEBOL", country: "World" },
   wc_qualifiers_concacaf: { seasonId: "sr:season:115355", league: "WC Qualifiers CONCACAF", country: "World" },
   world_cup_2026: { seasonId: "sr:season:101177", league: "World Cup 2026", country: "World" },
+  // New competitions
+  champions_league: { seasonId: "sr:season:131071", league: "Champions League", country: "Europe" },
+  europa_league: { seasonId: "sr:season:131073", league: "Europa League", country: "Europe" },
+  eredivisie: { seasonId: "sr:season:130587", league: "Eredivisie", country: "Netherlands" },
 };
 
 const TEAM_NAME_ALIASES: Record<string, string> = {
