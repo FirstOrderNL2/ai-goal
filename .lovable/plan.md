@@ -1,75 +1,72 @@
 
 
-# Enrich AI Predictions with API-Football Data
+# Add International Competitions + Fix Missing Logos & Stats
 
-## Overview
+## Problems Found
 
-The API-Football v3 API has several endpoints that provide structured, real-time data that the AI currently gets via a less reliable web-search approach. We will integrate three key API-Football endpoints directly into the AI prediction pipeline to provide hard data alongside the existing web context.
+1. **No logos**: All 102 teams have `logo_url = NULL` and `api_football_id = NULL`. The Sportradar sync creates teams but does not fetch logos. The API-Football sync (which has logos) never ran successfully after the DB truncation, or its team names don't match the Sportradar-created names, so no upsert happened.
 
-## Key API-Football Endpoints to Use
+2. **No stats (predictions) showing**: There are 999 predictions in the DB, so predictions exist. The issue is likely that the `MatchCard` renders predictions correctly but the probability values may be displayed oddly, or some matches simply lack predictions. Need to verify on the frontend.
 
-1. **`/injuries`** — Current injuries by team/league/fixture (player name, type, reason)
-2. **`/fixtures/lineups`** — Confirmed lineups (available 20-40 min before kickoff, or after match)
-3. **`/predictions`** — API-Football's own prediction data (win %, goals, form, comparison stats)
-4. **`/fixtures/statistics`** — Match statistics for completed matches (shots, possession, cards)
-5. **`/fixtures/events`** — Goals, cards, substitutions for completed matches
+3. **Missing international competitions**: Only 5 domestic leagues are configured. User wants World Cup Qualifiers, World Cup, and international friendlies.
 
 ## Plan
 
-### 1. Add new endpoints to the proxy whitelist
+### 1. Fix Team Logos by Cross-Matching API-Football Data
 
-**File: `supabase/functions/get-football-data/index.ts`**
-- Add `/injuries` and `/sidelined` to the allowed endpoints list (they're not whitelisted today)
+The `sync-football-data` function already fetches `logo_url` from API-Football, but teams created by Sportradar have different names (e.g., "Arsenal FC" vs "Arsenal") and no `api_football_id`, so the upsert on `api_football_id` creates duplicates or skips.
 
-### 2. Create a new function to fetch structured API-Football context
+**Fix in `supabase/functions/sync-football-data/index.ts`:**
+- After fetching fixtures from API-Football, before upserting teams, try to match existing DB teams by resolved name (using the alias map)
+- If a match is found, update the existing team's `api_football_id` and `logo_url` instead of inserting a duplicate
+- This bridges the gap between Sportradar-created teams (no logo) and API-Football data (has logo)
 
-**File: `supabase/functions/fetch-match-context/index.ts`** (modify existing)
+### 2. Add International Competitions to Sportradar Sync
 
-Currently this function only uses AI web search. Enhance it to also call API-Football endpoints directly for hard data before the AI call:
+Add these competitions to `ALL_LEAGUES` in the sync function and `LEAGUE_SEASONS` in `seasons.ts`:
 
-- If match has `api_football_id`, fetch from API-Football:
-  - `/injuries?fixture={id}` — injured/doubtful players for this specific fixture
-  - `/fixtures/lineups?fixture={id}` — confirmed lineups if available
-  - `/predictions?fixture={id}` — API-Football's own prediction with team comparison stats (attack, defense, form, etc.)
-- If match only has team `api_football_id`s (no fixture ID), use:
-  - `/injuries?league={id}&season={year}` — current injuries by league
-  - Filter to relevant teams
-- Prepend this structured data to the prompt so the AI gets verified facts, not just web-searched guesses
-- Keep the existing AI web search as a fallback/supplement for info API-Football doesn't cover (weather, transfer rumors, morale)
+- **FIFA World Cup 2026 Qualifiers (UEFA)**: `sr:competition:36` — need to discover current season ID
+- **FIFA World Cup 2026 Qualifiers (CONMEBOL)**: `sr:competition:37`
+- **FIFA World Cup 2026 Qualifiers (AFC)**: `sr:competition:852`
+- **International Friendlies**: `sr:competition:36` variant or separate
 
-### 3. Update sync to store `api_football_id` on Sportradar-created matches
+We'll need to call the Sportradar `/competitions/{id}/seasons.json` endpoint to discover the correct season IDs for these. Since this is a trial API, we may be limited to certain competitions.
 
-**File: `supabase/functions/sync-sportradar-data/index.ts`**
+**Alternative approach**: Use API-Football for international competitions since it supports:
+- League ID `1` = FIFA World Cup
+- League ID `32` = World Cup Qualifiers (Europe)  
+- League ID `34` = World Cup Qualifiers (South America)
+- League ID `10` = International Friendlies
 
-Currently Sportradar-created matches have no `api_football_id`. Add a step that tries to match them to API-Football fixtures by team names and date, so the enrichment in step 2 can work.
+**Files to update:**
+- `supabase/functions/sync-sportradar-data/index.ts` — add international competitions
+- `supabase/functions/sync-football-data/index.ts` — add international league IDs
+- `src/lib/seasons.ts` — add international entries
+- `src/components/LeagueFilter.tsx` — add filter buttons for international comps
+- `src/hooks/useSportradar.ts` — add new league keys to the sync loop
 
-Alternatively, update `sync-football-data` to also add Bundesliga (78) and Ligue 1 (61) league IDs, so API-Football fixtures are synced for all 5 leagues and matched via `api_football_id`.
+### 3. Fix Logo Sync Pipeline
 
-### 4. Enrich post-match reviews with match statistics
+**New step in `sync-sportradar-data/index.ts`** (or a separate small function):
+- After creating teams from Sportradar, call the API-Football `/teams?league={id}&season={year}` endpoint for each league
+- Match by team name (using aliases) and update `logo_url` and `api_football_id`
+- This ensures every team gets a logo regardless of which data source created it
 
-**File: `supabase/functions/generate-post-match-review/index.ts`**
+### 4. Update LeagueFilter
 
-For completed matches with `api_football_id`, fetch:
-- `/fixtures/statistics?fixture={id}` — possession, shots, passes
-- `/fixtures/events?fixture={id}` — goals, cards, subs timeline
+Add buttons for:
+- "WC Qualifiers"
+- "Friendlies"
 
-Include this structured data in the post-match review prompt so the AI can compare its prediction against actual match events.
-
-### 5. Update sync-football-data with all 5 leagues
-
-**File: `supabase/functions/sync-football-data/index.ts`**
-
-Add Bundesliga (`id: 78`) and Ligue 1 (`id: 61`) to the `LEAGUES` array so API-Football fixtures are available for all leagues, not just PL/La Liga/Serie A.
-
-## File Changes Summary
+## Files Changed
 
 | File | Change |
 |---|---|
-| `supabase/functions/get-football-data/index.ts` | Add `/injuries`, `/sidelined` to whitelist |
-| `supabase/functions/fetch-match-context/index.ts` | Call API-Football for injuries, lineups, predictions before AI web search |
-| `supabase/functions/sync-football-data/index.ts` | Add Bundesliga + Ligue 1 league IDs |
-| `supabase/functions/generate-post-match-review/index.ts` | Fetch match statistics + events for completed matches |
-| `supabase/functions/generate-ai-prediction/index.ts` | Pass `api_football_id` to context function |
+| `supabase/functions/sync-football-data/index.ts` | Add international league IDs (WCQ Europe `32`, WCQ South America `34`, Friendlies `10`); fix team matching to update existing Sportradar-created teams with `logo_url` and `api_football_id` |
+| `supabase/functions/sync-sportradar-data/index.ts` | Add international competition entries; after team sync, attempt API-Football logo fetch for teams missing logos |
+| `src/lib/seasons.ts` | Add international competition configs |
+| `src/components/LeagueFilter.tsx` | Add WC Qualifiers and Friendlies filter buttons |
+| `src/hooks/useSportradar.ts` | Add international league keys to `LEAGUE_KEYS` array |
 
 No database migrations needed.
 
