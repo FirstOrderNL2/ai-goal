@@ -1,63 +1,65 @@
 
 
-# Fix Logos Without API + Limit to 20 Upcoming Matches
+# Fix International Competition Sync — Wrong Season IDs
 
-## The Real Problem
+## Root Cause
 
-All 102 teams have `logo_url = NULL`. The API-Football free tier rejects 2025 season requests, so the sync never populates logos. But logos don't need an API at all.
+The international competitions are not loading because the Sportradar season IDs in the code are **completely wrong**:
 
-## Solution: Use Free Logo Sources Directly
+| Competition | Current (wrong) Season ID | Correct Season ID | Verified via API |
+|---|---|---|---|
+| WC Qualifiers Europe | `sr:season:118689` | `sr:season:127075` | Yes — "FIFA World Cup Qualification UEFA 2026" (25/26) |
+| WC Qualifiers South America | `sr:season:118691` | `sr:season:109025` | Yes — "FIFA World Cup Qualification 2026, CONMEBOL" (23-25) |
+| Friendlies | `sr:season:113069` | N/A — see below | Competition ID was wrong too |
 
-Football team logos are publicly available from multiple free sources. The simplest and most reliable approach:
+Additionally, the **competition IDs** were wrong:
+- Code used `sr:competition:36` (Scottish Premiership) and `sr:competition:37` (Eredivisie) — NOT world cup qualifiers
+- Correct: `sr:competition:11` (WCQ UEFA), `sr:competition:295` (WCQ CONMEBOL)
 
-1. **Use Wikipedia/Wikimedia logo URLs** — every major club has a publicly accessible crest image
-2. **Use the Sportradar competitor ID** to construct a logo URL from a free CDN
-3. **Fallback**: Generate a colored circle with team initials
+**Friendlies**: `sr:competition:852` is **women's** friendlies. Men's international friendlies may not be available on the Sportradar trial API. The matches in your screenshot (USA vs Portugal, Brazil vs Croatia) are friendlies — we can add them via API-Football (league ID 10) as a fallback.
 
-### Approach: Edge function that fetches logos via AI web search
-
-Create a lightweight edge function `fix-team-logos` that:
-- Reads all teams with `logo_url = NULL` from the database
-- For each team, constructs a search query like `"{team name} football club logo wikipedia svg"`
-- Uses the Lovable AI gateway (which you already pay for) to find the Wikipedia/Wikimedia Commons logo URL
-- Updates the team record with the found logo URL
-- This is a **one-time fix**, not a recurring sync
-
-**Even simpler alternative**: Use a hardcoded mapping of team names to known free logo URLs from football-data.org or similar CDNs. For example, `https://crests.football-data.org/{football-data-id}.png` is completely free.
+Also adding **CONCACAF WCQ** (`sr:competition:14`, `sr:season:115355`) and **FIFA World Cup 2026** (`sr:competition:16`, `sr:season:101177`) since those are relevant upcoming competitions.
 
 ## Plan
 
-### 1. Create `supabase/functions/fix-team-logos/index.ts`
+### 1. Fix Season IDs in `sync-sportradar-data`
 
-- Query all teams where `logo_url IS NULL`
-- For each team, use the AI to search for the team's official logo URL from Wikipedia
-- Update the team's `logo_url` in the database
-- Process in batches of 10 to avoid timeouts
+Update `ALL_LEAGUES` with the verified correct season IDs:
 
-### 2. Limit upcoming matches to 20
+```
+wc_qualifiers_europe:     sr:season:127075
+wc_qualifiers_conmebol:   sr:season:109025
+wc_qualifiers_concacaf:   sr:season:115355
+world_cup_2026:           sr:season:101177
+```
 
-**File: `src/hooks/useMatches.ts`**
-- Add `.limit(20)` to the upcoming matches query
-- Add `.limit(12)` to the completed matches query
+Remove `friendlies` from Sportradar sync (wrong competition ID, men's friendlies not available on trial).
 
-### 3. Add query limit for completed matches too
+### 2. Fix Season IDs in `src/lib/seasons.ts`
 
-Same file, same pattern.
+Update to match the corrected IDs.
+
+### 3. Update `src/hooks/useSportradar.ts`
+
+Update `LEAGUE_KEYS` array: replace `wc_qualifiers_south_america` with `wc_qualifiers_conmebol`, add `wc_qualifiers_concacaf` and `world_cup_2026`, remove `friendlies`.
+
+### 4. Update `src/components/LeagueFilter.tsx`
+
+Update filter buttons to match new league keys. Add "World Cup" and "WCQ CONCACAF" buttons. Remove "Friendlies" (not available from Sportradar trial).
+
+### 5. Add Friendlies via API-Football (league ID 10)
+
+The `sync-football-data` function already has `{ id: 10, name: "Friendlies" }` configured. This is the correct source for international friendlies. Ensure its season parameter works (use `2024` instead of dynamic `2025` for the free tier, or `2026` if allowed for friendlies).
 
 ## Files Changed
 
 | File | Change |
 |---|---|
-| `supabase/functions/fix-team-logos/index.ts` | New: AI-powered logo finder that searches Wikipedia for each team's crest URL |
-| `src/hooks/useMatches.ts` | Add `.limit(20)` to upcoming, `.limit(12)` to completed |
+| `supabase/functions/sync-sportradar-data/index.ts` | Fix all international season IDs; rename `wc_qualifiers_south_america` → `wc_qualifiers_conmebol`; add `wc_qualifiers_concacaf` and `world_cup_2026`; remove `friendlies` |
+| `src/lib/seasons.ts` | Update season entries to match |
+| `src/hooks/useSportradar.ts` | Update `LEAGUE_KEYS` array |
+| `src/components/LeagueFilter.tsx` | Update filter buttons |
+| `supabase/functions/sync-football-data/index.ts` | Verify friendlies season param works |
 
 No database changes needed.
-
-## Technical Detail
-
-The `fix-team-logos` function will use the Lovable AI gateway (google/gemini-3-flash-preview) with a prompt like:
-
-> "What is the direct URL to the official Wikipedia/Wikimedia Commons logo image for {team name} football club? Return ONLY the URL, nothing else."
-
-This avoids needing any football API for logos. It's a one-time operation — once logos are populated, they persist in the database.
 
