@@ -92,6 +92,17 @@ Deno.serve(async (req) => {
       const homeForm = formMap.get(match.team_home_id) || [];
       const awayForm = formMap.get(match.team_away_id) || [];
 
+      // Check if match has news context in ai_insights
+      const { data: matchDetails } = await supabase
+        .from("matches")
+        .select("ai_insights")
+        .eq("id", match.id)
+        .single();
+
+      const newsContext = matchDetails?.ai_insights && matchDetails.ai_insights.includes("[NEWS]")
+        ? `\nRecent news context:\n${matchDetails.ai_insights}`
+        : "";
+
       const prompt = `Analyze this football match and provide a prediction.
 
 Match: ${homeName} vs ${awayName}
@@ -99,6 +110,7 @@ League: ${match.league}
 Date: ${match.match_date}
 ${homeName} recent form (last 5): ${homeForm.join(", ") || "Unknown"}
 ${awayName} recent form (last 5): ${awayForm.join(", ") || "Unknown"}
+${newsContext}
 
 Call the predict_match function with your analysis.`;
 
