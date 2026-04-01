@@ -231,10 +231,14 @@ Call the predict_match function with your analysis.`;
                     away_win: { type: "number", description: "Away win probability 0-1" },
                     expected_goals_home: { type: "number", description: "Expected goals for home team (e.g. 1.4)" },
                     expected_goals_away: { type: "number", description: "Expected goals for away team (e.g. 1.1)" },
+                    predicted_score_home: { type: "integer", description: "Predicted exact goals for home team" },
+                    predicted_score_away: { type: "integer", description: "Predicted exact goals for away team" },
                     over_under_25: { type: "string", enum: ["over", "under"], description: "Over or under 2.5 total goals" },
+                    btts: { type: "string", enum: ["yes", "no"], description: "Both teams to score" },
                     confidence: { type: "number", description: "Model confidence 0-1 based on data quality" },
+                    reasoning: { type: "string", description: "Brief fact-based justification for the prediction citing specific stats" },
                   },
-                  required: ["home_win", "draw", "away_win", "expected_goals_home", "expected_goals_away", "over_under_25", "confidence"],
+                  required: ["home_win", "draw", "away_win", "expected_goals_home", "expected_goals_away", "predicted_score_home", "predicted_score_away", "over_under_25", "btts", "confidence", "reasoning"],
                 },
               },
             }],
@@ -275,8 +279,12 @@ Call the predict_match function with your analysis.`;
           away_win: Math.round(aw * 1000) / 1000,
           expected_goals_home: Math.round((pred.expected_goals_home || 1.2) * 10) / 10,
           expected_goals_away: Math.round((pred.expected_goals_away || 1.0) * 10) / 10,
+          predicted_score_home: pred.predicted_score_home ?? null,
+          predicted_score_away: pred.predicted_score_away ?? null,
           over_under_25: pred.over_under_25 || "under",
+          btts: pred.btts || "no",
           model_confidence: Math.round((pred.confidence || 0.5) * 1000) / 1000,
+          ai_reasoning: pred.reasoning || null,
         }, { onConflict: "match_id" });
 
         if (upsertErr) {

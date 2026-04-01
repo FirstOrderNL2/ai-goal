@@ -179,7 +179,9 @@ export type Database = {
       }
       predictions: {
         Row: {
+          ai_reasoning: string | null
           away_win: number
+          btts: string | null
           created_at: string
           draw: number
           expected_goals_away: number
@@ -189,9 +191,13 @@ export type Database = {
           match_id: string
           model_confidence: number
           over_under_25: string
+          predicted_score_away: number | null
+          predicted_score_home: number | null
         }
         Insert: {
+          ai_reasoning?: string | null
           away_win: number
+          btts?: string | null
           created_at?: string
           draw: number
           expected_goals_away: number
@@ -201,9 +207,13 @@ export type Database = {
           match_id: string
           model_confidence?: number
           over_under_25?: string
+          predicted_score_away?: number | null
+          predicted_score_home?: number | null
         }
         Update: {
+          ai_reasoning?: string | null
           away_win?: number
+          btts?: string | null
           created_at?: string
           draw?: number
           expected_goals_away?: number
@@ -213,6 +223,8 @@ export type Database = {
           match_id?: string
           model_confidence?: number
           over_under_25?: string
+          predicted_score_away?: number | null
+          predicted_score_home?: number | null
         }
         Relationships: [
           {

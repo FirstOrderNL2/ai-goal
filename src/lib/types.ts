@@ -40,8 +40,12 @@ export interface Prediction {
   away_win: number;
   expected_goals_home: number;
   expected_goals_away: number;
+  predicted_score_home: number | null;
+  predicted_score_away: number | null;
   over_under_25: string;
+  btts: string | null;
   model_confidence: number;
+  ai_reasoning: string | null;
 }
 
 export interface Odds {
@@ -50,4 +54,18 @@ export interface Odds {
   home_win_odds: number;
   draw_odds: number;
   away_win_odds: number;
+}
+
+export interface MatchContext {
+  id: string;
+  match_id: string;
+  injuries_home: any[] | null;
+  injuries_away: any[] | null;
+  lineup_home: any[] | null;
+  lineup_away: any[] | null;
+  suspensions: any[] | null;
+  news_items: any[] | null;
+  weather: string | null;
+  h2h_summary: string | null;
+  scraped_at: string;
 }
