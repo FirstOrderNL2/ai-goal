@@ -32,20 +32,26 @@ export const LEAGUE_SEASONS: Record<string, { label: string; seasonId: string; l
   },
   wc_qualifiers_europe: {
     label: "WC Qualifiers Europe",
-    seasonId: "sr:season:118689",
+    seasonId: "sr:season:127075",
     league: "WC Qualifiers Europe",
     country: "World",
   },
-  wc_qualifiers_south_america: {
-    label: "WC Qualifiers South America",
-    seasonId: "sr:season:118691",
-    league: "WC Qualifiers South America",
+  wc_qualifiers_conmebol: {
+    label: "WC Qualifiers CONMEBOL",
+    seasonId: "sr:season:109025",
+    league: "WC Qualifiers CONMEBOL",
     country: "World",
   },
-  friendlies: {
-    label: "Friendlies",
-    seasonId: "sr:season:113069",
-    league: "Friendlies",
+  wc_qualifiers_concacaf: {
+    label: "WC Qualifiers CONCACAF",
+    seasonId: "sr:season:115355",
+    league: "WC Qualifiers CONCACAF",
+    country: "World",
+  },
+  world_cup_2026: {
+    label: "World Cup 2026",
+    seasonId: "sr:season:101177",
+    league: "World Cup 2026",
     country: "World",
   },
 };

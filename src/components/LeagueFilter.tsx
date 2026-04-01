@@ -7,8 +7,10 @@ const leagues = [
   { value: "Serie A", label: "Serie A" },
   { value: "Bundesliga", label: "Bundesliga" },
   { value: "Ligue 1", label: "Ligue 1" },
-  { value: "WC Qualifiers Europe", label: "WC Qual. EUR" },
-  { value: "WC Qualifiers South America", label: "WC Qual. SA" },
+  { value: "WC Qualifiers Europe", label: "WCQ Europe" },
+  { value: "WC Qualifiers CONMEBOL", label: "WCQ CONMEBOL" },
+  { value: "WC Qualifiers CONCACAF", label: "WCQ CONCACAF" },
+  { value: "World Cup 2026", label: "World Cup" },
   { value: "Friendlies", label: "Friendlies" },
 ];
 
