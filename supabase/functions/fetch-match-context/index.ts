@@ -220,8 +220,8 @@ async function scrapeFirecrawlContext(
     } catch (_) {}
   })();
 
-  // Run Transfermarkt + WhoScored + today scrapes in parallel
-  await Promise.all([...transfermarktScrapes, whoScoredScrape, todayScrape]);
+  // Run injury news + WhoScored + today scrapes in parallel
+  await Promise.all([...injuryScrapes, whoScoredScrape, todayScrape]);
 
   return parts.length > 0 ? `LIVE WEB SCRAPED DATA:\n\n${parts.join("\n\n")}` : "";
 }
