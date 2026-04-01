@@ -27,6 +27,10 @@ Deno.serve(async (req) => {
       return await generateReviews(supabase, supabaseUrl, serviceKey, lovableApiKey, limit);
     }
 
+    if (mode === "backfill_xg") {
+      return await backfillXg(supabase, lovableApiKey, limit);
+    }
+
     // Get upcoming matches without predictions
     const { data: matches, error: matchErr } = await supabase
       .from("matches")
