@@ -10,6 +10,7 @@ export function useUpcomingMatches(league?: string) {
         .from("matches")
         .select("*")
         .eq("status", "upcoming")
+        .gte("match_date", new Date().toISOString())
         .order("match_date", { ascending: true })
         .limit(20);
 

@@ -6,44 +6,54 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const TEAM_NAME_ALIASES: Record<string, string> = {
+// Dutch → English team name mapping + standard aliases
+const TEAM_NAME_MAP: Record<string, string> = {
+  // Dutch national team names
+  "brazilië": "brazil", "verenigde staten": "usa", "kroatië": "croatia",
+  "duitsland": "germany", "engeland": "england", "spanje": "spain",
+  "frankrijk": "france", "italië": "italy", "portugal": "portugal",
+  "nederland": "netherlands", "belgiё": "belgium", "zwitserland": "switzerland",
+  "oostenrijk": "austria", "denemarken": "denmark", "zweden": "sweden",
+  "noorwegen": "norway", "polen": "poland", "tsjechië": "czech republic",
+  "roemenië": "romania", "griekenland": "greece", "turkije": "turkiye",
+  "schotland": "scotland", "wales": "wales", "ierland": "ireland",
+  "japan": "japan", "zuid-korea": "south korea", "australië": "australia",
+  "argentinië": "argentina", "colombia": "colombia", "mexico": "mexico",
+  "canada": "canada", "uruguay": "uruguay", "chili": "chile",
+  "peru": "peru", "ecuador": "ecuador", "venezuela": "venezuela",
+  // Club aliases
   "internazionale": "inter milan", "inter milano": "inter milan", "fc internazionale milano": "inter milan",
   "atletico de madrid": "atletico madrid", "atlético de madrid": "atletico madrid",
   "wolverhampton wanderers": "wolves", "tottenham hotspur": "tottenham",
   "west ham united": "west ham", "manchester city fc": "manchester city",
   "manchester united fc": "manchester united", "arsenal fc": "arsenal",
   "chelsea fc": "chelsea", "liverpool fc": "liverpool",
-  "paris saint-germain": "psg", "paris saint-germain fc": "psg",
+  "paris saint-germain": "psg", "paris saint-germain fc": "psg", "paris saint-germain f.c.": "psg",
   "fc bayern münchen": "bayern munich", "bayern münchen": "bayern munich",
   "borussia dortmund": "dortmund", "real madrid cf": "real madrid",
   "fc barcelona": "barcelona", "juventus fc": "juventus",
   "ac milan": "milan", "ssc napoli": "napoli", "as roma": "roma",
   "olympique de marseille": "marseille", "olympique lyonnais": "lyon",
-  // Dutch teams
+  // Dutch clubs
   "ajax amsterdam": "ajax", "afc ajax": "ajax",
-  "feyenoord rotterdam": "feyenoord",
-  "psv eindhoven": "psv",
-  "az alkmaar": "az",
-  "fc twente": "twente", "fc twente enschede": "twente",
-  "fc utrecht": "utrecht",
-  "sc heerenveen": "heerenveen",
-  "fc groningen": "groningen",
-  "vitesse arnhem": "vitesse",
-  "sparta rotterdam": "sparta rotterdam",
-  "nec nijmegen": "nec",
-  "go ahead eagles": "go ahead eagles",
-  "rkc waalwijk": "rkc waalwijk",
-  "fortuna sittard": "fortuna sittard",
-  "pec zwolle": "pec zwolle",
-  "heracles almelo": "heracles",
-  "willem ii tilburg": "willem ii", "willem ii": "willem ii",
-  "nac breda": "nac breda",
+  "feyenoord rotterdam": "feyenoord", "psv eindhoven": "psv",
+  "az alkmaar": "az", "fc twente": "twente", "fc twente enschede": "twente",
+  "fc utrecht": "utrecht", "sc heerenveen": "heerenveen",
+  "fc groningen": "groningen", "vitesse arnhem": "vitesse",
+  "sparta rotterdam": "sparta rotterdam", "nec nijmegen": "nec",
+  "heracles almelo": "heracles", "willem ii tilburg": "willem ii",
   "almere city fc": "almere city",
 };
 
 function resolveTeamName(name: string): string {
-  const lower = name.toLowerCase().trim();
-  return TEAM_NAME_ALIASES[lower] ?? lower;
+  // Strip "Vrouwen" suffix
+  let cleaned = name.replace(/\s*Vrouwen\s*/gi, "").trim();
+  const lower = cleaned.toLowerCase().trim();
+  return TEAM_NAME_MAP[lower] ?? lower;
+}
+
+function isWomensTeam(name: string): boolean {
+  return /vrouwen/i.test(name);
 }
 
 Deno.serve(async (req) => {
@@ -62,7 +72,7 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    const summary = { matchesCreated: 0, teamsCreated: 0, errors: [] as string[], sources: [] as string[] };
+    const summary = { matchesCreated: 0, teamsCreated: 0, skippedWomens: 0, errors: [] as string[], sources: [] as string[] };
 
     // Scrape both sources
     const urls = [
@@ -80,12 +90,7 @@ Deno.serve(async (req) => {
             Authorization: `Bearer ${firecrawlKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            url,
-            formats: ["markdown"],
-            onlyMainContent: true,
-            waitFor: 3000,
-          }),
+          body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true, waitFor: 3000 }),
         });
 
         if (!scrapeRes.ok) {
@@ -124,7 +129,7 @@ Deno.serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: `You extract football match data from web content. Today's date is ${today}. Extract ALL matches you can find — today's, tomorrow's, and upcoming ones. For each match identify the home team, away team, date/time, and competition/league name. Use the extract_matches tool.`,
+            content: `You extract football match data from web content. Today's date is ${today}. Extract ALL matches you can find — today's, tomorrow's, and upcoming ones. For each match identify the home team, away team, date/time, and competition/league name. IMPORTANT: Translate all Dutch team names to English (e.g. "Brazilië" → "Brazil", "Verenigde Staten" → "USA", "Kroatië" → "Croatia"). Use the extract_matches tool.`,
           },
           {
             role: "user",
@@ -144,11 +149,12 @@ Deno.serve(async (req) => {
                   items: {
                     type: "object",
                     properties: {
-                      home_team: { type: "string", description: "Home team name" },
-                      away_team: { type: "string", description: "Away team name" },
+                      home_team: { type: "string", description: "Home team name in English" },
+                      away_team: { type: "string", description: "Away team name in English" },
                       date: { type: "string", description: "Match date in YYYY-MM-DD format" },
                       time: { type: "string", description: "Kick-off time in HH:MM format (24h, CET/CEST)" },
-                      competition: { type: "string", description: "Competition name (e.g. Champions League, Eredivisie, Premier League)" },
+                      competition: { type: "string", description: "Competition name in English (e.g. Champions League, Eredivisie, Premier League)" },
+                      is_womens: { type: "boolean", description: "True if this is a women's match" },
                     },
                     required: ["home_team", "away_team", "date", "competition"],
                   },
@@ -186,22 +192,37 @@ Deno.serve(async (req) => {
 
     // Load existing teams
     const { data: existingTeams } = await supabase.from("teams").select("id, name");
-    const teamsByName = new Map<string, any>();
+    const teamsByResolved = new Map<string, any>();
     existingTeams?.forEach((t) => {
-      teamsByName.set(resolveTeamName(t.name), t);
+      teamsByResolved.set(resolveTeamName(t.name), t);
     });
 
     async function findOrCreateTeam(name: string, league: string): Promise<string | null> {
       const resolved = resolveTeamName(name);
-      if (teamsByName.has(resolved)) return teamsByName.get(resolved).id;
 
-      // Try exact match too
-      const exactLower = name.toLowerCase().trim();
-      if (teamsByName.has(exactLower)) return teamsByName.get(exactLower).id;
+      // Check resolved name
+      if (teamsByResolved.has(resolved)) return teamsByResolved.get(resolved).id;
+
+      // Fuzzy: try ILIKE search in DB
+      const { data: fuzzyMatch } = await supabase
+        .from("teams")
+        .select("id, name")
+        .ilike("name", `%${resolved}%`)
+        .limit(1);
+
+      if (fuzzyMatch && fuzzyMatch.length > 0) {
+        teamsByResolved.set(resolved, fuzzyMatch[0]);
+        return fuzzyMatch[0].id;
+      }
 
       // Create new team
       const country = league.includes("Eredivisie") || league.includes("KNVB") ? "Netherlands" :
-        league.includes("Champions League") || league.includes("Europa") ? "Europe" : "Unknown";
+        league.includes("Champions League") || league.includes("Europa") ? "Europe" :
+        league.includes("Premier League") ? "England" :
+        league.includes("La Liga") ? "Spain" :
+        league.includes("Serie A") ? "Italy" :
+        league.includes("Bundesliga") ? "Germany" :
+        league.includes("Ligue 1") ? "France" : "Unknown";
 
       const { data: newTeam, error } = await supabase
         .from("teams")
@@ -214,14 +235,17 @@ Deno.serve(async (req) => {
         return null;
       }
 
-      teamsByName.set(resolveTeamName(newTeam.name), newTeam);
+      teamsByResolved.set(resolved, newTeam);
       summary.teamsCreated++;
       return newTeam.id;
     }
 
-    // Map competition names to our league labels
-    function mapCompetition(comp: string): string {
+    function mapCompetition(comp: string, isWomens?: boolean): string {
       const c = comp.toLowerCase();
+      if (isWomens) {
+        if (c.includes("champions league")) return "Women's Champions League";
+        return `Women's ${comp}`;
+      }
       if (c.includes("champions league") || c.includes("ucl")) return "Champions League";
       if (c.includes("europa league") || c.includes("uel")) return "Europa League";
       if (c.includes("conference league") || c.includes("uecl")) return "Conference League";
@@ -233,33 +257,44 @@ Deno.serve(async (req) => {
       if (c.includes("ligue 1")) return "Ligue 1";
       if (c.includes("knvb") || c.includes("beker")) return "KNVB Beker";
       if (c.includes("world cup") || c.includes("wk")) return "World Cup 2026";
-      return comp; // Keep original if no match
+      if (c.includes("keuken kampioen")) return "Keuken Kampioen Divisie";
+      if (c.includes("friendly") || c.includes("vriendschappelijk")) return "Friendlies";
+      return comp;
     }
 
     // Insert matches
     for (const m of matches) {
       try {
-        const homeId = await findOrCreateTeam(m.home_team, m.competition);
-        const awayId = await findOrCreateTeam(m.away_team, m.competition);
+        // Skip women's matches
+        const womens = m.is_womens || isWomensTeam(m.home_team) || isWomensTeam(m.away_team);
+        if (womens) {
+          summary.skippedWomens++;
+          continue;
+        }
+
+        const league = mapCompetition(m.competition, false);
+        const homeId = await findOrCreateTeam(m.home_team, league);
+        const awayId = await findOrCreateTeam(m.away_team, league);
         if (!homeId || !awayId) continue;
 
-        const league = mapCompetition(m.competition);
         const matchDate = m.time
           ? `${m.date}T${m.time}:00+02:00`
           : `${m.date}T20:00:00+02:00`;
 
         // Check if match already exists (same teams, same date)
-        const dateKey = m.date;
         const { data: existing } = await supabase
           .from("matches")
           .select("id")
           .eq("team_home_id", homeId)
           .eq("team_away_id", awayId)
-          .gte("match_date", `${dateKey}T00:00:00Z`)
-          .lte("match_date", `${dateKey}T23:59:59Z`)
+          .gte("match_date", `${m.date}T00:00:00Z`)
+          .lte("match_date", `${m.date}T23:59:59Z`)
           .limit(1);
 
         if (existing && existing.length > 0) continue;
+
+        // Don't insert if match date is in the past
+        if (new Date(matchDate) < new Date()) continue;
 
         const { error: insertErr } = await supabase.from("matches").insert({
           team_home_id: homeId,
