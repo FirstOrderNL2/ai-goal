@@ -40,16 +40,16 @@ Deno.serve(async (req) => {
     });
 
     if (error) throw error;
-    if (!teams?.length) {
-      return new Response(JSON.stringify({ message: "All teams already have logos", updated: 0 }), {
+    if (!realTeams.length) {
+      return new Response(JSON.stringify({ message: "All real teams already have logos", updated: 0 }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    console.log(`Found ${teams.length} teams without logos`);
+    console.log(`Found ${realTeams.length} real teams without logos`);
 
     // Build a single AI prompt for all teams in this batch
-    const teamList = teams.map((t) => `- ${t.name} (${t.country})`).join("\n");
+    const teamList = realTeams.map((t) => `- ${t.name} (${t.country})`).join("\n");
 
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
