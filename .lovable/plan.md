@@ -1,99 +1,93 @@
 
 
-# Enhance AI Prediction Engine with Live Data
+# Enhance AI Predictions: Structured Output + Smarter Analysis + Better UI
 
-## Current State
+## Problem
 
-The AI has three data layers, but they're underutilized:
+Looking at the screenshots, three issues are clear:
 
-1. **Database context** — team form (last 5 results), past predictions, past reviews
-2. **API-Football** — injuries, lineups, predictions (only works when `api_football_id` exists, which scraped matches lack)
-3. **Web search via Gemini** — general match info (no targeted scraping)
+1. **The AI insights are just a wall of text** — no structured prediction summary (predicted winner, predicted score, BTTS yes/no, over/under verdict) is visible at a glance
+2. **The predictions table only stores basic probabilities** — no predicted scoreline, no BTTS, no reasoning/justification
+3. **The AI prompt asks for "flowing paragraphs"** — it should instead return structured, fact-based predictions that can be displayed as distinct UI sections
 
-Key weaknesses:
-- The scraper collects matches but doesn't scrape **player-level data** (who's playing, who's injured)
-- `fetch-match-context` asks Gemini to "search the web" generically — it doesn't use Firecrawl to get actual live pages
-- News from VI.nl is scraped but only stored as text snippets, not structured player availability data
-- Head-to-head data from the DB is fetched but not included in the batch prediction prompt
-- The model uses `gemini-2.5-flash` for insights but could use the stronger `gemini-2.5-pro` for final predictions
+## Plan
 
-## Enhancement Plan
+### 1. Add structured prediction fields to the database
 
-### Phase 1: Firecrawl-powered live context in `fetch-match-context`
+New columns on `predictions` table:
+- `predicted_score_home` (integer) — e.g. 2
+- `predicted_score_away` (integer) — e.g. 1
+- `btts` (text) — "yes" or "no"
+- `ai_reasoning` (text) — the full fact-based justification
 
-Instead of relying solely on Gemini's knowledge, use Firecrawl to scrape **actual live pages** before asking AI to synthesize.
+This way the AI's verdict (winner, score, BTTS, over/under) is stored as data, not buried in prose.
 
-**File: `supabase/functions/fetch-match-context/index.ts`**
-
-Add a new step between API-Football data and AI synthesis:
-- Scrape the team-specific VI.nl match page for lineup/injury news
-- Scrape `iservoetbalvanavond.nl` for today's match details (kickoff times, broadcasters)
-- Feed the **raw scraped markdown** into the AI prompt so it has real, current data to work with
-
-This turns the AI from "guessing from training data" into "analyzing live web content."
-
-### Phase 2: Richer database context in `generate-ai-prediction`
+### 2. Upgrade the AI prompt to require fact-based justification
 
 **File: `supabase/functions/generate-ai-prediction/index.ts`**
 
-Add parallel queries for:
-- **Head-to-head history**: last 5 meetings between these exact two teams (scores, dates)
-- **Home/away split**: separate form for home matches vs away matches (not just overall)
-- **League table position**: query all completed matches to calculate approximate league standing
-- **Goal-scoring patterns**: average goals scored/conceded per game for each team
-- **Clean sheet count**: how many clean sheets in last 10 matches
+Rewrite the prompt to demand:
+- A clear verdict: who wins and why (backed by specific stats from the data provided)
+- A predicted scoreline with reasoning (e.g. "Home averages 1.8 goals scored, away concedes 1.5 → expect 1-2 home goals")
+- BTTS verdict with reasoning (e.g. "Both teams scored in 4/5 of their last matches")
+- Over/under verdict with reasoning (e.g. "Combined avg goals per game: 3.1 → over 2.5")
+- Use tool calling to return structured output (predicted_score, btts, over_under, reasoning sections) instead of free text
+- Enable reasoning mode (`reasoning: { effort: "high" }`) for deeper analysis
+- Increase max_tokens to 3000 for comprehensive justification
 
-All of this data exists in the `matches` table already — it just needs to be queried and formatted into the prompt.
-
-### Phase 3: Enhanced batch predictions with live context
+### 3. Upgrade batch predictions to include new fields
 
 **File: `supabase/functions/batch-generate-predictions/index.ts`**
 
-Currently batch predictions only use team names, form (W/D/L), and news snippets. Enhance by:
-- Calling `fetch-match-context` for each match (with a rate limit delay) to get injuries/lineups
-- Including H2H record in the prompt
-- Using `gemini-2.5-pro` instead of `gemini-3-flash-preview` for higher quality predictions
-- Adding the league context (e.g., "PSG is 1st, Toulouse is 12th")
+Add `predicted_score_home`, `predicted_score_away`, `btts` to the tool calling schema so the AI returns these with every prediction. Store them alongside existing prediction data.
 
-### Phase 4: Structured match intelligence table
+### 4. Redesign the Match Detail page to show structured verdicts
 
-**Database migration**: Create a `match_context` table to cache scraped intelligence so it doesn't need to be re-fetched every time.
+**File: `src/pages/MatchDetail.tsx`** and **`src/components/AIInsightsCard.tsx`**
 
-| Column | Type | Purpose |
-|---|---|---|
-| `match_id` | uuid (FK) | Link to match |
-| `injuries_home` | jsonb | `[{player, reason, return_date}]` |
-| `injuries_away` | jsonb | Same |
-| `lineup_home` | jsonb | `[{player, position}]` |
-| `lineup_away` | jsonb | Same |
-| `suspensions` | jsonb | Players suspended |
-| `weather` | text | Match day weather |
-| `h2h_summary` | text | Head-to-head summary |
-| `news_items` | jsonb | Relevant news linked to this match |
-| `scraped_at` | timestamptz | When this was last refreshed |
+Add a new "AI Verdict" section between the prediction probabilities and the analysis text:
 
-This avoids redundant scraping and lets the auto-sync pipeline build context gradually.
+```text
+┌─────────────────────────────────┐
+│ 🏆 AI Verdict                   │
+│                                 │
+│ Predicted Winner: Chelsea Women │
+│ Predicted Score:  2 - 1         │
+│ BTTS:            Yes ✓          │
+│ Over 2.5:        Over ✓         │
+│ Confidence:      65%            │
+│                                 │
+│ ─── Why? ───────────────────── │
+│ • Chelsea's home form: W W W   │
+│   (avg 2.1 goals scored at home)│
+│ • Arsenal concede 1.3 avg away │
+│ • H2H: Chelsea won 3 of last 5 │
+│ • Both teams scored in 4/5 each │
+└─────────────────────────────────┘
+```
 
-### Phase 5: Upgrade model for final predictions
+The existing wall-of-text AI analysis stays below as "Detailed Analysis" for those who want more depth.
 
-**File: `supabase/functions/generate-ai-prediction/index.ts`**
+### 5. Show match_context data on match detail page
 
-- Switch from `gemini-2.5-flash` to `gemini-2.5-pro` for the final insight generation (deeper reasoning)
-- Increase `max_tokens` from 1200 to 2000 for more detailed analysis
-- Add structured output requesting specific prediction sections (scoreline prediction, BTTS, corners estimate)
+**File: `src/pages/MatchDetail.tsx`**
+
+Query `match_context` table and display structured cards for:
+- Injuries (home/away) — scraped from Firecrawl
+- Confirmed/expected lineups
+- Suspensions
+- Weather
+
+This data already exists in the DB but is never shown to the user.
 
 ## Files to Change
 
 | File | Change |
 |---|---|
-| `supabase/functions/fetch-match-context/index.ts` | Add Firecrawl scraping of live pages before AI synthesis |
-| `supabase/functions/generate-ai-prediction/index.ts` | Add H2H, home/away split, league position queries; upgrade model to gemini-2.5-pro |
-| `supabase/functions/batch-generate-predictions/index.ts` | Call fetch-match-context per match; add H2H; use stronger model |
-| Database migration | Create `match_context` table for caching scraped intelligence |
-
-## Impact
-
-- Predictions go from "AI guessing with team names + form" to "AI analyzing live injury reports, confirmed lineups, league standings, H2H history, and recent news"
-- Context is cached so the auto-sync pipeline builds intelligence over time without redundant scraping
-- Stronger model (gemini-2.5-pro) for final analysis means better reasoning
+| DB migration | Add `predicted_score_home`, `predicted_score_away`, `btts`, `ai_reasoning` to `predictions` |
+| `supabase/functions/generate-ai-prediction/index.ts` | Rewrite prompt for structured, fact-based output with reasoning mode; save new fields |
+| `supabase/functions/batch-generate-predictions/index.ts` | Add new fields to tool schema and DB upsert |
+| `src/pages/MatchDetail.tsx` | Add AI Verdict section and match_context display (injuries, lineups) |
+| `src/components/AIInsightsCard.tsx` | Show structured verdict + fact-based reasoning sections |
+| `src/lib/types.ts` | Add new Prediction fields |
 
