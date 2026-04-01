@@ -1,98 +1,72 @@
 
 
-# System Audit + Next Phase Plan
+# Why Today's Matches Are Missing + Web Scraping Plan
 
-## Current State Summary (April 1, 2026)
+## Root Cause
 
-### Database Stats
-- **2,920 total matches**: 2,447 completed + 473 upcoming
-- **285 teams**: 174 have logos, **111 missing logos** (mostly World Cup placeholder teams like "W74", "1F", "3B/3E/3F")
-- **1,411 predictions**: ALL have `expected_goals = 0.0` and `over_under_25 = "under"` — Sportradar only provides 3-way probabilities, not xG or O/U
-- **0 odds** in the database (no odds API connected)
-- **0 AI insights** generated, **0 post-match reviews**, **0 accuracy scores**
-- **26 of 473 upcoming matches** have predictions — the nearest 20 upcoming matches have **zero predictions**
+The database has a **2-day gap**: completed matches end March 31, upcoming matches start April 3. Today (April 1) and April 2 have **zero matches**. This happens because:
 
-### What is Working
-- Sportradar sync: matches, teams, and 3-way probabilities for 5 domestic leagues + WCQ UEFA/CONMEBOL/CONCACAF + World Cup 2026
-- Homepage loads with league filters, 20 upcoming / 12 completed limits
-- Match detail page with prediction display, H2H, AI insights button
-- Edge functions: `generate-ai-prediction`, `generate-post-match-review`, `fetch-match-context`, `fix-team-logos` all deployed
-- 174/285 teams have Wikipedia logo URLs
+1. **API-Football free tier** rejects all 2025+ season requests ("Free plans do not have access to this season, try from 2022 to 2024") — so it contributes zero data
+2. **Sportradar** only has data from season schedules. If matches on April 1-2 are from competitions not in the config (e.g. Champions League, Europa League, Eredivisie, Dutch football), they won't appear
+3. **No Champions League, Europa League, or Eredivisie** are configured in either sync function
 
-### What is NOT Working / Critical Bugs
+## Proposed Solution: Web Scraping for Match Data + News
 
-| # | Issue | Impact |
-|---|---|---|
-| 1 | **Top 20 upcoming matches have NO predictions** | Users see match cards with no probabilities — the core feature is missing |
-| 2 | **All 1,411 predictions have xG = 0.0 and O/U = "under"** | Sportradar doesn't provide xG; the UI shows "xG: 0.0 - 0.0" which is misleading |
-| 3 | **0 AI insights ever generated** | The AI analysis feature exists but has never been triggered automatically |
-| 4 | **0 post-match reviews / accuracy scores** | The learning loop exists in code but has never run |
-| 5 | **111 teams missing logos** | World Cup placeholder teams ("W74", "1F") + some national teams (Norway, Morocco, Algeria) |
-| 6 | **"Friendlies" filter button exists but no Friendlies data** | Friendlies were removed from Sportradar sync but the filter button remains |
-| 7 | **Broken logo images** | Screenshot shows broken `<img>` for Toulouse FC — some Wikipedia SVG URLs may not render |
-| 8 | **WCQ matches all marked "completed"** | 0 upcoming WCQ matches despite qualifiers still running — season IDs may be for finished campaigns |
+Create a new edge function that scrapes the requested Dutch football websites to fill in today's matches and enrich AI predictions with current news. This requires the **Firecrawl connector** for reliable web scraping.
 
----
+### Phase 1: Connect Firecrawl and Create Scraping Functions
 
-## Next Phase Plan
+**1a. Set up Firecrawl connector**
+- Link the Firecrawl connector to the project for web scraping capabilities
 
-### Phase 1: Fix Critical Data Gaps (immediate)
+**1b. Create `supabase/functions/scrape-matches/index.ts`**
+- Scrape `https://www.iservoetbalvanavond.nl/` for today's match schedule (teams, times, competitions)
+- Scrape `https://www.vi.nl/wedstrijden` for upcoming match data across all competitions
+- Parse the scraped content using AI (Gemini) to extract structured match data: home team, away team, date, time, competition
+- Upsert new matches into the database, cross-matching teams by name
 
-**1a. Generate predictions for upcoming matches**
-- Create a new edge function `batch-generate-predictions` that:
-  - Queries the next 20 upcoming matches that have NO prediction
-  - For each, calls the AI gateway to generate proper probabilities, xG estimates, and O/U 2.5
-  - Uses tool calling to extract structured output (home_win, draw, away_win, xG_home, xG_away, over_under)
-  - Upserts into the `predictions` table
-- This replaces the Sportradar-only probabilities with AI-enriched predictions that include real xG estimates
+**1c. Create `supabase/functions/scrape-news/index.ts`**
+- Scrape `https://www.vi.nl/nieuws/net-binnen` for latest football news
+- Store relevant headlines and summaries
+- Feed this news context into the AI prediction function to improve accuracy (e.g. injury news, transfers, team form)
 
-**1b. Fix xG display**
-- In `MatchCard.tsx`: hide the xG line when both values are 0 (don't show "xG: 0.0 - 0.0")
-- In `generate-ai-prediction`: when generating insights, also update the prediction row with AI-estimated xG
+### Phase 2: Add Missing Competitions to Sportradar Sync
 
-**1c. Remove "Friendlies" filter**
-- Remove from `LeagueFilter.tsx` since no Friendlies data exists
+Add these competitions that are currently missing:
+- **Champions League** (`sr:competition:7`)
+- **Europa League** (`sr:competition:679`)
+- **Eredivisie** (`sr:competition:37`) — Dutch league
 
-**1d. Fix broken logo images**
-- Add `onError` handler to `<img>` tags in `MatchCard.tsx` and `MatchDetail.tsx` to show team initials as fallback
-- Re-run `fix-team-logos` for national teams missing logos (Norway, Morocco, Algeria, etc.)
+Update `sync-sportradar-data/index.ts` and `LeagueFilter.tsx` accordingly.
 
-### Phase 2: Activate the AI Learning Loop
+### Phase 3: Integrate News into AI Predictions
 
-**2a. Auto-generate post-match reviews**
-- After each Sportradar sync, automatically call `generate-post-match-review` for the 5 most recently completed matches that don't have a review yet
-- Add this as a step at the end of `sync-sportradar-data`
+Update `batch-generate-predictions` to include scraped news as additional context when generating predictions, improving accuracy with real-time injury/transfer/form data.
 
-**2b. Auto-generate pre-match AI insights**
-- After sync, call `generate-ai-prediction` for the next 5 upcoming matches missing insights
-- This populates the AI analysis that users see on match detail pages
-
-### Phase 3: Improve Prediction Quality
-
-**3a. AI-powered prediction function**
-- New edge function that uses the AI gateway with tool calling to produce structured predictions
-- Input: team form (last 5 results from DB), head-to-head history, league position, home/away record
-- Output: structured JSON with calibrated probabilities, xG estimates, and O/U prediction
-- This replaces Sportradar's static probabilities with context-aware AI predictions
-
-**3b. Confidence calibration**
-- Currently `model_confidence` = max(home_win, draw, away_win) which is just a repeat of the highest probability
-- Replace with actual calibration: compare past predictions vs outcomes to compute a reliability score
-
-### Files to Change (Phase 1)
+## Files Changed
 
 | File | Change |
 |---|---|
-| `supabase/functions/batch-generate-predictions/index.ts` | New: AI-powered batch prediction generator for upcoming matches |
-| `src/components/MatchCard.tsx` | Hide xG when both = 0; add img onError fallback |
-| `src/components/LeagueFilter.tsx` | Remove "Friendlies" entry |
-| `src/pages/MatchDetail.tsx` | Add img onError fallback for team logos |
+| `supabase/functions/scrape-matches/index.ts` | New: Firecrawl-powered match scraper for Dutch football sites |
+| `supabase/functions/scrape-news/index.ts` | New: Firecrawl-powered news scraper for VI.nl |
+| `supabase/functions/sync-sportradar-data/index.ts` | Add Champions League, Europa League, Eredivisie season IDs |
+| `supabase/functions/batch-generate-predictions/index.ts` | Include scraped news context in AI prediction prompts |
+| `src/components/LeagueFilter.tsx` | Add Champions League, Europa League, Eredivisie filter buttons |
+| `src/hooks/useSportradar.ts` | Add new league keys |
+| `src/lib/seasons.ts` | Add new season entries |
 
-### Files to Change (Phase 2)
+## Prerequisites
 
-| File | Change |
-|---|---|
-| `supabase/functions/sync-sportradar-data/index.ts` | After sync, trigger batch AI predictions + reviews for recent matches |
+The Firecrawl connector must be linked to the project first. This provides the `FIRECRAWL_API_KEY` secret needed for web scraping.
 
-No database migrations needed.
+## Technical Detail
+
+The scraping flow:
+1. Firecrawl fetches the page as markdown
+2. AI (Gemini) parses the markdown to extract structured match data
+3. Teams are matched against existing DB records by name (using the alias system)
+4. New teams are created if not found
+5. Matches are inserted with proper competition labels
+
+For news: headlines are stored and passed as context to the prediction AI, e.g. "Key context: Arsenal midfielder injured for 3 weeks (source: VI.nl)" — this helps the AI make better-informed predictions.
 
