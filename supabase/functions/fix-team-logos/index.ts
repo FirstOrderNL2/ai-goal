@@ -144,8 +144,7 @@ Rules:
     let updated = 0;
     const results: Array<{ team: string; status: string }> = [];
 
-    for (const team of teams) {
-      // Find matching logo entry (fuzzy match on name)
+    for (const team of realTeams) {
       const match = logos.find(
         (l) =>
           l.logo_url &&
