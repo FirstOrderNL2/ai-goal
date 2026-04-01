@@ -7,6 +7,8 @@ import { FunFactsCard } from "@/components/FunFactsCard";
 import { MatchInsightsCard } from "@/components/MatchInsightsCard";
 import { StatsBombSection } from "@/components/StatsBombSection";
 import { AIInsightsCard } from "@/components/AIInsightsCard";
+import { AIVerdictCard } from "@/components/AIVerdictCard";
+import { MatchContextCard } from "@/components/MatchContextCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,7 +19,6 @@ export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: match, isLoading } = useMatch(id!);
 
-  // All hooks must be called before any early returns
   const home_team = match?.home_team;
   const away_team = match?.away_team;
   const { data: h2h, isLoading: h2hLoading } = useHeadToHead(
@@ -110,13 +111,22 @@ export default function MatchDetail() {
           </CardContent>
         </Card>
 
+        {/* AI Verdict - structured prediction at a glance */}
+        {prediction && (
+          <AIVerdictCard
+            prediction={prediction}
+            homeTeamName={home_team?.name || "Home"}
+            awayTeamName={away_team?.name || "Away"}
+          />
+        )}
+
         {/* Prediction Breakdown */}
         {prediction && (
           <Card className="border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base">
                 <Target className="h-4 w-4 text-primary" />
-                AI Prediction
+                Prediction Probabilities
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
@@ -161,15 +171,16 @@ export default function MatchDetail() {
                   </div>
                 </div>
               </div>
-
-              <div className="text-center">
-                <Badge variant={prediction.over_under_25 === "over" ? "default" : "outline"} className="text-sm px-4 py-1">
-                  {prediction.over_under_25 === "over" ? "Over 2.5 Goals" : "Under 2.5 Goals"}
-                </Badge>
-              </div>
             </CardContent>
           </Card>
         )}
+
+        {/* Match Intelligence (injuries, suspensions, weather, news) */}
+        <MatchContextCard
+          matchId={match.id}
+          homeTeamName={home_team?.name}
+          awayTeamName={away_team?.name}
+        />
 
         {/* Odds */}
         {odds && (
@@ -223,13 +234,13 @@ export default function MatchDetail() {
         )}
         {h2hLoading && <Skeleton className="h-48" />}
 
-        {/* AI Insights */}
+        {/* AI Insights (generate/regenerate) */}
         <AIInsightsCard
           matchId={match.id}
           existingInsights={match.ai_insights}
           matchStatus={match.status}
-          postMatchReview={(match as any).ai_post_match_review}
-          accuracyScore={(match as any).ai_accuracy_score}
+          postMatchReview={match.ai_post_match_review}
+          accuracyScore={match.ai_accuracy_score}
         />
 
         {/* Sportradar Fun Facts */}

@@ -279,8 +279,12 @@ Call the predict_match function with your analysis.`;
           away_win: Math.round(aw * 1000) / 1000,
           expected_goals_home: Math.round((pred.expected_goals_home || 1.2) * 10) / 10,
           expected_goals_away: Math.round((pred.expected_goals_away || 1.0) * 10) / 10,
+          predicted_score_home: pred.predicted_score_home ?? null,
+          predicted_score_away: pred.predicted_score_away ?? null,
           over_under_25: pred.over_under_25 || "under",
+          btts: pred.btts || "no",
           model_confidence: Math.round((pred.confidence || 0.5) * 1000) / 1000,
+          ai_reasoning: pred.reasoning || null,
         }, { onConflict: "match_id" });
 
         if (upsertErr) {
