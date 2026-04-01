@@ -6,6 +6,34 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+async function fetchMatchContextForBatch(
+  homeName: string, awayName: string, league: string, matchDate: string,
+  matchId: string, supabaseUrl: string, serviceKey: string
+): Promise<string> {
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/fetch-match-context`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({
+        home_team: homeName,
+        away_team: awayName,
+        league,
+        match_date: matchDate,
+        match_id: matchId,
+      }),
+    });
+    if (!res.ok) return "";
+    const data = await res.json();
+    return data.context || "";
+  } catch (e) {
+    console.error(`Context fetch failed for ${homeName} vs ${awayName}:`, e);
+    return "";
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -21,12 +49,11 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const limit = body.limit ?? 10;
-    const mode = body.mode ?? "upcoming"; // "upcoming" or "review"
+    const mode = body.mode ?? "upcoming";
 
     if (mode === "review") {
       return await generateReviews(supabase, supabaseUrl, serviceKey, lovableApiKey, limit);
     }
-
     if (mode === "backfill_xg") {
       return await backfillXg(supabase, lovableApiKey, limit);
     }
@@ -62,11 +89,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get form data for all teams involved
+    // Get form + H2H data for all teams involved
     const teamIds = [...new Set(needsPrediction.flatMap((m: any) => [m.team_home_id, m.team_away_id]))];
     const { data: recentMatches } = await supabase
       .from("matches")
-      .select("team_home_id, team_away_id, goals_home, goals_away, status")
+      .select("team_home_id, team_away_id, goals_home, goals_away, status, match_date")
       .eq("status", "completed")
       .or(teamIds.map(id => `team_home_id.eq.${id},team_away_id.eq.${id}`).join(","))
       .order("match_date", { ascending: false })
@@ -74,17 +101,67 @@ Deno.serve(async (req) => {
 
     // Build form lookup
     const formMap = new Map<string, string[]>();
+    const homeFormMap = new Map<string, string[]>();
+    const awayFormMap = new Map<string, string[]>();
+    const statsMap = new Map<string, { avgScored: string; avgConceded: string; cleanSheets: number; played: number }>();
+
     for (const tid of teamIds) {
       const teamMatches = (recentMatches || [])
         .filter((m: any) => m.team_home_id === tid || m.team_away_id === tid)
-        .slice(0, 5);
-      const form = teamMatches.map((m: any) => {
+        .slice(0, 10);
+
+      // Overall form (last 5)
+      const form = teamMatches.slice(0, 5).map((m: any) => {
         const isHome = m.team_home_id === tid;
         const gf = isHome ? m.goals_home : m.goals_away;
         const ga = isHome ? m.goals_away : m.goals_home;
         return (gf ?? 0) > (ga ?? 0) ? "W" : (gf ?? 0) === (ga ?? 0) ? "D" : "L";
       });
       formMap.set(tid, form);
+
+      // Home-only form
+      const homeMatches = teamMatches.filter((m: any) => m.team_home_id === tid).slice(0, 5);
+      homeFormMap.set(tid, homeMatches.map((m: any) => {
+        const r = (m.goals_home ?? 0) > (m.goals_away ?? 0) ? "W" : (m.goals_home ?? 0) === (m.goals_away ?? 0) ? "D" : "L";
+        return `${r} (${m.goals_home}-${m.goals_away})`;
+      }));
+
+      // Away-only form
+      const awayMatches = teamMatches.filter((m: any) => m.team_away_id === tid).slice(0, 5);
+      awayFormMap.set(tid, awayMatches.map((m: any) => {
+        const r = (m.goals_away ?? 0) > (m.goals_home ?? 0) ? "W" : (m.goals_away ?? 0) === (m.goals_home ?? 0) ? "D" : "L";
+        return `${r} (${m.goals_away}-${m.goals_home})`;
+      }));
+
+      // Stats
+      let scored = 0, conceded = 0, cleanSheets = 0;
+      for (const m of teamMatches) {
+        const isHome = m.team_home_id === tid;
+        const gf = isHome ? (m.goals_home ?? 0) : (m.goals_away ?? 0);
+        const ga = isHome ? (m.goals_away ?? 0) : (m.goals_home ?? 0);
+        scored += gf;
+        conceded += ga;
+        if (ga === 0) cleanSheets++;
+      }
+      if (teamMatches.length > 0) {
+        statsMap.set(tid, {
+          played: teamMatches.length,
+          avgScored: (scored / teamMatches.length).toFixed(1),
+          avgConceded: (conceded / teamMatches.length).toFixed(1),
+          cleanSheets,
+        });
+      }
+    }
+
+    // Build H2H lookup
+    function getH2H(homeId: string, awayId: string): string {
+      const h2h = (recentMatches || []).filter(
+        (m: any) =>
+          (m.team_home_id === homeId && m.team_away_id === awayId) ||
+          (m.team_home_id === awayId && m.team_away_id === homeId)
+      ).slice(0, 5);
+      if (h2h.length === 0) return "";
+      return h2h.map((m: any) => `${m.match_date?.slice(0, 10)}: ${m.goals_home}-${m.goals_away}`).join(", ");
     }
 
     let generated = 0;
@@ -95,26 +172,36 @@ Deno.serve(async (req) => {
       const awayName = (match as any).away_team?.name ?? "Away";
       const homeForm = formMap.get(match.team_home_id) || [];
       const awayForm = formMap.get(match.team_away_id) || [];
+      const homeHome = homeFormMap.get(match.team_home_id) || [];
+      const awayAway = awayFormMap.get(match.team_away_id) || [];
+      const homeStats = statsMap.get(match.team_home_id);
+      const awayStats = statsMap.get(match.team_away_id);
+      const h2h = getH2H(match.team_home_id, match.team_away_id);
 
-      // Check if match has news context in ai_insights
-      const { data: matchDetails } = await supabase
-        .from("matches")
-        .select("ai_insights")
-        .eq("id", match.id)
-        .single();
-
-      const newsContext = matchDetails?.ai_insights && matchDetails.ai_insights.includes("[NEWS]")
-        ? `\nRecent news context:\n${matchDetails.ai_insights}`
-        : "";
+      // Fetch live context (cached after first call)
+      let liveContext = "";
+      try {
+        liveContext = await fetchMatchContextForBatch(
+          homeName, awayName, match.league, match.match_date, match.id,
+          supabaseUrl, serviceKey
+        );
+      } catch (_) {
+        // Non-critical
+      }
 
       const prompt = `Analyze this football match and provide a prediction.
 
 Match: ${homeName} vs ${awayName}
 League: ${match.league}
 Date: ${match.match_date}
-${homeName} recent form (last 5): ${homeForm.join(", ") || "Unknown"}
-${awayName} recent form (last 5): ${awayForm.join(", ") || "Unknown"}
-${newsContext}
+${homeName} overall form (last 5): ${homeForm.join(", ") || "Unknown"}
+${awayName} overall form (last 5): ${awayForm.join(", ") || "Unknown"}
+${homeHome.length ? `${homeName} HOME form: ${homeHome.join(", ")}` : ""}
+${awayAway.length ? `${awayName} AWAY form: ${awayAway.join(", ")}` : ""}
+${h2h ? `Head-to-head recent: ${h2h}` : "No H2H data"}
+${homeStats ? `${homeName} stats (last ${homeStats.played}): avg scored ${homeStats.avgScored}, avg conceded ${homeStats.avgConceded}, clean sheets ${homeStats.cleanSheets}` : ""}
+${awayStats ? `${awayName} stats (last ${awayStats.played}): avg scored ${awayStats.avgScored}, avg conceded ${awayStats.avgConceded}, clean sheets ${awayStats.cleanSheets}` : ""}
+${liveContext ? `\nLIVE CONTEXT (injuries, lineups, news):\n${liveContext.slice(0, 3000)}` : ""}
 
 Call the predict_match function with your analysis.`;
 
@@ -126,9 +213,9 @@ Call the predict_match function with your analysis.`;
             Authorization: `Bearer ${lovableApiKey}`,
           },
           body: JSON.stringify({
-            model: "google/gemini-3-flash-preview",
+            model: "google/gemini-2.5-pro",
             messages: [
-              { role: "system", content: "You are an expert football analyst. Use team form, league context, and home advantage to make calibrated predictions. Be data-driven." },
+              { role: "system", content: "You are an expert football analyst. Use team form, home/away splits, head-to-head history, goal-scoring stats, injuries, lineups, and league context to make calibrated predictions. Be data-driven and precise." },
               { role: "user", content: prompt },
             ],
             tools: [{
@@ -175,7 +262,7 @@ Call the predict_match function with your analysis.`;
 
         const pred = JSON.parse(toolCall.function.arguments);
 
-        // Normalize probabilities to sum to 1
+        // Normalize probabilities
         const total = (pred.home_win || 0) + (pred.draw || 0) + (pred.away_win || 0);
         const hw = total > 0 ? pred.home_win / total : 0.4;
         const dr = total > 0 ? pred.draw / total : 0.3;
@@ -198,8 +285,8 @@ Call the predict_match function with your analysis.`;
           generated++;
         }
 
-        // Rate limit protection
-        await new Promise(r => setTimeout(r, 1500));
+        // Rate limit: longer delay because we're calling fetch-match-context + AI
+        await new Promise(r => setTimeout(r, 3000));
       } catch (e) {
         errors.push(`Error for ${homeName} vs ${awayName}: ${e.message}`);
       }
@@ -218,7 +305,6 @@ Call the predict_match function with your analysis.`;
 });
 
 async function generateReviews(supabase: any, supabaseUrl: string, serviceKey: string, lovableApiKey: string, limit: number) {
-  // Find completed matches without reviews
   const { data: matches } = await supabase
     .from("matches")
     .select("id")
@@ -262,7 +348,6 @@ async function generateReviews(supabase: any, supabaseUrl: string, serviceKey: s
 }
 
 async function backfillXg(supabase: any, lovableApiKey: string, limit: number) {
-  // Find predictions with xG = 0
   const { data: preds } = await supabase
     .from("predictions")
     .select("id, match_id, home_win, draw, away_win")
@@ -276,7 +361,6 @@ async function backfillXg(supabase: any, lovableApiKey: string, limit: number) {
     });
   }
 
-  // Get match + team info
   const matchIds = preds.map((p: any) => p.match_id);
   const { data: matches } = await supabase
     .from("matches")
@@ -300,7 +384,7 @@ async function backfillXg(supabase: any, lovableApiKey: string, limit: number) {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${lovableApiKey}` },
         body: JSON.stringify({
-          model: "google/gemini-3-flash-preview",
+          model: "google/gemini-2.5-flash",
           messages: [
             { role: "system", content: "You are a football analyst. Estimate expected goals (xG) for a match based on the teams and probabilities provided." },
             { role: "user", content: `Match: ${homeName} vs ${awayName}, League: ${match.league}. Win probabilities: Home ${(pred.home_win * 100).toFixed(0)}%, Draw ${(pred.draw * 100).toFixed(0)}%, Away ${(pred.away_win * 100).toFixed(0)}%. Estimate realistic xG for each team. Use the set_xg tool.` },
