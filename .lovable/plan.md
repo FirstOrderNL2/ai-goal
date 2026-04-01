@@ -1,65 +1,98 @@
 
 
-# Fix International Competition Sync — Wrong Season IDs
+# System Audit + Next Phase Plan
 
-## Root Cause
+## Current State Summary (April 1, 2026)
 
-The international competitions are not loading because the Sportradar season IDs in the code are **completely wrong**:
+### Database Stats
+- **2,920 total matches**: 2,447 completed + 473 upcoming
+- **285 teams**: 174 have logos, **111 missing logos** (mostly World Cup placeholder teams like "W74", "1F", "3B/3E/3F")
+- **1,411 predictions**: ALL have `expected_goals = 0.0` and `over_under_25 = "under"` — Sportradar only provides 3-way probabilities, not xG or O/U
+- **0 odds** in the database (no odds API connected)
+- **0 AI insights** generated, **0 post-match reviews**, **0 accuracy scores**
+- **26 of 473 upcoming matches** have predictions — the nearest 20 upcoming matches have **zero predictions**
 
-| Competition | Current (wrong) Season ID | Correct Season ID | Verified via API |
-|---|---|---|---|
-| WC Qualifiers Europe | `sr:season:118689` | `sr:season:127075` | Yes — "FIFA World Cup Qualification UEFA 2026" (25/26) |
-| WC Qualifiers South America | `sr:season:118691` | `sr:season:109025` | Yes — "FIFA World Cup Qualification 2026, CONMEBOL" (23-25) |
-| Friendlies | `sr:season:113069` | N/A — see below | Competition ID was wrong too |
+### What is Working
+- Sportradar sync: matches, teams, and 3-way probabilities for 5 domestic leagues + WCQ UEFA/CONMEBOL/CONCACAF + World Cup 2026
+- Homepage loads with league filters, 20 upcoming / 12 completed limits
+- Match detail page with prediction display, H2H, AI insights button
+- Edge functions: `generate-ai-prediction`, `generate-post-match-review`, `fetch-match-context`, `fix-team-logos` all deployed
+- 174/285 teams have Wikipedia logo URLs
 
-Additionally, the **competition IDs** were wrong:
-- Code used `sr:competition:36` (Scottish Premiership) and `sr:competition:37` (Eredivisie) — NOT world cup qualifiers
-- Correct: `sr:competition:11` (WCQ UEFA), `sr:competition:295` (WCQ CONMEBOL)
+### What is NOT Working / Critical Bugs
 
-**Friendlies**: `sr:competition:852` is **women's** friendlies. Men's international friendlies may not be available on the Sportradar trial API. The matches in your screenshot (USA vs Portugal, Brazil vs Croatia) are friendlies — we can add them via API-Football (league ID 10) as a fallback.
+| # | Issue | Impact |
+|---|---|---|
+| 1 | **Top 20 upcoming matches have NO predictions** | Users see match cards with no probabilities — the core feature is missing |
+| 2 | **All 1,411 predictions have xG = 0.0 and O/U = "under"** | Sportradar doesn't provide xG; the UI shows "xG: 0.0 - 0.0" which is misleading |
+| 3 | **0 AI insights ever generated** | The AI analysis feature exists but has never been triggered automatically |
+| 4 | **0 post-match reviews / accuracy scores** | The learning loop exists in code but has never run |
+| 5 | **111 teams missing logos** | World Cup placeholder teams ("W74", "1F") + some national teams (Norway, Morocco, Algeria) |
+| 6 | **"Friendlies" filter button exists but no Friendlies data** | Friendlies were removed from Sportradar sync but the filter button remains |
+| 7 | **Broken logo images** | Screenshot shows broken `<img>` for Toulouse FC — some Wikipedia SVG URLs may not render |
+| 8 | **WCQ matches all marked "completed"** | 0 upcoming WCQ matches despite qualifiers still running — season IDs may be for finished campaigns |
 
-Also adding **CONCACAF WCQ** (`sr:competition:14`, `sr:season:115355`) and **FIFA World Cup 2026** (`sr:competition:16`, `sr:season:101177`) since those are relevant upcoming competitions.
+---
 
-## Plan
+## Next Phase Plan
 
-### 1. Fix Season IDs in `sync-sportradar-data`
+### Phase 1: Fix Critical Data Gaps (immediate)
 
-Update `ALL_LEAGUES` with the verified correct season IDs:
+**1a. Generate predictions for upcoming matches**
+- Create a new edge function `batch-generate-predictions` that:
+  - Queries the next 20 upcoming matches that have NO prediction
+  - For each, calls the AI gateway to generate proper probabilities, xG estimates, and O/U 2.5
+  - Uses tool calling to extract structured output (home_win, draw, away_win, xG_home, xG_away, over_under)
+  - Upserts into the `predictions` table
+- This replaces the Sportradar-only probabilities with AI-enriched predictions that include real xG estimates
 
-```
-wc_qualifiers_europe:     sr:season:127075
-wc_qualifiers_conmebol:   sr:season:109025
-wc_qualifiers_concacaf:   sr:season:115355
-world_cup_2026:           sr:season:101177
-```
+**1b. Fix xG display**
+- In `MatchCard.tsx`: hide the xG line when both values are 0 (don't show "xG: 0.0 - 0.0")
+- In `generate-ai-prediction`: when generating insights, also update the prediction row with AI-estimated xG
 
-Remove `friendlies` from Sportradar sync (wrong competition ID, men's friendlies not available on trial).
+**1c. Remove "Friendlies" filter**
+- Remove from `LeagueFilter.tsx` since no Friendlies data exists
 
-### 2. Fix Season IDs in `src/lib/seasons.ts`
+**1d. Fix broken logo images**
+- Add `onError` handler to `<img>` tags in `MatchCard.tsx` and `MatchDetail.tsx` to show team initials as fallback
+- Re-run `fix-team-logos` for national teams missing logos (Norway, Morocco, Algeria, etc.)
 
-Update to match the corrected IDs.
+### Phase 2: Activate the AI Learning Loop
 
-### 3. Update `src/hooks/useSportradar.ts`
+**2a. Auto-generate post-match reviews**
+- After each Sportradar sync, automatically call `generate-post-match-review` for the 5 most recently completed matches that don't have a review yet
+- Add this as a step at the end of `sync-sportradar-data`
 
-Update `LEAGUE_KEYS` array: replace `wc_qualifiers_south_america` with `wc_qualifiers_conmebol`, add `wc_qualifiers_concacaf` and `world_cup_2026`, remove `friendlies`.
+**2b. Auto-generate pre-match AI insights**
+- After sync, call `generate-ai-prediction` for the next 5 upcoming matches missing insights
+- This populates the AI analysis that users see on match detail pages
 
-### 4. Update `src/components/LeagueFilter.tsx`
+### Phase 3: Improve Prediction Quality
 
-Update filter buttons to match new league keys. Add "World Cup" and "WCQ CONCACAF" buttons. Remove "Friendlies" (not available from Sportradar trial).
+**3a. AI-powered prediction function**
+- New edge function that uses the AI gateway with tool calling to produce structured predictions
+- Input: team form (last 5 results from DB), head-to-head history, league position, home/away record
+- Output: structured JSON with calibrated probabilities, xG estimates, and O/U prediction
+- This replaces Sportradar's static probabilities with context-aware AI predictions
 
-### 5. Add Friendlies via API-Football (league ID 10)
+**3b. Confidence calibration**
+- Currently `model_confidence` = max(home_win, draw, away_win) which is just a repeat of the highest probability
+- Replace with actual calibration: compare past predictions vs outcomes to compute a reliability score
 
-The `sync-football-data` function already has `{ id: 10, name: "Friendlies" }` configured. This is the correct source for international friendlies. Ensure its season parameter works (use `2024` instead of dynamic `2025` for the free tier, or `2026` if allowed for friendlies).
-
-## Files Changed
+### Files to Change (Phase 1)
 
 | File | Change |
 |---|---|
-| `supabase/functions/sync-sportradar-data/index.ts` | Fix all international season IDs; rename `wc_qualifiers_south_america` → `wc_qualifiers_conmebol`; add `wc_qualifiers_concacaf` and `world_cup_2026`; remove `friendlies` |
-| `src/lib/seasons.ts` | Update season entries to match |
-| `src/hooks/useSportradar.ts` | Update `LEAGUE_KEYS` array |
-| `src/components/LeagueFilter.tsx` | Update filter buttons |
-| `supabase/functions/sync-football-data/index.ts` | Verify friendlies season param works |
+| `supabase/functions/batch-generate-predictions/index.ts` | New: AI-powered batch prediction generator for upcoming matches |
+| `src/components/MatchCard.tsx` | Hide xG when both = 0; add img onError fallback |
+| `src/components/LeagueFilter.tsx` | Remove "Friendlies" entry |
+| `src/pages/MatchDetail.tsx` | Add img onError fallback for team logos |
 
-No database changes needed.
+### Files to Change (Phase 2)
+
+| File | Change |
+|---|---|
+| `supabase/functions/sync-sportradar-data/index.ts` | After sync, trigger batch AI predictions + reviews for recent matches |
+
+No database migrations needed.
 
