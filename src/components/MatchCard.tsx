@@ -79,10 +79,12 @@ export function MatchCard({ match }: MatchCardProps) {
               />
 
               <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-1 text-muted-foreground">
-                  <TrendingUp className="h-3 w-3" />
-                  <span>xG: {Number(prediction.expected_goals_home).toFixed(1)} - {Number(prediction.expected_goals_away).toFixed(1)}</span>
-                </div>
+                {(Number(prediction.expected_goals_home) > 0 || Number(prediction.expected_goals_away) > 0) && (
+                  <div className="flex items-center gap-1 text-muted-foreground">
+                    <TrendingUp className="h-3 w-3" />
+                    <span>xG: {Number(prediction.expected_goals_home).toFixed(1)} - {Number(prediction.expected_goals_away).toFixed(1)}</span>
+                  </div>
+                )}
                 <Badge
                   variant={prediction.over_under_25 === "over" ? "default" : "outline"}
                   className="text-[10px]"

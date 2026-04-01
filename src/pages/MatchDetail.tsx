@@ -142,15 +142,17 @@ export default function MatchDetail() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="flex items-center gap-2 rounded-lg bg-muted p-3">
-                  <TrendingUp className="h-4 w-4 text-primary" />
-                  <div>
-                    <p className="text-sm font-semibold">
-                      {Number(prediction.expected_goals_home).toFixed(1)} - {Number(prediction.expected_goals_away).toFixed(1)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">Expected Goals</p>
+                {(Number(prediction.expected_goals_home) > 0 || Number(prediction.expected_goals_away) > 0) && (
+                  <div className="flex items-center gap-2 rounded-lg bg-muted p-3">
+                    <TrendingUp className="h-4 w-4 text-primary" />
+                    <div>
+                      <p className="text-sm font-semibold">
+                        {Number(prediction.expected_goals_home).toFixed(1)} - {Number(prediction.expected_goals_away).toFixed(1)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">Expected Goals</p>
+                    </div>
                   </div>
-                </div>
+                )}
                 <div className="flex items-center gap-2 rounded-lg bg-muted p-3">
                   <BarChart3 className="h-4 w-4 text-primary" />
                   <div>
