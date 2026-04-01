@@ -14,6 +14,56 @@ export type Database = {
   }
   public: {
     Tables: {
+      match_context: {
+        Row: {
+          h2h_summary: string | null
+          id: string
+          injuries_away: Json | null
+          injuries_home: Json | null
+          lineup_away: Json | null
+          lineup_home: Json | null
+          match_id: string
+          news_items: Json | null
+          scraped_at: string
+          suspensions: Json | null
+          weather: string | null
+        }
+        Insert: {
+          h2h_summary?: string | null
+          id?: string
+          injuries_away?: Json | null
+          injuries_home?: Json | null
+          lineup_away?: Json | null
+          lineup_home?: Json | null
+          match_id: string
+          news_items?: Json | null
+          scraped_at?: string
+          suspensions?: Json | null
+          weather?: string | null
+        }
+        Update: {
+          h2h_summary?: string | null
+          id?: string
+          injuries_away?: Json | null
+          injuries_home?: Json | null
+          lineup_away?: Json | null
+          lineup_home?: Json | null
+          match_id?: string
+          news_items?: Json | null
+          scraped_at?: string
+          suspensions?: Json | null
+          weather?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_context_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: true
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       matches: {
         Row: {
           ai_accuracy_score: number | null
