@@ -13,10 +13,73 @@ const LEAGUES = [
   { id: 135, name: "Serie A", country: "Italy" },
   { id: 78, name: "Bundesliga", country: "Germany" },
   { id: 61, name: "Ligue 1", country: "France" },
+  // International
+  { id: 1, name: "World Cup", country: "World" },
+  { id: 32, name: "WC Qualifiers Europe", country: "World" },
+  { id: 34, name: "WC Qualifiers South America", country: "World" },
+  { id: 10, name: "Friendlies", country: "World" },
 ];
+
 // Dynamic season: Aug+ = current year, else previous year
 const now = new Date();
 const SEASON = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+
+// Team name alias map for cross-matching Sportradar teams with API-Football teams
+const TEAM_NAME_ALIASES: Record<string, string> = {
+  "internazionale": "inter milan", "inter milano": "inter milan", "fc internazionale milano": "inter milan",
+  "atletico de madrid": "atletico madrid", "atlético de madrid": "atletico madrid", "atlético madrid": "atletico madrid",
+  "wolverhampton wanderers": "wolves", "tottenham hotspur": "tottenham", "west ham united": "west ham",
+  "manchester city fc": "manchester city", "manchester united fc": "manchester united",
+  "arsenal fc": "arsenal", "chelsea fc": "chelsea", "liverpool fc": "liverpool",
+  "newcastle united fc": "newcastle", "newcastle united": "newcastle",
+  "brighton and hove albion": "brighton", "brighton & hove albion": "brighton",
+  "aston villa fc": "aston villa", "nottingham forest fc": "nottingham forest",
+  "leicester city fc": "leicester", "crystal palace fc": "crystal palace",
+  "everton fc": "everton", "fulham fc": "fulham",
+  "bournemouth": "afc bournemouth", "ipswich town fc": "ipswich", "ipswich town": "ipswich",
+  "southampton fc": "southampton", "brentford fc": "brentford",
+  "real madrid cf": "real madrid", "fc barcelona": "barcelona", "rcd espanyol": "espanyol",
+  "real sociedad de fútbol": "real sociedad", "real betis balompié": "real betis",
+  "villarreal cf": "villarreal", "sevilla fc": "sevilla", "valencia cf": "valencia",
+  "ca osasuna": "osasuna", "rcd mallorca": "mallorca",
+  "celta de vigo": "celta vigo", "rc celta de vigo": "celta vigo",
+  "getafe cf": "getafe", "deportivo alavés": "alaves", "deportivo alaves": "alaves",
+  "girona fc": "girona", "athletic club": "athletic bilbao",
+  "juventus fc": "juventus", "ac milan": "milan", "ssc napoli": "napoli",
+  "as roma": "roma", "ss lazio": "lazio", "acf fiorentina": "fiorentina",
+  "atalanta bc": "atalanta", "torino fc": "torino",
+  "bologna fc 1909": "bologna", "bologna fc": "bologna",
+  "genoa cfc": "genoa", "udinese calcio": "udinese", "empoli fc": "empoli",
+  "hellas verona fc": "verona", "hellas verona": "verona",
+  "us lecce": "lecce", "cagliari calcio": "cagliari", "parma calcio 1913": "parma",
+  "como 1907": "como", "venezia fc": "venezia", "ac monza": "monza",
+  "fc bayern münchen": "bayern munich", "fc bayern munich": "bayern munich", "bayern münchen": "bayern munich",
+  "borussia dortmund": "dortmund", "bayer 04 leverkusen": "bayer leverkusen",
+  "rb leipzig": "leipzig", "vfb stuttgart": "stuttgart",
+  "eintracht frankfurt": "frankfurt", "sg eintracht frankfurt": "frankfurt",
+  "borussia mönchengladbach": "monchengladbach", "borussia monchengladbach": "monchengladbach",
+  "vfl wolfsburg": "wolfsburg", "sc freiburg": "freiburg",
+  "1. fc union berlin": "union berlin", "tsg 1899 hoffenheim": "hoffenheim",
+  "1. fsv mainz 05": "mainz", "fc augsburg": "augsburg",
+  "1. fc heidenheim 1846": "heidenheim", "fc heidenheim": "heidenheim",
+  "sv werder bremen": "werder bremen", "vfl bochum 1848": "bochum", "vfl bochum": "bochum",
+  "fc st. pauli": "st. pauli", "holstein kiel": "kiel",
+  "paris saint-germain": "psg", "paris saint-germain fc": "psg",
+  "olympique de marseille": "marseille", "as monaco": "monaco", "as monaco fc": "monaco",
+  "olympique lyonnais": "lyon", "losc lille": "lille",
+  "stade rennais fc": "rennes", "rc lens": "lens", "ogc nice": "nice",
+  "rc strasbourg alsace": "strasbourg", "fc nantes": "nantes",
+  "stade brestois 29": "brest", "toulouse fc": "toulouse",
+  "montpellier hsc": "montpellier", "le havre ac": "le havre",
+  "stade de reims": "reims", "as saint-étienne": "saint-etienne",
+  "angers sco": "angers", "aj auxerre": "auxerre",
+  "us sassuolo calcio": "sassuolo", "sassuolo calcio": "sassuolo",
+};
+
+function resolveTeamName(name: string): string {
+  const lower = name.toLowerCase().trim();
+  return TEAM_NAME_ALIASES[lower] ?? lower;
+}
 
 async function apiFetch(path: string, apiKey: string) {
   const url = `${API_BASE}${path}`;
@@ -47,11 +110,17 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const summary = { teams: 0, matches: 0, predictions: 0, odds: 0 };
+    const summary = { teams: 0, matches: 0, predictions: 0, odds: 0, logosUpdated: 0 };
 
-    // Fetch matches from recent rounds and upcoming rounds of 2024-25 season
-    // Completed: Nov-Dec 2024, Upcoming: Jan-May 2025
-    // Dynamic date ranges based on season
+    // Load ALL existing teams from DB for cross-matching
+    const { data: existingTeams } = await supabase.from("teams").select("id, name, api_football_id, logo_url, sportradar_id");
+    const teamsByResolvedName = new Map<string, any>();
+    const teamsByApiId = new Map<number, any>();
+    existingTeams?.forEach((t) => {
+      teamsByResolvedName.set(resolveTeamName(t.name), t);
+      if (t.api_football_id) teamsByApiId.set(t.api_football_id, t);
+    });
+
     const seasonStart = `${SEASON}-08-01`;
     const seasonEnd = `${SEASON + 1}-07-31`;
     const today = new Date().toISOString().slice(0, 10);
@@ -64,25 +133,49 @@ Deno.serve(async (req) => {
       const allFixtures: any[] = [];
 
       for (const range of dateRanges) {
-        const fixtures = await apiFetch(
-          `/fixtures?league=${league.id}&season=${SEASON}&from=${range.from}&to=${range.to}`,
-          apiKey
-        );
-        for (const f of fixtures) {
-          f._rangeType = range.type;
+        try {
+          const fixtures = await apiFetch(
+            `/fixtures?league=${league.id}&season=${SEASON}&from=${range.from}&to=${range.to}`,
+            apiKey
+          );
+          for (const f of fixtures) {
+            f._rangeType = range.type;
+          }
+          allFixtures.push(...fixtures);
+        } catch (e) {
+          console.error(`Error fetching ${league.name} ${range.type}:`, e);
         }
-        allFixtures.push(...fixtures);
       }
 
       if (allFixtures.length === 0) continue;
 
-      // Upsert teams
-      const teamsMap = new Map<number, any>();
+      // Process teams — cross-match with existing DB teams by resolved name
+      const teamsToUpsert = new Map<number, any>();
+      const teamsToUpdateLogo: { id: string; api_football_id: number; logo_url: string }[] = [];
+
       for (const f of allFixtures) {
         for (const side of ["home", "away"] as const) {
           const t = f.teams[side];
-          if (!teamsMap.has(t.id)) {
-            teamsMap.set(t.id, {
+          if (teamsToUpsert.has(t.id) || teamsByApiId.has(t.id)) continue;
+
+          const resolved = resolveTeamName(t.name);
+          const existingByName = teamsByResolvedName.get(resolved);
+
+          if (existingByName) {
+            // Found existing team by name — update its api_football_id and logo
+            if (!existingByName.api_football_id || !existingByName.logo_url) {
+              teamsToUpdateLogo.push({
+                id: existingByName.id,
+                api_football_id: t.id,
+                logo_url: t.logo,
+              });
+              existingByName.api_football_id = t.id;
+              existingByName.logo_url = t.logo;
+              teamsByApiId.set(t.id, existingByName);
+            }
+          } else {
+            // Completely new team
+            teamsToUpsert.set(t.id, {
               api_football_id: t.id,
               name: t.name,
               logo_url: t.logo,
@@ -93,19 +186,30 @@ Deno.serve(async (req) => {
         }
       }
 
-      if (teamsMap.size > 0) {
+      // Update existing teams with logo + api_football_id
+      for (const upd of teamsToUpdateLogo) {
+        const { error } = await supabase
+          .from("teams")
+          .update({ api_football_id: upd.api_football_id, logo_url: upd.logo_url })
+          .eq("id", upd.id);
+        if (!error) summary.logosUpdated++;
+        else console.error("Logo update error:", error);
+      }
+
+      // Insert truly new teams
+      if (teamsToUpsert.size > 0) {
         const { error: te } = await supabase
           .from("teams")
-          .upsert(Array.from(teamsMap.values()), {
+          .upsert(Array.from(teamsToUpsert.values()), {
             onConflict: "api_football_id",
             ignoreDuplicates: false,
           });
         if (te) console.error("teams upsert error:", te);
-        else summary.teams += teamsMap.size;
+        else summary.teams += teamsToUpsert.size;
       }
 
-      // Get team uuid mapping
-      const apiIds = Array.from(teamsMap.keys());
+      // Refresh team uuid mapping
+      const apiIds = [...Array.from(teamsToUpsert.keys()), ...teamsToUpdateLogo.map((u) => u.api_football_id)];
       const { data: dbTeams } = await supabase
         .from("teams")
         .select("id, api_football_id")
@@ -114,12 +218,15 @@ Deno.serve(async (req) => {
       for (const t of dbTeams ?? []) {
         teamUuidMap.set(t.api_football_id!, t.id);
       }
+      // Also add pre-existing mappings
+      teamsByApiId.forEach((t, apiId) => {
+        if (!teamUuidMap.has(apiId)) teamUuidMap.set(apiId, t.id);
+      });
 
       // Upsert matches
       const matchRows = allFixtures
         .map((f: any) => {
           const isFinished = f.fixture.status.short === "FT";
-          // For completed season matches from "upcoming" range, still mark as completed
           const status = isFinished ? "completed" : "upcoming";
           return {
             api_football_id: f.fixture.id,
@@ -176,7 +283,6 @@ Deno.serve(async (req) => {
               const awayWin =
                 parseFloat(p.predictions.percent.away?.replace("%", "") ?? "0") / 100;
 
-              // Use team goal averages for xG (predictions.goals contains goal lines, not xG)
               const homeGoalAvg = parseFloat(
                 p.teams?.home?.league?.goals?.for?.average?.total ?? "1.3"
               );
@@ -184,9 +290,6 @@ Deno.serve(async (req) => {
                 p.teams?.away?.league?.goals?.for?.average?.total ?? "1.1"
               );
               const totalXg = homeGoalAvg + awayGoalAvg;
-
-              // Parse under_over line from API
-              const ouLine = parseFloat(p.predictions?.under_over ?? "2.5");
 
               const { error: pe } = await supabase.from("predictions").upsert(
                 {

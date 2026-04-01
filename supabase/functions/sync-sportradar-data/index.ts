@@ -14,6 +14,10 @@ const ALL_LEAGUES: Record<string, { seasonId: string; league: string; country: s
   serie_a: { seasonId: "sr:season:130971", league: "Serie A", country: "Italy" },
   bundesliga: { seasonId: "sr:season:130571", league: "Bundesliga", country: "Germany" },
   ligue_1: { seasonId: "sr:season:131609", league: "Ligue 1", country: "France" },
+  // International competitions
+  wc_qualifiers_europe: { seasonId: "sr:season:118689", league: "WC Qualifiers Europe", country: "World" },
+  wc_qualifiers_south_america: { seasonId: "sr:season:118691", league: "WC Qualifiers South America", country: "World" },
+  friendlies: { seasonId: "sr:season:113069", league: "Friendlies", country: "World" },
 };
 
 const TEAM_NAME_ALIASES: Record<string, string> = {

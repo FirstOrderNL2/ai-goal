@@ -30,6 +30,24 @@ export const LEAGUE_SEASONS: Record<string, { label: string; seasonId: string; l
     league: "Ligue 1",
     country: "France",
   },
+  wc_qualifiers_europe: {
+    label: "WC Qualifiers Europe",
+    seasonId: "sr:season:118689",
+    league: "WC Qualifiers Europe",
+    country: "World",
+  },
+  wc_qualifiers_south_america: {
+    label: "WC Qualifiers South America",
+    seasonId: "sr:season:118691",
+    league: "WC Qualifiers South America",
+    country: "World",
+  },
+  friendlies: {
+    label: "Friendlies",
+    seasonId: "sr:season:113069",
+    league: "Friendlies",
+    country: "World",
+  },
 };
 
 // Sportradar competition ID → season key mapping
