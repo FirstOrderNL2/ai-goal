@@ -74,8 +74,10 @@ export default function MatchDetail() {
 
             <div className="flex items-center justify-center gap-6 py-4">
               <div className="text-center space-y-2 flex-1">
-                {home_team?.logo_url && (
-                  <img src={home_team.logo_url} alt={home_team.name} className="h-12 w-12 object-contain mx-auto" />
+                {home_team?.logo_url ? (
+                  <img src={home_team.logo_url} alt={home_team.name} className="h-12 w-12 object-contain mx-auto" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                ) : (
+                  <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center text-lg font-bold text-muted-foreground mx-auto">{home_team?.name?.charAt(0) ?? "?"}</div>
                 )}
                 <p className="text-xl font-bold">{home_team?.name}</p>
                 <p className="text-xs text-muted-foreground">{home_team?.country}</p>
@@ -90,8 +92,10 @@ export default function MatchDetail() {
                 )}
               </div>
               <div className="text-center space-y-2 flex-1">
-                {away_team?.logo_url && (
-                  <img src={away_team.logo_url} alt={away_team.name} className="h-12 w-12 object-contain mx-auto" />
+                {away_team?.logo_url ? (
+                  <img src={away_team.logo_url} alt={away_team.name} className="h-12 w-12 object-contain mx-auto" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                ) : (
+                  <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center text-lg font-bold text-muted-foreground mx-auto">{away_team?.name?.charAt(0) ?? "?"}</div>
                 )}
                 <p className="text-xl font-bold">{away_team?.name}</p>
                 <p className="text-xs text-muted-foreground">{away_team?.country}</p>
@@ -138,15 +142,17 @@ export default function MatchDetail() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="flex items-center gap-2 rounded-lg bg-muted p-3">
-                  <TrendingUp className="h-4 w-4 text-primary" />
-                  <div>
-                    <p className="text-sm font-semibold">
-                      {Number(prediction.expected_goals_home).toFixed(1)} - {Number(prediction.expected_goals_away).toFixed(1)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">Expected Goals</p>
+                {(Number(prediction.expected_goals_home) > 0 || Number(prediction.expected_goals_away) > 0) && (
+                  <div className="flex items-center gap-2 rounded-lg bg-muted p-3">
+                    <TrendingUp className="h-4 w-4 text-primary" />
+                    <div>
+                      <p className="text-sm font-semibold">
+                        {Number(prediction.expected_goals_home).toFixed(1)} - {Number(prediction.expected_goals_away).toFixed(1)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">Expected Goals</p>
+                    </div>
                   </div>
-                </div>
+                )}
                 <div className="flex items-center gap-2 rounded-lg bg-muted p-3">
                   <BarChart3 className="h-4 w-4 text-primary" />
                   <div>

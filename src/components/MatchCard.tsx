@@ -43,8 +43,10 @@ export function MatchCard({ match }: MatchCardProps) {
           {/* Teams */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex-1 flex items-center justify-end gap-2">
-              {home_team?.logo_url && (
-                <img src={home_team.logo_url} alt={home_team.name} className="h-6 w-6 object-contain" />
+              {home_team?.logo_url ? (
+                <img src={home_team.logo_url} alt={home_team.name} className="h-6 w-6 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+              ) : (
+                <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground">{home_team?.name?.charAt(0) ?? "?"}</div>
               )}
               <p className="text-sm font-semibold truncate">{home_team?.name ?? "TBD"}</p>
             </div>
@@ -58,8 +60,10 @@ export function MatchCard({ match }: MatchCardProps) {
               )}
             </div>
             <div className="flex-1 flex items-center gap-2">
-              {away_team?.logo_url && (
-                <img src={away_team.logo_url} alt={away_team.name} className="h-6 w-6 object-contain" />
+              {away_team?.logo_url ? (
+                <img src={away_team.logo_url} alt={away_team.name} className="h-6 w-6 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+              ) : (
+                <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground">{away_team?.name?.charAt(0) ?? "?"}</div>
               )}
               <p className="text-sm font-semibold truncate">{away_team?.name ?? "TBD"}</p>
             </div>
@@ -75,10 +79,12 @@ export function MatchCard({ match }: MatchCardProps) {
               />
 
               <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-1 text-muted-foreground">
-                  <TrendingUp className="h-3 w-3" />
-                  <span>xG: {Number(prediction.expected_goals_home).toFixed(1)} - {Number(prediction.expected_goals_away).toFixed(1)}</span>
-                </div>
+                {(Number(prediction.expected_goals_home) > 0 || Number(prediction.expected_goals_away) > 0) && (
+                  <div className="flex items-center gap-1 text-muted-foreground">
+                    <TrendingUp className="h-3 w-3" />
+                    <span>xG: {Number(prediction.expected_goals_home).toFixed(1)} - {Number(prediction.expected_goals_away).toFixed(1)}</span>
+                  </div>
+                )}
                 <Badge
                   variant={prediction.over_under_25 === "over" ? "default" : "outline"}
                   className="text-[10px]"

@@ -11,7 +11,7 @@ const leagues = [
   { value: "WC Qualifiers CONMEBOL", label: "WCQ CONMEBOL" },
   { value: "WC Qualifiers CONCACAF", label: "WCQ CONCACAF" },
   { value: "World Cup 2026", label: "World Cup" },
-  { value: "Friendlies", label: "Friendlies" },
+  
 ];
 
 interface LeagueFilterProps {
