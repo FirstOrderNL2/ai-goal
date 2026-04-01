@@ -92,8 +92,10 @@ export default function MatchDetail() {
                 )}
               </div>
               <div className="text-center space-y-2 flex-1">
-                {away_team?.logo_url && (
-                  <img src={away_team.logo_url} alt={away_team.name} className="h-12 w-12 object-contain mx-auto" />
+                {away_team?.logo_url ? (
+                  <img src={away_team.logo_url} alt={away_team.name} className="h-12 w-12 object-contain mx-auto" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                ) : (
+                  <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center text-lg font-bold text-muted-foreground mx-auto">{away_team?.name?.charAt(0) ?? "?"}</div>
                 )}
                 <p className="text-xl font-bold">{away_team?.name}</p>
                 <p className="text-xs text-muted-foreground">{away_team?.country}</p>
