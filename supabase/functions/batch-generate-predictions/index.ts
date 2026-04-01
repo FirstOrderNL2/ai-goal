@@ -260,3 +260,98 @@ async function generateReviews(supabase: any, supabaseUrl: string, serviceKey: s
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
+
+async function backfillXg(supabase: any, lovableApiKey: string, limit: number) {
+  // Find predictions with xG = 0
+  const { data: preds } = await supabase
+    .from("predictions")
+    .select("id, match_id, home_win, draw, away_win")
+    .eq("expected_goals_home", 0)
+    .eq("expected_goals_away", 0)
+    .limit(limit);
+
+  if (!preds || preds.length === 0) {
+    return new Response(JSON.stringify({ success: true, message: "No predictions need xG backfill", backfilled: 0 }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Get match + team info
+  const matchIds = preds.map((p: any) => p.match_id);
+  const { data: matches } = await supabase
+    .from("matches")
+    .select("id, league, team_home_id, team_away_id, home_team:teams!matches_team_home_id_fkey(name), away_team:teams!matches_team_away_id_fkey(name)")
+    .in("id", matchIds);
+
+  const matchMap = new Map((matches || []).map((m: any) => [m.id, m]));
+
+  let backfilled = 0;
+  const errors: string[] = [];
+
+  for (const pred of preds) {
+    const match = matchMap.get(pred.match_id);
+    if (!match) continue;
+
+    const homeName = match.home_team?.name ?? "Home";
+    const awayName = match.away_team?.name ?? "Away";
+
+    try {
+      const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${lovableApiKey}` },
+        body: JSON.stringify({
+          model: "google/gemini-3-flash-preview",
+          messages: [
+            { role: "system", content: "You are a football analyst. Estimate expected goals (xG) for a match based on the teams and probabilities provided." },
+            { role: "user", content: `Match: ${homeName} vs ${awayName}, League: ${match.league}. Win probabilities: Home ${(pred.home_win * 100).toFixed(0)}%, Draw ${(pred.draw * 100).toFixed(0)}%, Away ${(pred.away_win * 100).toFixed(0)}%. Estimate realistic xG for each team. Use the set_xg tool.` },
+          ],
+          tools: [{
+            type: "function",
+            function: {
+              name: "set_xg",
+              description: "Set expected goals",
+              parameters: {
+                type: "object",
+                properties: {
+                  expected_goals_home: { type: "number", description: "Home team xG (e.g. 1.4)" },
+                  expected_goals_away: { type: "number", description: "Away team xG (e.g. 1.1)" },
+                  over_under_25: { type: "string", enum: ["over", "under"] },
+                },
+                required: ["expected_goals_home", "expected_goals_away", "over_under_25"],
+              },
+            },
+          }],
+          tool_choice: { type: "function", function: { name: "set_xg" } },
+        }),
+      });
+
+      if (!aiRes.ok) {
+        if (aiRes.status === 429) { errors.push("Rate limited, stopping"); break; }
+        await aiRes.text();
+        continue;
+      }
+
+      const aiData = await aiRes.json();
+      const tc = aiData.choices?.[0]?.message?.tool_calls?.[0];
+      if (!tc?.function?.arguments) continue;
+
+      const xg = JSON.parse(tc.function.arguments);
+      const { error: upErr } = await supabase.from("predictions").update({
+        expected_goals_home: Math.round((xg.expected_goals_home || 1.2) * 10) / 10,
+        expected_goals_away: Math.round((xg.expected_goals_away || 1.0) * 10) / 10,
+        over_under_25: xg.over_under_25 || "under",
+      }).eq("id", pred.id);
+
+      if (!upErr) backfilled++;
+      else errors.push(`Update error: ${upErr.message}`);
+
+      await new Promise(r => setTimeout(r, 1000));
+    } catch (e) {
+      errors.push(`xG error for ${homeName} vs ${awayName}: ${e.message}`);
+    }
+  }
+
+  return new Response(JSON.stringify({ success: true, backfilled, total: preds.length, errors }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
