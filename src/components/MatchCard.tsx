@@ -60,8 +60,10 @@ export function MatchCard({ match }: MatchCardProps) {
               )}
             </div>
             <div className="flex-1 flex items-center gap-2">
-              {away_team?.logo_url && (
-                <img src={away_team.logo_url} alt={away_team.name} className="h-6 w-6 object-contain" />
+              {away_team?.logo_url ? (
+                <img src={away_team.logo_url} alt={away_team.name} className="h-6 w-6 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+              ) : (
+                <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground">{away_team?.name?.charAt(0) ?? "?"}</div>
               )}
               <p className="text-sm font-semibold truncate">{away_team?.name ?? "TBD"}</p>
             </div>
