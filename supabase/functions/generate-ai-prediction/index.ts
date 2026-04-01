@@ -9,7 +9,8 @@ const corsHeaders = {
 async function fetchMatchContext(
   homeName: string, awayName: string, league: string, matchDate: string,
   supabaseUrl: string, serviceKey: string,
-  apiFootballId?: number | null, homeTeamApiId?: number | null, awayTeamApiId?: number | null
+  apiFootballId?: number | null, homeTeamApiId?: number | null, awayTeamApiId?: number | null,
+  matchId?: string
 ): Promise<string> {
   try {
     const res = await fetch(`${supabaseUrl}/functions/v1/fetch-match-context`, {
@@ -23,6 +24,7 @@ async function fetchMatchContext(
         api_football_id: apiFootballId ?? undefined,
         home_team_api_id: homeTeamApiId ?? undefined,
         away_team_api_id: awayTeamApiId ?? undefined,
+        match_id: matchId,
       }),
     });
     if (!res.ok) return "";
@@ -32,6 +34,18 @@ async function fetchMatchContext(
     console.error("Failed to fetch match context:", e);
     return "";
   }
+}
+
+function buildFormString(matches: any[], teamId: string, isHome: boolean): string[] {
+  return (matches || [])
+    .filter((m: any) => isHome ? m.team_home_id === teamId : m.team_away_id === teamId)
+    .slice(0, 5)
+    .map((m: any) => {
+      const gf = isHome ? m.goals_home : m.goals_away;
+      const ga = isHome ? m.goals_away : m.goals_home;
+      const r = gf! > ga! ? "W" : gf === ga ? "D" : "L";
+      return `${r} (${gf}-${ga})`;
+    });
 }
 
 Deno.serve(async (req) => {
@@ -66,31 +80,76 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch prediction, odds, form, past reviews in parallel
-    const [{ data: prediction }, { data: odds }, { data: homeForm }, { data: awayForm }, { data: pastReviews }] = await Promise.all([
+    // Fetch prediction, odds, form (overall + home/away splits), H2H, past reviews in parallel
+    const [
+      { data: prediction },
+      { data: odds },
+      { data: homeFormAll },
+      { data: awayFormAll },
+      { data: homeFormHome },
+      { data: awayFormAway },
+      { data: h2hMatches },
+      { data: pastReviews },
+      { data: homeAllMatches },
+      { data: awayAllMatches },
+    ] = await Promise.all([
       supabase.from("predictions").select("*").eq("match_id", match_id).single(),
       supabase.from("odds").select("*").eq("match_id", match_id).single(),
-      supabase
-        .from("matches")
+      // Overall form (last 5)
+      supabase.from("matches")
         .select("goals_home, goals_away, team_home_id, team_away_id, status, xg_home, xg_away")
         .or(`team_home_id.eq.${match.team_home_id},team_away_id.eq.${match.team_home_id}`)
         .eq("status", "completed")
         .order("match_date", { ascending: false })
         .limit(5),
-      supabase
-        .from("matches")
+      supabase.from("matches")
         .select("goals_home, goals_away, team_home_id, team_away_id, status, xg_home, xg_away")
         .or(`team_home_id.eq.${match.team_away_id},team_away_id.eq.${match.team_away_id}`)
         .eq("status", "completed")
         .order("match_date", { ascending: false })
         .limit(5),
-      supabase
-        .from("matches")
+      // Home-only form for home team
+      supabase.from("matches")
+        .select("goals_home, goals_away, team_home_id, team_away_id")
+        .eq("team_home_id", match.team_home_id)
+        .eq("status", "completed")
+        .order("match_date", { ascending: false })
+        .limit(5),
+      // Away-only form for away team
+      supabase.from("matches")
+        .select("goals_home, goals_away, team_home_id, team_away_id")
+        .eq("team_away_id", match.team_away_id)
+        .eq("status", "completed")
+        .order("match_date", { ascending: false })
+        .limit(5),
+      // Head-to-head: last 5 meetings
+      supabase.from("matches")
+        .select("goals_home, goals_away, match_date, team_home_id, team_away_id, home_team:teams!matches_team_home_id_fkey(name), away_team:teams!matches_team_away_id_fkey(name)")
+        .or(`and(team_home_id.eq.${match.team_home_id},team_away_id.eq.${match.team_away_id}),and(team_home_id.eq.${match.team_away_id},team_away_id.eq.${match.team_home_id})`)
+        .eq("status", "completed")
+        .order("match_date", { ascending: false })
+        .limit(5),
+      // Past reviews for learning
+      supabase.from("matches")
         .select("ai_post_match_review, ai_accuracy_score, team_home_id, team_away_id, league, home_team:teams!matches_team_home_id_fkey(name), away_team:teams!matches_team_away_id_fkey(name)")
         .not("ai_post_match_review", "is", null)
         .eq("status", "completed")
         .order("match_date", { ascending: false })
         .limit(10),
+      // All completed matches for home team (stats calc)
+      supabase.from("matches")
+        .select("goals_home, goals_away, team_home_id, team_away_id")
+        .or(`team_home_id.eq.${match.team_home_id},team_away_id.eq.${match.team_home_id}`)
+        .eq("status", "completed")
+        .order("match_date", { ascending: false })
+        .limit(20),
+      // All completed matches for away team (stats calc)
+      supabase.from("matches")
+        .select("goals_home, goals_away, team_home_id, team_away_id")
+        .or(`team_home_id.eq.${match.team_away_id},team_away_id.eq.${match.team_away_id}`)
+        .eq("status", "completed")
+        .order("match_date", { ascending: false })
+        .limit(20),
     ]);
 
     const homeName = match.home_team?.name ?? "Home";
@@ -99,8 +158,72 @@ Deno.serve(async (req) => {
     // Fetch live web context (injuries, lineups, news)
     const liveContext = await fetchMatchContext(
       homeName, awayName, match.league, match.match_date, supabaseUrl, serviceKey,
-      match.api_football_id, match.home_team?.api_football_id, match.away_team?.api_football_id
+      match.api_football_id, match.home_team?.api_football_id, match.away_team?.api_football_id,
+      match_id
     );
+
+    // Build form strings
+    const homeFormStr = (homeFormAll || []).map((m: any) => {
+      const isHome = m.team_home_id === match.team_home_id;
+      const gf = isHome ? m.goals_home : m.goals_away;
+      const ga = isHome ? m.goals_away : m.goals_home;
+      const r = gf! > ga! ? "W" : gf === ga ? "D" : "L";
+      return `${r} (${gf}-${ga})`;
+    });
+
+    const awayFormStr = (awayFormAll || []).map((m: any) => {
+      const isHome = m.team_home_id === match.team_away_id;
+      const gf = isHome ? m.goals_home : m.goals_away;
+      const ga = isHome ? m.goals_away : m.goals_home;
+      const r = gf! > ga! ? "W" : gf === ga ? "D" : "L";
+      return `${r} (${gf}-${ga})`;
+    });
+
+    // Home/away split form
+    const homeHomeForm = buildFormString(homeFormHome || [], match.team_home_id, true);
+    const awayAwayForm = buildFormString(awayFormAway || [], match.team_away_id, false);
+
+    // H2H summary
+    let h2hBlock = "";
+    if (h2hMatches && h2hMatches.length > 0) {
+      const h2hLines = h2hMatches.map((m: any) => {
+        const hName = (m as any).home_team?.name ?? "?";
+        const aName = (m as any).away_team?.name ?? "?";
+        return `${m.match_date?.slice(0, 10)}: ${hName} ${m.goals_home}-${m.goals_away} ${aName}`;
+      });
+      h2hBlock = `\nHEAD-TO-HEAD (last ${h2hMatches.length} meetings):\n${h2hLines.join("\n")}`;
+    }
+
+    // Goal-scoring stats
+    function calcStats(matches: any[], teamId: string) {
+      if (!matches || matches.length === 0) return null;
+      let scored = 0, conceded = 0, cleanSheets = 0;
+      for (const m of matches) {
+        const isHome = m.team_home_id === teamId;
+        const gf = isHome ? (m.goals_home ?? 0) : (m.goals_away ?? 0);
+        const ga = isHome ? (m.goals_away ?? 0) : (m.goals_home ?? 0);
+        scored += gf;
+        conceded += ga;
+        if (ga === 0) cleanSheets++;
+      }
+      return {
+        played: matches.length,
+        avgScored: (scored / matches.length).toFixed(1),
+        avgConceded: (conceded / matches.length).toFixed(1),
+        cleanSheets,
+      };
+    }
+
+    const homeStats = calcStats(homeAllMatches || [], match.team_home_id);
+    const awayStats = calcStats(awayAllMatches || [], match.team_away_id);
+
+    let statsBlock = "";
+    if (homeStats) {
+      statsBlock += `\n${homeName} stats (last ${homeStats.played}): avg scored ${homeStats.avgScored}, avg conceded ${homeStats.avgConceded}, clean sheets ${homeStats.cleanSheets}`;
+    }
+    if (awayStats) {
+      statsBlock += `\n${awayName} stats (last ${awayStats.played}): avg scored ${awayStats.avgScored}, avg conceded ${awayStats.avgConceded}, clean sheets ${awayStats.cleanSheets}`;
+    }
 
     // Build learning context from past reviews
     let learningBlock = "";
@@ -114,36 +237,20 @@ Deno.serve(async (req) => {
           r.team_away_id === match.team_home_id
       );
 
-      learningBlock = `\n\nLEARNING FROM PAST PREDICTIONS (use these lessons to improve this prediction):
+      learningBlock = `\n\nLEARNING FROM PAST PREDICTIONS:
 Your recent average accuracy score: ${Math.round(avgScore)}/100 across ${pastReviews.length} reviewed matches.
 ${relevantReviews.length > 0
-        ? `\nRelevant past reviews involving these teams:\n${relevantReviews
-            .map((r) => `- ${(r as any).home_team?.name ?? "?"} vs ${(r as any).away_team?.name ?? "?"} (score: ${r.ai_accuracy_score}/100): ${r.ai_post_match_review?.slice(0, 300)}...`)
-            .join("\n")}`
-        : `\nRecent reviews (other matches):\n${pastReviews
-            .slice(0, 3)
-            .map((r) => `- ${(r as any).home_team?.name ?? "?"} vs ${(r as any).away_team?.name ?? "?"} (score: ${r.ai_accuracy_score}/100): ${r.ai_post_match_review?.slice(0, 200)}...`)
-            .join("\n")}`
-      }
+          ? `\nRelevant past reviews involving these teams:\n${relevantReviews
+              .map((r) => `- ${(r as any).home_team?.name ?? "?"} vs ${(r as any).away_team?.name ?? "?"} (score: ${r.ai_accuracy_score}/100): ${r.ai_post_match_review?.slice(0, 300)}...`)
+              .join("\n")}`
+          : `\nRecent reviews (other matches):\n${pastReviews
+              .slice(0, 3)
+              .map((r) => `- ${(r as any).home_team?.name ?? "?"} vs ${(r as any).away_team?.name ?? "?"} (score: ${r.ai_accuracy_score}/100): ${r.ai_post_match_review?.slice(0, 200)}...`)
+              .join("\n")}`
+        }
 
 Apply the lessons above. Avoid repeating the same mistakes.`;
     }
-
-    const homeFormStr = homeForm?.map((m: any) => {
-      const isHome = m.team_home_id === match.team_home_id;
-      const gf = isHome ? m.goals_home : m.goals_away;
-      const ga = isHome ? m.goals_away : m.goals_home;
-      const r = gf! > ga! ? "W" : gf === ga ? "D" : "L";
-      return `${r} (${gf}-${ga})`;
-    }) ?? [];
-
-    const awayFormStr = awayForm?.map((m: any) => {
-      const isHome = m.team_home_id === match.team_away_id;
-      const gf = isHome ? m.goals_home : m.goals_away;
-      const ga = isHome ? m.goals_away : m.goals_home;
-      const r = gf! > ga! ? "W" : gf === ga ? "D" : "L";
-      return `${r} (${gf}-${ga})`;
-    }) ?? [];
 
     const prompt = `You are an expert football analyst. Analyze this match and provide detailed insights.
 
@@ -160,17 +267,22 @@ Model Confidence: ${Math.round(prediction.model_confidence * 100)}%` : "No predi
 
 ${odds ? `Odds: Home ${odds.home_win_odds}, Draw ${odds.draw_odds}, Away ${odds.away_win_odds}` : ""}
 
-${homeFormStr.length ? `${homeName} recent form: ${homeFormStr.join(", ")}` : ""}
-${awayFormStr.length ? `${awayName} recent form: ${awayFormStr.join(", ")}` : ""}
-${liveContext ? `\nLIVE MATCH CONTEXT (injuries, suspensions, lineups, team news from the web):\n${liveContext}` : ""}
+${homeFormStr.length ? `${homeName} overall form: ${homeFormStr.join(", ")}` : ""}
+${awayFormStr.length ? `${awayName} overall form: ${awayFormStr.join(", ")}` : ""}
+${homeHomeForm.length ? `${homeName} HOME form: ${homeHomeForm.join(", ")}` : ""}
+${awayAwayForm.length ? `${awayName} AWAY form: ${awayAwayForm.join(", ")}` : ""}
+${h2hBlock}
+${statsBlock}
+${liveContext ? `\nLIVE MATCH CONTEXT (injuries, suspensions, lineups, team news from live web scraping):\n${liveContext}` : ""}
 ${learningBlock}
 
-Provide a concise analysis (3-5 paragraphs) covering:
-1. Key factors that will influence the outcome (including injuries and suspensions if known)
-2. Team form and momentum analysis
-3. Tactical considerations and expected lineups
-4. Your prediction with reasoning
-5. Value bets if odds are available
+Provide a thorough analysis (4-6 paragraphs) covering:
+1. Key factors that will influence the outcome (injuries, suspensions, missing key players)
+2. Team form, momentum, and home/away performance split
+3. Head-to-head history and what it suggests
+4. Tactical considerations and expected lineups
+5. Your prediction with specific scoreline, BTTS (both teams to score), and over/under 2.5
+6. Value bets if odds are available
 
 Keep it professional, data-driven, and insightful. Do NOT use markdown headers or bullet points — write flowing paragraphs.`;
 
@@ -184,9 +296,9 @@ Keep it professional, data-driven, and insightful. Do NOT use markdown headers o
         Authorization: `Bearer ${lovableApiKey}`,
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "google/gemini-2.5-pro",
         messages: [{ role: "user", content: prompt }],
-        max_tokens: 1200,
+        max_tokens: 2000,
         temperature: 0.7,
       }),
     });
