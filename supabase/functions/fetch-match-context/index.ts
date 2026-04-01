@@ -152,10 +152,9 @@ async function scrapeFirecrawlContext(
     }
   }
 
-  // ── 2. Transfermarkt injury scraping (both teams in parallel) ──
-  const transfermarktScrapes = [homeName, awayName].map(async (teamName) => {
-    const slug = toTransfermarktSlug(teamName);
-    // Transfermarkt search for team injury page
+  // ── 2. Injury news scraping (both teams in parallel) ──
+  // Transfermarkt blocks scraping (403), so we search injury news from open sources instead
+  const injuryScrapes = [homeName, awayName].map(async (teamName) => {
     try {
       const searchRes = await fetch("https://api.firecrawl.dev/v1/search", {
         method: "POST",
@@ -164,20 +163,23 @@ async function scrapeFirecrawlContext(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          query: `site:transfermarkt.com ${teamName} injuries`,
-          limit: 1,
+          query: `${teamName} injury news squad update 2026`,
+          limit: 2,
+          tbs: "qdr:w",
           scrapeOptions: { formats: ["markdown"] },
         }),
       });
       if (searchRes.ok) {
         const data = await searchRes.json();
         const results = data.data || [];
-        if (results[0]?.markdown) {
-          parts.push(`[SOURCE: Transfermarkt - ${teamName} injuries]\n${results[0].markdown.slice(0, 3000)}`);
+        for (const r of results) {
+          if (r.markdown) {
+            parts.push(`[SOURCE: ${r.url || "injury news"} - ${teamName}]\n${r.markdown.slice(0, 2000)}`);
+          }
         }
       }
     } catch (e) {
-      console.error(`Transfermarkt scrape failed for ${teamName}:`, e);
+      console.error(`Injury scrape failed for ${teamName}:`, e);
     }
   });
 
