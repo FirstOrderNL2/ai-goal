@@ -1,49 +1,63 @@
 
 
-# Focus on 20 Upcoming Matches + Auto-Learning AI
+# Fix Logos Without API + Limit to 20 Upcoming Matches
 
-## Two Changes
+## The Real Problem
 
-### 1. Limit Homepage to Next 20 Upcoming Matches
+All 102 teams have `logo_url = NULL`. The API-Football free tier rejects 2025 season requests, so the sync never populates logos. But logos don't need an API at all.
 
-Currently the Index page fetches ALL upcoming matches (potentially hundreds across 8 competitions). This is slow and overwhelming.
+## Solution: Use Free Logo Sources Directly
 
-**Changes:**
-- `src/hooks/useMatches.ts` — Add `.limit(20)` to the upcoming matches query
-- `src/pages/Index.tsx` — Show a "View All" link if there are more matches; also limit completed to 12
+Football team logos are publicly available from multiple free sources. The simplest and most reliable approach:
 
-### 2. Automated AI Learning Loop
+1. **Use Wikipedia/Wikimedia logo URLs** — every major club has a publicly accessible crest image
+2. **Use the Sportradar competitor ID** to construct a logo URL from a free CDN
+3. **Fallback**: Generate a colored circle with team initials
 
-Currently the AI learns from past reviews only when a user manually clicks "Generate Review" on each completed match. To make this automatic:
+### Approach: Edge function that fetches logos via AI web search
 
-**Create a new edge function `supabase/functions/auto-review-matches/index.ts`** that:
-1. Finds the 5 most recent completed matches that have `ai_insights` (a pre-match prediction was made) but no `ai_post_match_review` yet
-2. For each, calls `generate-post-match-review` internally to score the prediction vs actual result
-3. Stores the accuracy score and review — these are then automatically picked up as learning context by `generate-ai-prediction` (which already reads `ai_post_match_review` and `ai_accuracy_score` from the last 10 reviewed matches)
+Create a lightweight edge function `fix-team-logos` that:
+- Reads all teams with `logo_url = NULL` from the database
+- For each team, constructs a search query like `"{team name} football club logo wikipedia svg"`
+- Uses the Lovable AI gateway (which you already pay for) to find the Wikipedia/Wikimedia Commons logo URL
+- Updates the team record with the found logo URL
+- This is a **one-time fix**, not a recurring sync
 
-**Trigger it automatically** by calling this function after each sync completes (in `src/hooks/useSportradar.ts` or `src/pages/Index.tsx`).
+**Even simpler alternative**: Use a hardcoded mapping of team names to known free logo URLs from football-data.org or similar CDNs. For example, `https://crests.football-data.org/{football-data-id}.png` is completely free.
 
-This closes the feedback loop: Sync → New results arrive → Auto-review scores past predictions → Future predictions incorporate those lessons.
+## Plan
 
-**Also create `supabase/functions/auto-predict-upcoming/index.ts`** that:
-1. Finds upcoming matches within the next 7 days that have no `ai_insights` yet
-2. Calls `generate-ai-prediction` for each (with rate-limit delays between calls)
-3. Ensures every upcoming match has a prediction before the user even opens it
+### 1. Create `supabase/functions/fix-team-logos/index.ts`
 
-**Frontend integration:**
-- After sync completes successfully, call `auto-review-matches` then `auto-predict-upcoming` in sequence
-- Show a subtle toast: "AI analyzing matches..."
-- Add a small indicator on the Index page showing AI learning status (e.g., "AI has reviewed X matches, avg accuracy: Y%")
+- Query all teams where `logo_url IS NULL`
+- For each team, use the AI to search for the team's official logo URL from Wikipedia
+- Update the team's `logo_url` in the database
+- Process in batches of 10 to avoid timeouts
+
+### 2. Limit upcoming matches to 20
+
+**File: `src/hooks/useMatches.ts`**
+- Add `.limit(20)` to the upcoming matches query
+- Add `.limit(12)` to the completed matches query
+
+### 3. Add query limit for completed matches too
+
+Same file, same pattern.
 
 ## Files Changed
 
 | File | Change |
 |---|---|
-| `src/hooks/useMatches.ts` | Add `.limit(20)` to upcoming query |
-| `src/pages/Index.tsx` | Show count, add "View All" link, trigger auto-review/predict after sync |
-| `supabase/functions/auto-review-matches/index.ts` | New: auto-review completed matches that had predictions |
-| `supabase/functions/auto-predict-upcoming/index.ts` | New: auto-generate AI insights for upcoming matches within 7 days |
-| `src/hooks/useSportradar.ts` | Chain auto-review + auto-predict after sync success |
+| `supabase/functions/fix-team-logos/index.ts` | New: AI-powered logo finder that searches Wikipedia for each team's crest URL |
+| `src/hooks/useMatches.ts` | Add `.limit(20)` to upcoming, `.limit(12)` to completed |
 
 No database changes needed.
+
+## Technical Detail
+
+The `fix-team-logos` function will use the Lovable AI gateway (google/gemini-3-flash-preview) with a prompt like:
+
+> "What is the direct URL to the official Wikipedia/Wikimedia Commons logo image for {team name} football club? Return ONLY the URL, nothing else."
+
+This avoids needing any football API for logos. It's a one-time operation — once logos are populated, they persist in the database.
 
