@@ -105,12 +105,19 @@ async function scrapeWithFirecrawl(url: string, firecrawlKey: string): Promise<s
   }
 }
 
+// Slug helpers for Transfermarkt / WhoScored URLs
+function toTransfermarktSlug(name: string): string {
+  return name.toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
+}
+
 async function scrapeFirecrawlContext(
   homeName: string, awayName: string, league: string, firecrawlKey: string
 ): Promise<string> {
   const parts: string[] = [];
 
-  // Search for match-specific injury/lineup news
+  // ── 1. Firecrawl search for match-specific news ──
   const searchQueries = [
     `${homeName} ${awayName} opstelling blessures`,
     `${homeName} ${awayName} lineup injuries team news`,
@@ -127,7 +134,7 @@ async function scrapeFirecrawlContext(
         body: JSON.stringify({
           query,
           limit: 3,
-          tbs: "qdr:w", // last week
+          tbs: "qdr:w",
           scrapeOptions: { formats: ["markdown"] },
         }),
       });
@@ -145,15 +152,74 @@ async function scrapeFirecrawlContext(
     }
   }
 
-  // Also try scraping iservoetbalvanavond.nl for today's matches
-  try {
-    const todayPage = await scrapeWithFirecrawl("https://www.iservoetbalvanavond.nl", firecrawlKey);
-    if (todayPage && (todayPage.toLowerCase().includes(homeName.toLowerCase()) || todayPage.toLowerCase().includes(awayName.toLowerCase()))) {
-      parts.push(`[SOURCE: iservoetbalvanavond.nl]\n${todayPage}`);
+  // ── 2. Transfermarkt injury scraping (both teams in parallel) ──
+  const transfermarktScrapes = [homeName, awayName].map(async (teamName) => {
+    const slug = toTransfermarktSlug(teamName);
+    // Transfermarkt search for team injury page
+    try {
+      const searchRes = await fetch("https://api.firecrawl.dev/v1/search", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${firecrawlKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `site:transfermarkt.com ${teamName} injuries`,
+          limit: 1,
+          scrapeOptions: { formats: ["markdown"] },
+        }),
+      });
+      if (searchRes.ok) {
+        const data = await searchRes.json();
+        const results = data.data || [];
+        if (results[0]?.markdown) {
+          parts.push(`[SOURCE: Transfermarkt - ${teamName} injuries]\n${results[0].markdown.slice(0, 3000)}`);
+        }
+      }
+    } catch (e) {
+      console.error(`Transfermarkt scrape failed for ${teamName}:`, e);
     }
-  } catch (_) {
-    // Non-critical
-  }
+  });
+
+  // ── 3. WhoScored match preview scraping ──
+  const whoScoredScrape = (async () => {
+    try {
+      const searchRes = await fetch("https://api.firecrawl.dev/v1/search", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${firecrawlKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `site:whoscored.com ${homeName} vs ${awayName} preview`,
+          limit: 1,
+          scrapeOptions: { formats: ["markdown"] },
+        }),
+      });
+      if (searchRes.ok) {
+        const data = await searchRes.json();
+        const results = data.data || [];
+        if (results[0]?.markdown) {
+          parts.push(`[SOURCE: WhoScored - ${homeName} vs ${awayName}]\n${results[0].markdown.slice(0, 3000)}`);
+        }
+      }
+    } catch (e) {
+      console.error(`WhoScored scrape failed:`, e);
+    }
+  })();
+
+  // ── 4. iservoetbalvanavond.nl (Dutch matches) ──
+  const todayScrape = (async () => {
+    try {
+      const todayPage = await scrapeWithFirecrawl("https://www.iservoetbalvanavond.nl", firecrawlKey);
+      if (todayPage && (todayPage.toLowerCase().includes(homeName.toLowerCase()) || todayPage.toLowerCase().includes(awayName.toLowerCase()))) {
+        parts.push(`[SOURCE: iservoetbalvanavond.nl]\n${todayPage}`);
+      }
+    } catch (_) {}
+  })();
+
+  // Run Transfermarkt + WhoScored + today scrapes in parallel
+  await Promise.all([...transfermarktScrapes, whoScoredScrape, todayScrape]);
 
   return parts.length > 0 ? `LIVE WEB SCRAPED DATA:\n\n${parts.join("\n\n")}` : "";
 }
