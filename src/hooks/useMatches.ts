@@ -10,7 +10,8 @@ export function useUpcomingMatches(league?: string) {
         .from("matches")
         .select("*")
         .eq("status", "upcoming")
-        .order("match_date", { ascending: true });
+        .order("match_date", { ascending: true })
+        .limit(20);
 
       if (league && league !== "all") {
         query = query.eq("league", league);
