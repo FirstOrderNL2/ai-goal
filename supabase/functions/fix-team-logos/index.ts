@@ -25,12 +25,19 @@ Deno.serve(async (req) => {
 
     const sb = createClient(supabaseUrl, serviceKey);
 
-    // Get teams missing logos
+    // Get teams missing logos — skip placeholder teams (like "1F", "W74", "RU102", "2D", etc.)
     const { data: teams, error } = await sb
       .from("teams")
       .select("id, name, country, league")
       .is("logo_url", null)
+      .gt("name", "AAA") // skip names starting with digits
       .limit(20); // process in batches
+    
+    // Filter out placeholder team names (like "1F", "W74", "3B/3E/3F", "RU102")
+    const realTeams = (teams ?? []).filter((t) => {
+      const n = t.name;
+      return n.length > 3 && !/^[0-9]/.test(n) && !/^W\d/.test(n) && !/^RU\d/.test(n) && !n.includes("/");
+    });
 
     if (error) throw error;
     if (!teams?.length) {
