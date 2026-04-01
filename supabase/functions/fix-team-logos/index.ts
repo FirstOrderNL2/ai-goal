@@ -182,7 +182,7 @@ Rules:
     return new Response(
       JSON.stringify({
         updated,
-        processed: teams.length,
+        processed: realTeams.length,
         remaining: count ?? 0,
         results,
       }),
