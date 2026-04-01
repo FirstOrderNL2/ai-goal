@@ -10,7 +10,8 @@ export function useUpcomingMatches(league?: string) {
         .from("matches")
         .select("*")
         .eq("status", "upcoming")
-        .order("match_date", { ascending: true });
+        .order("match_date", { ascending: true })
+        .limit(20);
 
       if (league && league !== "all") {
         query = query.eq("league", league);
@@ -32,7 +33,8 @@ export function useCompletedMatches(league?: string) {
         .from("matches")
         .select("*")
         .eq("status", "completed")
-        .order("match_date", { ascending: false });
+        .order("match_date", { ascending: false })
+        .limit(12);
 
       if (league && league !== "all") {
         query = query.eq("league", league);
