@@ -54,6 +54,24 @@ export const LEAGUE_SEASONS: Record<string, { label: string; seasonId: string; l
     league: "World Cup 2026",
     country: "World",
   },
+  champions_league: {
+    label: "Champions League",
+    seasonId: "sr:season:131071",
+    league: "Champions League",
+    country: "Europe",
+  },
+  europa_league: {
+    label: "Europa League",
+    seasonId: "sr:season:131073",
+    league: "Europa League",
+    country: "Europe",
+  },
+  eredivisie: {
+    label: "Eredivisie",
+    seasonId: "sr:season:130587",
+    league: "Eredivisie",
+    country: "Netherlands",
+  },
 };
 
 // Sportradar competition ID → season key mapping
