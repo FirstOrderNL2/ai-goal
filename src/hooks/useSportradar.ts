@@ -55,7 +55,7 @@ export function useSportradarH2H(
   return useSportradarData(path, !!competitorId1 && !!competitorId2);
 }
 
-const LEAGUE_KEYS = ["premier_league", "la_liga", "serie_a", "bundesliga", "ligue_1", "wc_qualifiers_europe", "wc_qualifiers_south_america", "friendlies"];
+const LEAGUE_KEYS = ["premier_league", "la_liga", "serie_a", "bundesliga", "ligue_1", "wc_qualifiers_europe", "wc_qualifiers_conmebol", "wc_qualifiers_concacaf", "world_cup_2026"];
 
 export function useSyncSportradarData() {
   const queryClient = useQueryClient();

@@ -25,24 +25,31 @@ Deno.serve(async (req) => {
 
     const sb = createClient(supabaseUrl, serviceKey);
 
-    // Get teams missing logos
+    // Get teams missing logos — skip placeholder teams (like "1F", "W74", "RU102", "2D", etc.)
     const { data: teams, error } = await sb
       .from("teams")
       .select("id, name, country, league")
       .is("logo_url", null)
+      .gt("name", "AAA") // skip names starting with digits
       .limit(20); // process in batches
+    
+    // Filter out placeholder team names (like "1F", "W74", "3B/3E/3F", "RU102")
+    const realTeams = (teams ?? []).filter((t) => {
+      const n = t.name;
+      return n.length > 3 && !/^[0-9]/.test(n) && !/^W\d/.test(n) && !/^RU\d/.test(n) && !n.includes("/");
+    });
 
     if (error) throw error;
-    if (!teams?.length) {
-      return new Response(JSON.stringify({ message: "All teams already have logos", updated: 0 }), {
+    if (!realTeams.length) {
+      return new Response(JSON.stringify({ message: "All real teams already have logos", updated: 0 }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    console.log(`Found ${teams.length} teams without logos`);
+    console.log(`Found ${realTeams.length} real teams without logos`);
 
     // Build a single AI prompt for all teams in this batch
-    const teamList = teams.map((t) => `- ${t.name} (${t.country})`).join("\n");
+    const teamList = realTeams.map((t) => `- ${t.name} (${t.country})`).join("\n");
 
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -137,8 +144,7 @@ Rules:
     let updated = 0;
     const results: Array<{ team: string; status: string }> = [];
 
-    for (const team of teams) {
-      // Find matching logo entry (fuzzy match on name)
+    for (const team of realTeams) {
       const match = logos.find(
         (l) =>
           l.logo_url &&
@@ -176,7 +182,7 @@ Rules:
     return new Response(
       JSON.stringify({
         updated,
-        processed: teams.length,
+        processed: realTeams.length,
         remaining: count ?? 0,
         results,
       }),
