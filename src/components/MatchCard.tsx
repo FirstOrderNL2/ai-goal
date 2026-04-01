@@ -43,8 +43,10 @@ export function MatchCard({ match }: MatchCardProps) {
           {/* Teams */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex-1 flex items-center justify-end gap-2">
-              {home_team?.logo_url && (
-                <img src={home_team.logo_url} alt={home_team.name} className="h-6 w-6 object-contain" />
+              {home_team?.logo_url ? (
+                <img src={home_team.logo_url} alt={home_team.name} className="h-6 w-6 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+              ) : (
+                <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground">{home_team?.name?.charAt(0) ?? "?"}</div>
               )}
               <p className="text-sm font-semibold truncate">{home_team?.name ?? "TBD"}</p>
             </div>
