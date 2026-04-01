@@ -267,12 +267,8 @@ Deno.serve(async (req) => {
       try {
         // Skip women's matches
         const womens = m.is_womens || isWomensTeam(m.home_team) || isWomensTeam(m.away_team);
-        if (womens) {
-          summary.skippedWomens++;
-          continue;
-        }
 
-        const league = mapCompetition(m.competition, false);
+        const league = mapCompetition(m.competition, womens);
         const homeId = await findOrCreateTeam(m.home_team, league);
         const awayId = await findOrCreateTeam(m.away_team, league);
         if (!homeId || !awayId) continue;
