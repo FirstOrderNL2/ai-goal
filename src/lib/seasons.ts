@@ -81,6 +81,9 @@ export const COMPETITION_TO_SEASON: Record<string, string> = {
   "sr:competition:23": "serie_a",
   "sr:competition:35": "bundesliga",
   "sr:competition:34": "ligue_1",
+  "sr:competition:7": "champions_league",
+  "sr:competition:679": "europa_league",
+  "sr:competition:37": "eredivisie",
 };
 
 // Team name aliases for fuzzy matching (Sportradar name → canonical DB name)
