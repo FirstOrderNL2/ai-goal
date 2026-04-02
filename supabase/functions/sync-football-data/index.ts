@@ -106,7 +106,7 @@ function mapStatus(apiStatus: string): string {
 
 // Rate limit tracker
 let apiCallCount = 0;
-const API_CALL_LIMIT = 250; // Conservative limit per run
+const API_CALL_LIMIT = 400; // Raised for expanded league coverage
 
 async function apiFetch(path: string, apiKey: string) {
   if (apiCallCount >= API_CALL_LIMIT) {
