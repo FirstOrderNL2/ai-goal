@@ -138,15 +138,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get form + H2H data for all teams involved
-    const teamIds = [...new Set(needsPrediction.flatMap((m: any) => [m.team_home_id, m.team_away_id]))];
-    const { data: recentMatches } = await supabase
-      .from("matches")
-      .select("team_home_id, team_away_id, goals_home, goals_away, status, match_date")
-      .eq("status", "completed")
-      .or(teamIds.map(id => `team_home_id.eq.${id},team_away_id.eq.${id}`).join(","))
-      .order("match_date", { ascending: false })
-      .limit(500);
+    // Get pre-computed features for all matches
+    const { data: allFeatures } = await supabase
+      .from("match_features")
+      .select("*")
+      .in("match_id", needsPrediction.map((m: any) => m.id));
+    const featuresMap = new Map((allFeatures || []).map((f: any) => [f.match_id, f]));
 
     // Get odds for all matches
     const { data: allOdds } = await supabase
@@ -170,68 +167,6 @@ Deno.serve(async (req) => {
       learningBlock = `\nLEARNING FROM PAST PREDICTIONS (avg accuracy: ${Math.round(avgScore)}/100):
 ${pastReviews.slice(0, 3).map((r: any) => `- ${(r as any).home_team?.name} vs ${(r as any).away_team?.name} (${r.ai_accuracy_score}/100): ${r.ai_post_match_review?.slice(0, 200)}...`).join("\n")}
 Apply the lessons above.`;
-    }
-
-    // Build form + stats lookup
-    const formMap = new Map<string, string[]>();
-    const homeFormMap = new Map<string, string[]>();
-    const awayFormMap = new Map<string, string[]>();
-    const statsMap = new Map<string, { avgScored: string; avgConceded: string; cleanSheets: number; played: number; bttsRate: number }>();
-
-    for (const tid of teamIds) {
-      const teamMatches = (recentMatches || [])
-        .filter((m: any) => m.team_home_id === tid || m.team_away_id === tid)
-        .slice(0, 10);
-
-      const form = teamMatches.slice(0, 5).map((m: any) => {
-        const isHome = m.team_home_id === tid;
-        const gf = isHome ? m.goals_home : m.goals_away;
-        const ga = isHome ? m.goals_away : m.goals_home;
-        return (gf ?? 0) > (ga ?? 0) ? "W" : (gf ?? 0) === (ga ?? 0) ? "D" : "L";
-      });
-      formMap.set(tid, form);
-
-      const homeMatches = teamMatches.filter((m: any) => m.team_home_id === tid).slice(0, 5);
-      homeFormMap.set(tid, homeMatches.map((m: any) => {
-        const r = (m.goals_home ?? 0) > (m.goals_away ?? 0) ? "W" : (m.goals_home ?? 0) === (m.goals_away ?? 0) ? "D" : "L";
-        return `${r} (${m.goals_home}-${m.goals_away})`;
-      }));
-
-      const awayMatches = teamMatches.filter((m: any) => m.team_away_id === tid).slice(0, 5);
-      awayFormMap.set(tid, awayMatches.map((m: any) => {
-        const r = (m.goals_away ?? 0) > (m.goals_home ?? 0) ? "W" : (m.goals_away ?? 0) === (m.goals_home ?? 0) ? "D" : "L";
-        return `${r} (${m.goals_away}-${m.goals_home})`;
-      }));
-
-      let scored = 0, conceded = 0, cleanSheets = 0, bttsCount = 0;
-      for (const m of teamMatches) {
-        const isHome = m.team_home_id === tid;
-        const gf = isHome ? (m.goals_home ?? 0) : (m.goals_away ?? 0);
-        const ga = isHome ? (m.goals_away ?? 0) : (m.goals_home ?? 0);
-        scored += gf;
-        conceded += ga;
-        if (ga === 0) cleanSheets++;
-        if (gf > 0 && ga > 0) bttsCount++;
-      }
-      if (teamMatches.length > 0) {
-        statsMap.set(tid, {
-          played: teamMatches.length,
-          avgScored: (scored / teamMatches.length).toFixed(1),
-          avgConceded: (conceded / teamMatches.length).toFixed(1),
-          cleanSheets,
-          bttsRate: Math.round((bttsCount / teamMatches.length) * 100),
-        });
-      }
-    }
-
-    function getH2H(homeId: string, awayId: string): string {
-      const h2h = (recentMatches || []).filter(
-        (m: any) =>
-          (m.team_home_id === homeId && m.team_away_id === awayId) ||
-          (m.team_home_id === awayId && m.team_away_id === homeId)
-      ).slice(0, 5);
-      if (h2h.length === 0) return "";
-      return h2h.map((m: any) => `${m.match_date?.slice(0, 10)}: ${m.goals_home}-${m.goals_away}`).join(", ");
     }
 
     let generated = 0;
