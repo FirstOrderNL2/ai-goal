@@ -129,7 +129,7 @@ Deno.serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: `You extract football match data from web content. The current UTC time is ${nowUtc}. The scraped content comes from Dutch websites where times are displayed in CET/CEST (Europe/Amsterdam timezone, UTC+1 in winter, UTC+2 in summer). IMPORTANT: When extracting dates, be precise — do NOT use relative terms like "today" or "tomorrow". Use the actual calendar date shown on the page. If a match has already been played (date/time is before ${nowUtc}), include the score if available. Extract ALL matches — upcoming, today's, and recently completed ones. Translate all Dutch team names to English. Use the extract_matches tool.`,
+            content: `You extract football match data from web content. The current UTC time is ${nowUtc}. The scraped content comes from Dutch websites where times are displayed in CET/CEST (Europe/Amsterdam timezone, UTC+1 in winter, UTC+2 in summer). IMPORTANT: When extracting dates, be precise — do NOT use relative terms like "today" or "tomorrow". Use the actual calendar date shown on the page. If a match has already been played (date/time is before ${nowUtc}), include the score if available. Extract ALL matches — upcoming, today's, and recently completed ones. Translate all Dutch team names to English. IMPORTANT: Extract round/leg information when available (e.g. "Quarter-final Leg 1", "Kwartfinale wedstrijd 2 van 2" → "QF Leg 2", "Halve finale" → "Semi-final"). For two-legged ties, always include which leg it is. Use the extract_matches tool.`,
           },
           {
             role: "user",
