@@ -69,7 +69,7 @@ export default function MatchDetail() {
                 {match.league}
               </Badge>
               <span className="text-sm text-muted-foreground">
-                {format(new Date(match.match_date), "EEEE, MMM d yyyy • HH:mm")}
+                {new Date(match.match_date).toLocaleString("en-GB", { timeZone: "Europe/Berlin", weekday: "long", month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })} CET
               </span>
             </div>
 
