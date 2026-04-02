@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
       if (!res.ok) {
         errors.push(`${name}: HTTP ${res.status} (${ms}ms)`);
       } else {
-        log.push(`${name}: OK (${ms}ms)`);
+        log.push(`${name}: OK (${ms}ms) ${JSON.stringify(data).slice(0, 200)}`);
       }
       return data;
     } catch (e) {
@@ -43,17 +43,20 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Step 1: Sync Sportradar data (live scores, odds)
+  // Step 1: Sync API-Football data (primary — fixtures, teams, standings, team stats, H2H)
+  await callFunction("sync-football-data");
+
+  // Step 2: Sync Sportradar data (secondary — live scores, odds)
   await callFunction("sync-sportradar-data");
 
-  // Step 2: Scrape matches from Dutch sites
+  // Step 3: Scrape matches from Dutch sites
   await callFunction("scrape-matches");
 
-  // Step 3: Scrape news
+  // Step 4: Scrape news
   await callFunction("scrape-news");
 
-  // Step 4: Mark stale "upcoming" matches as completed
-  const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(); // 2 hours ago
+  // Step 5: Mark stale "upcoming" matches as completed
+  const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
   const { data: stale, error: staleErr } = await supabase
     .from("matches")
     .update({ status: "completed" })
@@ -67,7 +70,10 @@ Deno.serve(async (req) => {
     log.push(`cleanup: marked ${stale.length} stale matches as completed`);
   }
 
-  // Step 5: Generate predictions for new matches
+  // Step 6: Compute AI-ready features for upcoming matches
+  await callFunction("compute-features");
+
+  // Step 7: Generate predictions for new matches
   await callFunction("batch-generate-predictions");
 
   return new Response(

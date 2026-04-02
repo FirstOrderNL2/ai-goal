@@ -138,15 +138,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get form + H2H data for all teams involved
-    const teamIds = [...new Set(needsPrediction.flatMap((m: any) => [m.team_home_id, m.team_away_id]))];
-    const { data: recentMatches } = await supabase
-      .from("matches")
-      .select("team_home_id, team_away_id, goals_home, goals_away, status, match_date")
-      .eq("status", "completed")
-      .or(teamIds.map(id => `team_home_id.eq.${id},team_away_id.eq.${id}`).join(","))
-      .order("match_date", { ascending: false })
-      .limit(500);
+    // Get pre-computed features for all matches
+    const { data: allFeatures } = await supabase
+      .from("match_features")
+      .select("*")
+      .in("match_id", needsPrediction.map((m: any) => m.id));
+    const featuresMap = new Map((allFeatures || []).map((f: any) => [f.match_id, f]));
 
     // Get odds for all matches
     const { data: allOdds } = await supabase
@@ -172,87 +169,27 @@ ${pastReviews.slice(0, 3).map((r: any) => `- ${(r as any).home_team?.name} vs ${
 Apply the lessons above.`;
     }
 
-    // Build form + stats lookup
-    const formMap = new Map<string, string[]>();
-    const homeFormMap = new Map<string, string[]>();
-    const awayFormMap = new Map<string, string[]>();
-    const statsMap = new Map<string, { avgScored: string; avgConceded: string; cleanSheets: number; played: number; bttsRate: number }>();
-
-    for (const tid of teamIds) {
-      const teamMatches = (recentMatches || [])
-        .filter((m: any) => m.team_home_id === tid || m.team_away_id === tid)
-        .slice(0, 10);
-
-      const form = teamMatches.slice(0, 5).map((m: any) => {
-        const isHome = m.team_home_id === tid;
-        const gf = isHome ? m.goals_home : m.goals_away;
-        const ga = isHome ? m.goals_away : m.goals_home;
-        return (gf ?? 0) > (ga ?? 0) ? "W" : (gf ?? 0) === (ga ?? 0) ? "D" : "L";
-      });
-      formMap.set(tid, form);
-
-      const homeMatches = teamMatches.filter((m: any) => m.team_home_id === tid).slice(0, 5);
-      homeFormMap.set(tid, homeMatches.map((m: any) => {
-        const r = (m.goals_home ?? 0) > (m.goals_away ?? 0) ? "W" : (m.goals_home ?? 0) === (m.goals_away ?? 0) ? "D" : "L";
-        return `${r} (${m.goals_home}-${m.goals_away})`;
-      }));
-
-      const awayMatches = teamMatches.filter((m: any) => m.team_away_id === tid).slice(0, 5);
-      awayFormMap.set(tid, awayMatches.map((m: any) => {
-        const r = (m.goals_away ?? 0) > (m.goals_home ?? 0) ? "W" : (m.goals_away ?? 0) === (m.goals_home ?? 0) ? "D" : "L";
-        return `${r} (${m.goals_away}-${m.goals_home})`;
-      }));
-
-      let scored = 0, conceded = 0, cleanSheets = 0, bttsCount = 0;
-      for (const m of teamMatches) {
-        const isHome = m.team_home_id === tid;
-        const gf = isHome ? (m.goals_home ?? 0) : (m.goals_away ?? 0);
-        const ga = isHome ? (m.goals_away ?? 0) : (m.goals_home ?? 0);
-        scored += gf;
-        conceded += ga;
-        if (ga === 0) cleanSheets++;
-        if (gf > 0 && ga > 0) bttsCount++;
-      }
-      if (teamMatches.length > 0) {
-        statsMap.set(tid, {
-          played: teamMatches.length,
-          avgScored: (scored / teamMatches.length).toFixed(1),
-          avgConceded: (conceded / teamMatches.length).toFixed(1),
-          cleanSheets,
-          bttsRate: Math.round((bttsCount / teamMatches.length) * 100),
-        });
-      }
-    }
-
-    function getH2H(homeId: string, awayId: string): string {
-      const h2h = (recentMatches || []).filter(
-        (m: any) =>
-          (m.team_home_id === homeId && m.team_away_id === awayId) ||
-          (m.team_home_id === awayId && m.team_away_id === homeId)
-      ).slice(0, 5);
-      if (h2h.length === 0) return "";
-      return h2h.map((m: any) => `${m.match_date?.slice(0, 10)}: ${m.goals_home}-${m.goals_away}`).join(", ");
-    }
-
     let generated = 0;
     const errors: string[] = [];
 
     for (const match of needsPrediction) {
       const homeName = (match as any).home_team?.name ?? "Home";
       const awayName = (match as any).away_team?.name ?? "Away";
-      const homeForm = formMap.get(match.team_home_id) || [];
-      const awayForm = formMap.get(match.team_away_id) || [];
-      const homeHome = homeFormMap.get(match.team_home_id) || [];
-      const awayAway = awayFormMap.get(match.team_away_id) || [];
-      const homeStats = statsMap.get(match.team_home_id);
-      const awayStats = statsMap.get(match.team_away_id);
-      const h2h = getH2H(match.team_home_id, match.team_away_id);
       const matchOdds = oddsMap.get(match.id);
+      const features = featuresMap.get(match.id);
 
-      // Compute statistical anchors
-      const anchors = computeStatisticalAnchors(homeStats || null, awayStats || null, matchOdds || null);
+      // Use features if available, fallback to empty
+      const homeForm = features?.home_form_last5 || "";
+      const awayForm = features?.away_form_last5 || "";
 
-      // Fetch live context (cached after first call)
+      // Compute statistical anchors from features or odds
+      const anchors = computeStatisticalAnchors(
+        features ? { avgScored: String(features.home_avg_scored), avgConceded: String(features.home_avg_conceded) } : null,
+        features ? { avgScored: String(features.away_avg_scored), avgConceded: String(features.away_avg_conceded) } : null,
+        matchOdds || null
+      );
+
+      // Fetch live context
       let liveContext = "";
       try {
         liveContext = await fetchMatchContextForBatch(
@@ -260,6 +197,12 @@ Apply the lessons above.`;
           supabaseUrl, serviceKey
         );
       } catch (_) {}
+
+      // H2H from features
+      let h2hBlock = "";
+      if (features?.h2h_results && Array.isArray(features.h2h_results) && features.h2h_results.length > 0) {
+        h2hBlock = `Head-to-head recent: ${features.h2h_results.map((h: any) => `${h.date?.slice(0, 10)}: ${h.home} ${h.score_home}-${h.score_away} ${h.away}`).join(", ")}`;
+      }
 
       let anchorsBlock = "";
       if (anchors.poisson_xg_home != null) {
@@ -291,13 +234,13 @@ League: ${match.league}
 Date: ${match.match_date}
 ${matchOdds ? `Odds: Home ${matchOdds.home_win_odds}, Draw ${matchOdds.draw_odds}, Away ${matchOdds.away_win_odds}` : ""}
 ${anchorsBlock}
-${homeName} overall form (last 5): ${homeForm.join(", ") || "Unknown"}
-${awayName} overall form (last 5): ${awayForm.join(", ") || "Unknown"}
-${homeHome.length ? `${homeName} HOME form: ${homeHome.join(", ")}` : ""}
-${awayAway.length ? `${awayName} AWAY form: ${awayAway.join(", ")}` : ""}
-${h2h ? `Head-to-head recent: ${h2h}` : "No H2H data"}
-${homeStats ? `${homeName} stats (last ${homeStats.played}): avg scored ${homeStats.avgScored}, avg conceded ${homeStats.avgConceded}, clean sheets ${homeStats.cleanSheets}, BTTS rate ${homeStats.bttsRate}%` : ""}
-${awayStats ? `${awayName} stats (last ${awayStats.played}): avg scored ${awayStats.avgScored}, avg conceded ${awayStats.avgConceded}, clean sheets ${awayStats.cleanSheets}, BTTS rate ${awayStats.bttsRate}%` : ""}
+${homeName} overall form (last 5): ${homeForm || "Unknown"}
+${awayName} overall form (last 5): ${awayForm || "Unknown"}
+${features?.league_position_home ? `${homeName} league position: #${features.league_position_home}` : ""}
+${features?.league_position_away ? `${awayName} league position: #${features.league_position_away}` : ""}
+${h2hBlock || "No H2H data"}
+${features ? `${homeName} stats: avg scored ${features.home_avg_scored}, avg conceded ${features.home_avg_conceded}, clean sheet ${Math.round(Number(features.home_clean_sheet_pct) * 100)}%, BTTS ${Math.round(Number(features.home_btts_pct) * 100)}%` : ""}
+${features ? `${awayName} stats: avg scored ${features.away_avg_scored}, avg conceded ${features.away_avg_conceded}, clean sheet ${Math.round(Number(features.away_clean_sheet_pct) * 100)}%, BTTS ${Math.round(Number(features.away_btts_pct) * 100)}%` : ""}
 ${liveContext ? `\nLIVE CONTEXT:\n${liveContext.slice(0, 3000)}` : ""}`;
 
       try {

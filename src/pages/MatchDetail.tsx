@@ -1,6 +1,6 @@
 import { useParams, Link } from "react-router-dom";
 import { Header } from "@/components/Header";
-import { useMatch } from "@/hooks/useMatches";
+import { useMatch, useMatchFeatures } from "@/hooks/useMatches";
 import { useHeadToHead } from "@/hooks/useH2H";
 import { ProbabilityBar } from "@/components/ProbabilityBar";
 import { FunFactsCard } from "@/components/FunFactsCard";
@@ -13,11 +13,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format } from "date-fns";
-import { ArrowLeft, TrendingUp, Target, BarChart3, Swords } from "lucide-react";
+import { ArrowLeft, TrendingUp, Target, BarChart3, Swords, Activity } from "lucide-react";
 
 export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: match, isLoading } = useMatch(id!);
+  const { data: features } = useMatchFeatures(id);
 
   const home_team = match?.home_team;
   const away_team = match?.away_team;
@@ -111,7 +112,7 @@ export default function MatchDetail() {
           </CardContent>
         </Card>
 
-        {/* AI Verdict - structured prediction at a glance */}
+        {/* AI Verdict */}
         {prediction && (
           <AIVerdictCard
             prediction={prediction}
@@ -119,6 +120,106 @@ export default function MatchDetail() {
             awayTeamName={away_team?.name || "Away"}
             odds={odds}
           />
+        )}
+
+        {/* Match Features / Statistics */}
+        {features && (
+          <Card className="border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Activity className="h-4 w-4 text-primary" />
+                Match Statistics
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Form */}
+              {(features.home_form_last5 || features.away_form_last5) && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">{home_team?.name} Form</p>
+                    <div className="flex gap-1">
+                      {(features.home_form_last5 || "").split("").map((c, i) => (
+                        <span key={i} className={`w-6 h-6 rounded text-xs font-bold flex items-center justify-center ${
+                          c === "W" ? "bg-green-500/20 text-green-500" :
+                          c === "D" ? "bg-yellow-500/20 text-yellow-500" :
+                          "bg-red-500/20 text-red-500"
+                        }`}>{c}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">{away_team?.name} Form</p>
+                    <div className="flex gap-1">
+                      {(features.away_form_last5 || "").split("").map((c, i) => (
+                        <span key={i} className={`w-6 h-6 rounded text-xs font-bold flex items-center justify-center ${
+                          c === "W" ? "bg-green-500/20 text-green-500" :
+                          c === "D" ? "bg-yellow-500/20 text-yellow-500" :
+                          "bg-red-500/20 text-red-500"
+                        }`}>{c}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Averages */}
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="rounded-lg bg-muted p-3 space-y-1">
+                  <p className="text-xs text-muted-foreground font-medium">{home_team?.name}</p>
+                  <p>Avg Scored: <span className="font-bold">{Number(features.home_avg_scored).toFixed(2)}</span></p>
+                  <p>Avg Conceded: <span className="font-bold">{Number(features.home_avg_conceded).toFixed(2)}</span></p>
+                  <p>Clean Sheet: <span className="font-bold">{Math.round(Number(features.home_clean_sheet_pct) * 100)}%</span></p>
+                  <p>BTTS Rate: <span className="font-bold">{Math.round(Number(features.home_btts_pct) * 100)}%</span></p>
+                </div>
+                <div className="rounded-lg bg-muted p-3 space-y-1">
+                  <p className="text-xs text-muted-foreground font-medium">{away_team?.name}</p>
+                  <p>Avg Scored: <span className="font-bold">{Number(features.away_avg_scored).toFixed(2)}</span></p>
+                  <p>Avg Conceded: <span className="font-bold">{Number(features.away_avg_conceded).toFixed(2)}</span></p>
+                  <p>Clean Sheet: <span className="font-bold">{Math.round(Number(features.away_clean_sheet_pct) * 100)}%</span></p>
+                  <p>BTTS Rate: <span className="font-bold">{Math.round(Number(features.away_btts_pct) * 100)}%</span></p>
+                </div>
+              </div>
+
+              {/* League Positions + Poisson */}
+              <div className="grid grid-cols-3 gap-3 text-center">
+                {features.league_position_home != null && (
+                  <div className="rounded-lg bg-muted p-3">
+                    <p className="text-lg font-bold text-primary">#{features.league_position_home}</p>
+                    <p className="text-xs text-muted-foreground">{home_team?.name}</p>
+                  </div>
+                )}
+                {features.poisson_xg_home > 0 && (
+                  <div className="rounded-lg bg-muted p-3">
+                    <p className="text-lg font-bold">{Number(features.poisson_xg_home).toFixed(1)} - {Number(features.poisson_xg_away).toFixed(1)}</p>
+                    <p className="text-xs text-muted-foreground">Poisson xG</p>
+                  </div>
+                )}
+                {features.league_position_away != null && (
+                  <div className="rounded-lg bg-muted p-3">
+                    <p className="text-lg font-bold text-primary">#{features.league_position_away}</p>
+                    <p className="text-xs text-muted-foreground">{away_team?.name}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* H2H from features */}
+              {features.h2h_results && Array.isArray(features.h2h_results) && features.h2h_results.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground font-medium">Recent Head-to-Head</p>
+                  {(features.h2h_results as any[]).slice(0, 5).map((h: any, i: number) => (
+                    <div key={i} className="flex items-center justify-between text-sm rounded-lg bg-muted p-2">
+                      <span className="text-xs text-muted-foreground w-20">
+                        {h.date ? format(new Date(h.date), "MMM d, yyyy") : ""}
+                      </span>
+                      <span className="font-medium truncate flex-1 text-right">{h.home}</span>
+                      <span className="font-bold tabular-nums px-3">{h.score_home} - {h.score_away}</span>
+                      <span className="font-medium truncate flex-1">{h.away}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         )}
 
         {/* Prediction Breakdown */}
@@ -176,7 +277,7 @@ export default function MatchDetail() {
           </Card>
         )}
 
-        {/* Match Intelligence (injuries, suspensions, weather, news) */}
+        {/* Match Intelligence */}
         <MatchContextCard
           matchId={match.id}
           homeTeamName={home_team?.name}
@@ -208,7 +309,7 @@ export default function MatchDetail() {
           </Card>
         )}
 
-        {/* Head to Head */}
+        {/* Head to Head (API-Football live) */}
         {(h2h && h2h.length > 0) && (
           <Card className="border-border/50">
             <CardHeader className="pb-3">
@@ -235,7 +336,7 @@ export default function MatchDetail() {
         )}
         {h2hLoading && <Skeleton className="h-48" />}
 
-        {/* AI Insights (generate/regenerate) */}
+        {/* AI Insights */}
         <AIInsightsCard
           matchId={match.id}
           existingInsights={match.ai_insights}
@@ -244,13 +345,8 @@ export default function MatchDetail() {
           accuracyScore={match.ai_accuracy_score}
         />
 
-        {/* Sportradar Fun Facts */}
         <FunFactsCard sportradarEventId={match.sportradar_id} />
-
-        {/* Sportradar AI Insights */}
         <MatchInsightsCard sportradarEventId={match.sportradar_id} />
-
-        {/* StatsBomb Data */}
         <StatsBombSection
           homeTeamName={home_team?.name}
           awayTeamName={away_team?.name}

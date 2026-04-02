@@ -69,3 +69,58 @@ export interface MatchContext {
   h2h_summary: string | null;
   scraped_at: string;
 }
+
+export interface League {
+  id: string;
+  api_football_id: number;
+  name: string;
+  country: string;
+  season: number;
+  logo_url: string | null;
+  standings_data: any[];
+  updated_at: string;
+}
+
+export interface TeamStatistics {
+  id: string;
+  team_id: string;
+  league_id: string;
+  season: number;
+  matches_played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  goals_for: number;
+  goals_against: number;
+  goal_diff: number;
+  form: string | null;
+  home_record: any;
+  away_record: any;
+  clean_sheets: number;
+  failed_to_score: number;
+  avg_goals_scored: number;
+  avg_goals_conceded: number;
+  updated_at: string;
+}
+
+export interface MatchFeatures {
+  id: string;
+  match_id: string;
+  home_form_last5: string | null;
+  away_form_last5: string | null;
+  home_avg_scored: number;
+  home_avg_conceded: number;
+  away_avg_scored: number;
+  away_avg_conceded: number;
+  h2h_results: any[] | null;
+  league_position_home: number | null;
+  league_position_away: number | null;
+  position_diff: number | null;
+  home_clean_sheet_pct: number;
+  away_clean_sheet_pct: number;
+  home_btts_pct: number;
+  away_btts_pct: number;
+  poisson_xg_home: number;
+  poisson_xg_away: number;
+  computed_at: string;
+}

@@ -1,8 +1,5 @@
 import { useState } from "react";
 import { Header } from "@/components/Header";
-import { useStandings } from "@/hooks/useSportradar";
-import { LEAGUE_SEASONS } from "@/lib/seasons";
-import { resolveTeamName } from "@/lib/seasons";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -16,60 +13,66 @@ import {
 } from "@/components/ui/table";
 import { Loader2, Trophy } from "lucide-react";
 
-interface StandingRow {
+const LEAGUE_OPTIONS = [
+  { key: "Premier League", label: "Premier League" },
+  { key: "La Liga", label: "La Liga" },
+  { key: "Serie A", label: "Serie A" },
+  { key: "Bundesliga", label: "Bundesliga" },
+  { key: "Ligue 1", label: "Ligue 1" },
+];
+
+interface StandingEntry {
   rank: number;
-  competitor: {
-    id: string;
-    name: string;
-  };
-  played: number;
-  win: number;
-  draw: number;
-  loss: number;
-  goals_for: number;
-  goals_against: number;
-  goal_diff: number;
+  team: { id: number; name: string; logo: string };
   points: number;
+  goalsDiff: number;
+  all: { played: number; win: number; draw: number; lose: number; goals: { for: number; against: number } };
+  form: string | null;
 }
 
 export default function Standings() {
-  const [league, setLeague] = useState("premier_league");
-  const config = LEAGUE_SEASONS[league];
-  const { data, isLoading, error } = useStandings(config.seasonId);
+  const [league, setLeague] = useState("Premier League");
 
-  // Fetch all teams for logo matching
+  // Fetch standings from leagues table
+  const { data: leagueData, isLoading, error } = useQuery({
+    queryKey: ["standings", league],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("leagues")
+        .select("standings_data, logo_url, updated_at")
+        .eq("name", league)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Fetch teams for logo fallback
   const { data: teams } = useQuery({
     queryKey: ["teams-all"],
     queryFn: async () => {
-      const { data } = await supabase.from("teams").select("name, logo_url");
+      const { data } = await supabase.from("teams").select("name, logo_url, api_football_id");
       return data ?? [];
     },
     staleTime: 10 * 60 * 1000,
   });
 
-  const teamLogoMap = new Map<string, string>();
+  const teamLogoMap = new Map<number, string>();
   teams?.forEach((t) => {
-    if (t.logo_url) {
-      teamLogoMap.set(t.name.toLowerCase(), t.logo_url);
+    if (t.logo_url && t.api_football_id) {
+      teamLogoMap.set(t.api_football_id, t.logo_url);
     }
   });
 
-  function getLogoForCompetitor(name: string): string | undefined {
-    const resolved = resolveTeamName(name);
-    return teamLogoMap.get(resolved) ?? teamLogoMap.get(name.toLowerCase());
-  }
-
-  const standings: StandingRow[] = (() => {
-    if (!data?.standings) return [];
-    const firstStanding = data.standings[0];
-    if (!firstStanding) return [];
-    if (firstStanding.groups) {
-      return firstStanding.groups[0]?.team_standings ?? [];
-    }
-    if (firstStanding.team_standings) {
-      return firstStanding.team_standings;
-    }
-    return [];
+  // Parse standings from the JSONB data
+  const standings: StandingEntry[] = (() => {
+    const sd = leagueData?.standings_data as any;
+    if (!sd || !Array.isArray(sd)) return [];
+    // standings_data is array of groups (each group is array of team standings)
+    const firstGroup = sd[0];
+    if (!Array.isArray(firstGroup)) return [];
+    return firstGroup;
   })();
 
   return (
@@ -82,15 +85,15 @@ export default function Standings() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {Object.entries(LEAGUE_SEASONS).map(([key, val]) => (
+          {LEAGUE_OPTIONS.map((opt) => (
             <Button
-              key={key}
-              variant={league === key ? "default" : "secondary"}
+              key={opt.key}
+              variant={league === opt.key ? "default" : "secondary"}
               size="sm"
-              onClick={() => setLeague(key)}
+              onClick={() => setLeague(opt.key)}
               className="text-xs"
             >
-              {val.label}
+              {opt.label}
             </Button>
           ))}
         </div>
@@ -103,7 +106,13 @@ export default function Standings() {
 
         {error && (
           <p className="text-destructive text-sm">
-            Failed to load standings. The Sportradar trial API may be rate-limited.
+            No standings data available yet. Run a sync to populate standings.
+          </p>
+        )}
+
+        {leagueData?.updated_at && (
+          <p className="text-xs text-muted-foreground">
+            Last updated: {new Date(leagueData.updated_at).toLocaleString("en-GB", { timeZone: "Europe/Berlin" })}
           </p>
         )}
 
@@ -122,13 +131,14 @@ export default function Standings() {
                   <TableHead className="text-center w-14">GA</TableHead>
                   <TableHead className="text-center w-14">GD</TableHead>
                   <TableHead className="text-center w-14 font-bold">Pts</TableHead>
+                  <TableHead className="text-center w-20">Form</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {standings.map((row) => {
-                  const logo = getLogoForCompetitor(row.competitor?.name ?? "");
+                  const logo = row.team?.logo || teamLogoMap.get(row.team?.id);
                   return (
-                    <TableRow key={row.competitor?.id ?? row.rank}>
+                    <TableRow key={row.team?.id ?? row.rank}>
                       <TableCell className="font-medium text-muted-foreground">
                         {row.rank}
                       </TableCell>
@@ -138,21 +148,39 @@ export default function Standings() {
                             <img src={logo} alt="" className="h-5 w-5 object-contain" />
                           )}
                           <span className="font-medium text-sm">
-                            {row.competitor?.name ?? "Unknown"}
+                            {row.team?.name ?? "Unknown"}
                           </span>
                         </div>
                       </TableCell>
-                      <TableCell className="text-center">{row.played}</TableCell>
-                      <TableCell className="text-center">{row.win}</TableCell>
-                      <TableCell className="text-center">{row.draw}</TableCell>
-                      <TableCell className="text-center">{row.loss}</TableCell>
-                      <TableCell className="text-center">{row.goals_for}</TableCell>
-                      <TableCell className="text-center">{row.goals_against}</TableCell>
+                      <TableCell className="text-center">{row.all?.played}</TableCell>
+                      <TableCell className="text-center">{row.all?.win}</TableCell>
+                      <TableCell className="text-center">{row.all?.draw}</TableCell>
+                      <TableCell className="text-center">{row.all?.lose}</TableCell>
+                      <TableCell className="text-center">{row.all?.goals?.for}</TableCell>
+                      <TableCell className="text-center">{row.all?.goals?.against}</TableCell>
                       <TableCell className="text-center font-medium">
-                        {row.goal_diff > 0 ? `+${row.goal_diff}` : row.goal_diff}
+                        {row.goalsDiff > 0 ? `+${row.goalsDiff}` : row.goalsDiff}
                       </TableCell>
                       <TableCell className="text-center font-bold text-primary">
                         {row.points}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {row.form && (
+                          <div className="flex gap-0.5 justify-center">
+                            {row.form.split("").slice(-5).map((c, i) => (
+                              <span
+                                key={i}
+                                className={`w-5 h-5 rounded text-[10px] font-bold flex items-center justify-center ${
+                                  c === "W" ? "bg-green-500/20 text-green-500" :
+                                  c === "D" ? "bg-yellow-500/20 text-yellow-500" :
+                                  "bg-red-500/20 text-red-500"
+                                }`}
+                              >
+                                {c}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </TableCell>
                     </TableRow>
                   );
@@ -164,7 +192,7 @@ export default function Standings() {
 
         {!isLoading && !error && standings.length === 0 && (
           <p className="text-muted-foreground text-sm text-center py-10">
-            No standings data available for this season.
+            No standings data available for this league yet.
           </p>
         )}
       </main>

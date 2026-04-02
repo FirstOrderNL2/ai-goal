@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { Match, Team, Prediction, Odds } from "@/lib/types";
+import type { Match, Team, Prediction, Odds, MatchFeatures } from "@/lib/types";
 
 export function useUpcomingMatches(league?: string) {
   return useQuery({
@@ -78,6 +78,22 @@ export function useTeams() {
       if (error) throw error;
       return data as Team[];
     },
+  });
+}
+
+export function useMatchFeatures(matchId: string | undefined) {
+  return useQuery({
+    queryKey: ["match-features", matchId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("match_features")
+        .select("*")
+        .eq("match_id", matchId!)
+        .single();
+      if (error) throw error;
+      return data as unknown as MatchFeatures;
+    },
+    enabled: !!matchId,
   });
 }
 
