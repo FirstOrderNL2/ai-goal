@@ -574,11 +574,19 @@ Deno.serve(async (req) => {
           const s = formatLineups(data);
           if (s) parts.push(s);
           const extracted = extractLineups(data);
-          apiLineupsHome = extracted.home;
-          apiLineupsAway = extracted.away;
+          apiLineupsHome = extracted.home ? [extracted.home] : [];
+          apiLineupsAway = extracted.away ? [extracted.away] : [];
         } else if (label === "predictions") {
           const s = formatPredictions(data);
           if (s) parts.push(s);
+        } else if (label === "events") {
+          const s = formatEvents(data);
+          if (s) parts.push(s);
+        } else if (label === "live") {
+          if (data.length > 0) {
+            const s = formatLiveStatus(data[0]);
+            if (s) parts.push(s);
+          }
         }
       }
 
