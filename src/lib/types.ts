@@ -124,3 +124,14 @@ export interface MatchFeatures {
   poisson_xg_away: number;
   computed_at: string;
 }
+
+export interface Player {
+  id: string;
+  api_football_id: number;
+  team_id: string | null;
+  name: string;
+  position: string | null;
+  age: number | null;
+  nationality: string | null;
+  photo_url: string | null;
+}

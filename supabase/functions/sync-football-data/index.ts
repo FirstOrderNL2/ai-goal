@@ -9,15 +9,28 @@ const corsHeaders = {
 const API_BASE = "https://v3.football.api-sports.io";
 
 const LEAGUES = [
-  { id: 39, name: "Premier League", country: "England" },
-  { id: 140, name: "La Liga", country: "Spain" },
-  { id: 135, name: "Serie A", country: "Italy" },
-  { id: 78, name: "Bundesliga", country: "Germany" },
-  { id: 61, name: "Ligue 1", country: "France" },
-  { id: 1, name: "World Cup", country: "World" },
-  { id: 32, name: "WC Qualifiers Europe", country: "World" },
-  { id: 34, name: "WC Qualifiers South America", country: "World" },
-  { id: 10, name: "Friendlies", country: "World" },
+  // Domestic leagues
+  { id: 39, name: "Premier League", country: "England", type: "league" },
+  { id: 140, name: "La Liga", country: "Spain", type: "league" },
+  { id: 135, name: "Serie A", country: "Italy", type: "league" },
+  { id: 78, name: "Bundesliga", country: "Germany", type: "league" },
+  { id: 61, name: "Ligue 1", country: "France", type: "league" },
+  { id: 88, name: "Eredivisie", country: "Netherlands", type: "league" },
+  { id: 89, name: "Keuken Kampioen Divisie", country: "Netherlands", type: "league" },
+  // European cups
+  { id: 2, name: "Champions League", country: "World", type: "cup" },
+  { id: 3, name: "Europa League", country: "World", type: "cup" },
+  { id: 848, name: "Conference League", country: "World", type: "cup" },
+  { id: 748, name: "Women's Champions League", country: "World", type: "cup" },
+  // International
+  { id: 1, name: "World Cup", country: "World", type: "cup" },
+  { id: 32, name: "WC Qualifiers Europe", country: "World", type: "cup" },
+  { id: 34, name: "WC Qualifiers South America", country: "World", type: "cup" },
+  { id: 33, name: "WC Qualifiers CONCACAF", country: "World", type: "cup" },
+  { id: 5, name: "Nations League", country: "World", type: "cup" },
+  { id: 4, name: "Euro Championship", country: "World", type: "cup" },
+  { id: 9, name: "Copa America", country: "World", type: "cup" },
+  { id: 10, name: "Friendlies", country: "World", type: "cup" },
 ];
 
 const now = new Date();
@@ -93,7 +106,7 @@ function mapStatus(apiStatus: string): string {
 
 // Rate limit tracker
 let apiCallCount = 0;
-const API_CALL_LIMIT = 250; // Conservative limit per run
+const API_CALL_LIMIT = 400; // Raised for expanded league coverage
 
 async function apiFetch(path: string, apiKey: string) {
   if (apiCallCount >= API_CALL_LIMIT) {
@@ -138,7 +151,7 @@ Deno.serve(async (req) => {
     // Reset call counter per request
     apiCallCount = 0;
 
-    const summary = { teams: 0, matches: 0, predictions: 0, odds: 0, logosUpdated: 0, standings: 0, teamStats: 0, h2h: 0, lineups: 0 };
+    const summary = { teams: 0, matches: 0, predictions: 0, odds: 0, logosUpdated: 0, standings: 0, teamStats: 0, h2h: 0, lineups: 0, players: 0 };
 
     // Load ALL existing teams from DB for cross-matching
     const { data: existingTeams } = await supabase.from("teams").select("id, name, api_football_id, logo_url, sportradar_id");
@@ -271,6 +284,7 @@ Deno.serve(async (req) => {
                 season: SEASON,
                 logo_url: leagueData.logo ?? null,
                 standings_data: leagueData.standings ?? [],
+                type: league.type,
                 updated_at: new Date().toISOString(),
               }, { onConflict: "api_football_id" });
               if (error) console.error("leagues upsert error:", error);
@@ -442,6 +456,33 @@ Deno.serve(async (req) => {
           }
         } catch (e) {
           console.error(`Lineups error for fixture ${f.fixture.id}:`, e);
+        }
+      }
+      // ── 9. Fetch players for this league (first page = 20 players) ──
+      if (apiCallCount < API_CALL_LIMIT && league.type === "league") {
+        try {
+          const playersData = await apiFetch(`/players?league=${league.id}&season=${SEASON}&page=1`, apiKey);
+          await delay(300);
+          for (const entry of playersData) {
+            const p = entry.player;
+            const stats = entry.statistics?.[0];
+            const teamApiId = stats?.team?.id;
+            const teamUuid = teamApiId ? (teamUuidMap.get(teamApiId) ?? teamsByApiId.get(teamApiId)?.id) : null;
+            if (!p?.id) continue;
+            const { error } = await supabase.from("players").upsert({
+              api_football_id: p.id,
+              name: p.name,
+              position: stats?.games?.position ?? p.position ?? null,
+              age: p.age ?? null,
+              nationality: p.nationality ?? null,
+              photo_url: p.photo ?? null,
+              team_id: teamUuid ?? null,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: "api_football_id" });
+            if (!error) summary.players++;
+          }
+        } catch (e) {
+          console.error(`Players error for ${league.name}:`, e);
         }
       }
     }

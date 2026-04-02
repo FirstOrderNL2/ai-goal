@@ -1,9 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { Match, Team, Prediction, Odds, MatchFeatures } from "@/lib/types";
+import type { Match, Team, Prediction, Odds, MatchFeatures, Player } from "@/lib/types";
 
 const API_FOOTBALL_LEAGUES = [
   "Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
+  "Eredivisie", "Keuken Kampioen Divisie",
+  "Champions League", "Europa League", "Conference League", "Women's Champions League",
+  "World Cup", "WC Qualifiers Europe", "WC Qualifiers South America", "WC Qualifiers CONCACAF",
+  "Nations League", "Euro Championship", "Copa America", "Friendlies",
 ];
 
 export function useUpcomingMatches(league?: string) {
@@ -114,6 +118,22 @@ export function useMatchFeatures(matchId: string | undefined) {
       return data as unknown as MatchFeatures;
     },
     enabled: !!matchId,
+  });
+}
+
+export function usePlayers(teamId: string | undefined) {
+  return useQuery({
+    queryKey: ["players", teamId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("players")
+        .select("*")
+        .eq("team_id", teamId!)
+        .order("name");
+      if (error) throw error;
+      return data as unknown as Player[];
+    },
+    enabled: !!teamId,
   });
 }
 
