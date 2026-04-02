@@ -117,7 +117,7 @@ Deno.serve(async (req) => {
     }
 
     // Use AI to extract structured match data
-    const today = new Date().toISOString().substring(0, 10);
+    const nowUtc = new Date().toISOString();
     const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -129,7 +129,7 @@ Deno.serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: `You extract football match data from web content. Today's date is ${today}. Extract ALL matches you can find — today's, tomorrow's, upcoming, and recently completed ones. For each match identify the home team, away team, date/time, competition/league name, and if available the final score. IMPORTANT: Translate all Dutch team names to English (e.g. "Brazilië" → "Brazil", "Verenigde Staten" → "USA", "Kroatië" → "Croatia"). Use the extract_matches tool.`,
+            content: `You extract football match data from web content. The current UTC time is ${nowUtc}. The scraped content comes from Dutch websites where times are displayed in CET/CEST (Europe/Amsterdam timezone, UTC+1 in winter, UTC+2 in summer). IMPORTANT: When extracting dates, be precise — do NOT use relative terms like "today" or "tomorrow". Use the actual calendar date shown on the page. If a match has already been played (date/time is before ${nowUtc}), include the score if available. Extract ALL matches — upcoming, today's, and recently completed ones. Translate all Dutch team names to English. Use the extract_matches tool.`,
           },
           {
             role: "user",
@@ -275,18 +275,35 @@ Deno.serve(async (req) => {
         const awayId = await findOrCreateTeam(m.away_team, league);
         if (!homeId || !awayId) continue;
 
-        const matchDate = m.time
-          ? `${m.date}T${m.time}:00+02:00`
-          : `${m.date}T20:00:00+02:00`;
+        // Determine CET/CEST offset: CEST (UTC+2) from last Sunday of March to last Sunday of October
+        function getCetOffset(dateStr: string): string {
+          const d = new Date(dateStr);
+          const month = d.getMonth(); // 0-indexed
+          if (month > 2 && month < 9) return "+02:00"; // Apr-Sep always CEST
+          if (month < 2 || month > 9) return "+01:00"; // Jan-Feb, Nov-Dec always CET
+          // March or October: check last Sunday
+          const lastDay = new Date(d.getFullYear(), month + 1, 0).getDate();
+          const lastSunday = lastDay - new Date(d.getFullYear(), month, lastDay).getDay();
+          if (month === 2) return d.getDate() >= lastSunday ? "+02:00" : "+01:00";
+          return d.getDate() < lastSunday ? "+02:00" : "+01:00";
+        }
 
-        // Check if match already exists (same teams, same date)
+        const cetOffset = getCetOffset(m.date);
+        const matchDate = m.time
+          ? `${m.date}T${m.time}:00${cetOffset}`
+          : `${m.date}T20:00:00${cetOffset}`;
+
+        // Check if match already exists (same teams, +/- 1 day window for dedup)
+        const matchDateObj = new Date(matchDate);
+        const dayBefore = new Date(matchDateObj.getTime() - 24 * 60 * 60 * 1000).toISOString();
+        const dayAfter = new Date(matchDateObj.getTime() + 24 * 60 * 60 * 1000).toISOString();
         const { data: existing } = await supabase
           .from("matches")
           .select("id")
           .eq("team_home_id", homeId)
           .eq("team_away_id", awayId)
-          .gte("match_date", `${m.date}T00:00:00Z`)
-          .lte("match_date", `${m.date}T23:59:59Z`)
+          .gte("match_date", dayBefore)
+          .lte("match_date", dayAfter)
           .limit(1);
 
         if (existing && existing.length > 0) {

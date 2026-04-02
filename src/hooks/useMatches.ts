@@ -5,6 +5,7 @@ import type { Match, Team, Prediction, Odds } from "@/lib/types";
 export function useUpcomingMatches(league?: string) {
   return useQuery({
     queryKey: ["matches", "upcoming", league],
+    refetchInterval: 5 * 60 * 1000,
     queryFn: async () => {
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
       let query = supabase
@@ -30,6 +31,7 @@ export function useUpcomingMatches(league?: string) {
 export function useCompletedMatches(league?: string) {
   return useQuery({
     queryKey: ["matches", "completed", league],
+    refetchInterval: 5 * 60 * 1000,
     queryFn: async () => {
       let query = supabase
         .from("matches")

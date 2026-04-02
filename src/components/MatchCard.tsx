@@ -41,7 +41,7 @@ export function MatchCard({ match }: MatchCardProps) {
               )}
             </div>
             <span className="text-xs text-muted-foreground">
-              {format(new Date(match.match_date), "MMM d, HH:mm")}
+              {new Date(match.match_date).toLocaleString("en-GB", { timeZone: "Europe/Berlin", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} CET
             </span>
           </div>
 
