@@ -166,6 +166,24 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   "as saint-etienne": "saint-etienne",
   "angers sco": "angers",
   "aj auxerre": "auxerre",
+  // Women's teams
+  "chelsea fc women": "chelsea women",
+  "arsenal wfc": "arsenal women",
+  "fc barcelona femení": "barcelona women",
+  "fc barcelona women": "barcelona women",
+  "olympique lyonnais women": "lyon women",
+  "olympique lyonnais féminin": "lyon women",
+  "vfl wolfsburg women": "wolfsburg women",
+  "vfl wolfsburg frauen": "wolfsburg women",
+  "real madrid femenino": "real madrid women",
+  "real madrid cf women": "real madrid women",
+  "bayern munich women": "bayern munich women",
+  "fc bayern münchen women": "bayern munich women",
+  "fc bayern münchen frauen": "bayern munich women",
+  "paris saint-germain women": "psg women",
+  "paris saint-germain féminin": "psg women",
+  "manchester city women": "manchester city women",
+  "manchester city wfc": "manchester city women",
 };
 
 function resolveTeamName(name: string): string {
