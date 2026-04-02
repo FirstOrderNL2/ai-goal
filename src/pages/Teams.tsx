@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { useTeams } from "@/hooks/useMatches";
 import { Card, CardContent } from "@/components/ui/card";
