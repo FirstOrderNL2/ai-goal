@@ -121,6 +121,22 @@ export function useMatchFeatures(matchId: string | undefined) {
   });
 }
 
+export function usePlayers(teamId: string | undefined) {
+  return useQuery({
+    queryKey: ["players", teamId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("players")
+        .select("*")
+        .eq("team_id", teamId!)
+        .order("name");
+      if (error) throw error;
+      return data as unknown as Player[];
+    },
+    enabled: !!teamId,
+  });
+}
+
 async function enrichMatches(matches: Match[]): Promise<Match[]> {
   if (!matches.length) return [];
 
