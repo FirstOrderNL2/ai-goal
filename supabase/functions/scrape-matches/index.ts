@@ -157,6 +157,7 @@ Deno.serve(async (req) => {
                       is_womens: { type: "boolean", description: "True if this is a women's match" },
                       score_home: { type: "number", description: "Final score for home team, if match is completed" },
                       score_away: { type: "number", description: "Final score for away team, if match is completed" },
+                      round: { type: "string", description: "Round/leg info, e.g. 'QF Leg 1', 'Semi-final Leg 2', 'Matchday 30'. Include leg number for two-legged ties." },
                     },
                     required: ["home_team", "away_team", "date", "competition"],
                   },
