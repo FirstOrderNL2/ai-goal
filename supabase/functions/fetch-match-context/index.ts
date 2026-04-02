@@ -33,6 +33,48 @@ async function apiFootballFetch(path: string, apiKey: string): Promise<any[]> {
   }
 }
 
+// Extract structured injury data from API-Football response
+function extractInjuries(injuries: any[], teamApiId?: number | null): { home: any[]; away: any[] } {
+  const home: any[] = [];
+  const away: any[] = [];
+  for (const i of injuries) {
+    const entry = {
+      player: i.player?.name ?? "Unknown",
+      type: i.player?.type ?? "",
+      reason: i.player?.reason ?? "",
+      team: i.team?.name ?? "",
+      team_id: i.team?.id,
+    };
+    // If we have team API IDs, categorize properly
+    if (teamApiId && i.team?.id === teamApiId) {
+      home.push(entry);
+    } else {
+      away.push(entry);
+    }
+  }
+  return { home, away };
+}
+
+// Extract structured lineup data
+function extractLineups(lineups: any[]): { home: any[]; away: any[] } {
+  const result: { home: any[]; away: any[] } = { home: [], away: [] };
+  lineups.forEach((l: any, idx: number) => {
+    const players = (l.startXI ?? []).map((p: any) => ({
+      name: p.player?.name ?? "?",
+      number: p.player?.number ?? null,
+      pos: p.player?.pos ?? null,
+    }));
+    const entry = {
+      team: l.team?.name ?? "Unknown",
+      formation: l.formation ?? "?",
+      players,
+    };
+    if (idx === 0) result.home.push(entry);
+    else result.away.push(entry);
+  });
+  return result;
+}
+
 function formatInjuries(injuries: any[]): string {
   if (!injuries.length) return "";
   const lines = injuries.map((i: any) => {
@@ -97,7 +139,6 @@ async function scrapeWithFirecrawl(url: string, firecrawlKey: string): Promise<s
     }
     const data = await res.json();
     const md = data.data?.markdown || data.markdown || "";
-    // Truncate to avoid blowing up the prompt
     return md.slice(0, 4000);
   } catch (e) {
     console.error(`Firecrawl fetch failed for ${url}:`, e);
@@ -105,19 +146,11 @@ async function scrapeWithFirecrawl(url: string, firecrawlKey: string): Promise<s
   }
 }
 
-// Slug helpers for Transfermarkt / WhoScored URLs
-function toTransfermarktSlug(name: string): string {
-  return name.toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9-]/g, "");
-}
-
 async function scrapeFirecrawlContext(
   homeName: string, awayName: string, league: string, firecrawlKey: string
 ): Promise<string> {
   const parts: string[] = [];
 
-  // ── 1. Firecrawl search for match-specific news ──
   const searchQueries = [
     `${homeName} ${awayName} opstelling blessures`,
     `${homeName} ${awayName} lineup injuries team news`,
@@ -152,8 +185,7 @@ async function scrapeFirecrawlContext(
     }
   }
 
-  // ── 2. Injury news scraping (both teams in parallel) ──
-  // Transfermarkt blocks scraping (403), so we search injury news from open sources instead
+  // Injury news scraping
   const injuryScrapes = [homeName, awayName].map(async (teamName) => {
     try {
       const searchRes = await fetch("https://api.firecrawl.dev/v1/search", {
@@ -183,7 +215,7 @@ async function scrapeFirecrawlContext(
     }
   });
 
-  // ── 3. WhoScored match preview scraping ──
+  // WhoScored preview
   const whoScoredScrape = (async () => {
     try {
       const searchRes = await fetch("https://api.firecrawl.dev/v1/search", {
@@ -210,7 +242,6 @@ async function scrapeFirecrawlContext(
     }
   })();
 
-  // ── 4. iservoetbalvanavond.nl (Dutch matches) ──
   const todayScrape = (async () => {
     try {
       const todayPage = await scrapeWithFirecrawl("https://www.iservoetbalvanavond.nl", firecrawlKey);
@@ -220,25 +251,196 @@ async function scrapeFirecrawlContext(
     } catch (_) {}
   })();
 
-  // Run injury news + WhoScored + today scrapes in parallel
   await Promise.all([...injuryScrapes, whoScoredScrape, todayScrape]);
 
   return parts.length > 0 ? `LIVE WEB SCRAPED DATA:\n\n${parts.join("\n\n")}` : "";
 }
 
-// ── Cache context to match_context table ──
+// ── Use AI tool calling to extract structured fields from raw context ──
+async function extractStructuredContext(
+  rawContext: string, homeName: string, awayName: string, lovableApiKey: string
+): Promise<{
+  injuries_home: any[];
+  injuries_away: any[];
+  lineup_home: any[];
+  lineup_away: any[];
+  suspensions: any[];
+  weather: string | null;
+  news_items: any[];
+}> {
+  const defaultResult = {
+    injuries_home: [], injuries_away: [], lineup_home: [], lineup_away: [],
+    suspensions: [], weather: null, news_items: [],
+  };
+
+  if (!rawContext || rawContext.length < 50) return defaultResult;
+
+  try {
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${lovableApiKey}`,
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          {
+            role: "system",
+            content: `You extract structured match data from raw text. Extract ONLY what is explicitly mentioned. Do not invent data. Call the extract_match_data tool.`,
+          },
+          {
+            role: "user",
+            content: `Extract structured data for ${homeName} vs ${awayName} from this context:\n\n${rawContext.slice(0, 8000)}`,
+          },
+        ],
+        tools: [{
+          type: "function",
+          function: {
+            name: "extract_match_data",
+            description: "Extract structured match context data",
+            parameters: {
+              type: "object",
+              properties: {
+                injuries_home: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      player: { type: "string" },
+                      reason: { type: "string" },
+                      expected_return: { type: "string" },
+                    },
+                    required: ["player", "reason"],
+                  },
+                  description: `Injured players for ${homeName}`,
+                },
+                injuries_away: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      player: { type: "string" },
+                      reason: { type: "string" },
+                      expected_return: { type: "string" },
+                    },
+                    required: ["player", "reason"],
+                  },
+                  description: `Injured players for ${awayName}`,
+                },
+                lineup_home: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      player: { type: "string" },
+                      position: { type: "string" },
+                    },
+                    required: ["player"],
+                  },
+                  description: `Expected/confirmed starting lineup for ${homeName}`,
+                },
+                lineup_away: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      player: { type: "string" },
+                      position: { type: "string" },
+                    },
+                    required: ["player"],
+                  },
+                  description: `Expected/confirmed starting lineup for ${awayName}`,
+                },
+                suspensions: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      player: { type: "string" },
+                      team: { type: "string" },
+                      reason: { type: "string" },
+                    },
+                    required: ["player", "team"],
+                  },
+                  description: "Suspended players for either team",
+                },
+                weather: { type: "string", description: "Weather conditions if mentioned (e.g. 'Rain, 12°C')" },
+                news_items: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      headline: { type: "string" },
+                      summary: { type: "string" },
+                      source: { type: "string" },
+                    },
+                    required: ["headline"],
+                  },
+                  description: "Key news items relevant to this match",
+                },
+              },
+              required: ["injuries_home", "injuries_away", "lineup_home", "lineup_away", "suspensions", "news_items"],
+              additionalProperties: false,
+            },
+          },
+        }],
+        tool_choice: { type: "function", function: { name: "extract_match_data" } },
+        max_tokens: 2000,
+        temperature: 0.1,
+      }),
+    });
+
+    if (!res.ok) {
+      console.error(`AI extraction error: ${res.status}`);
+      return defaultResult;
+    }
+
+    const data = await res.json();
+    const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+    if (!toolCall?.function?.arguments) return defaultResult;
+
+    const extracted = JSON.parse(toolCall.function.arguments);
+    return {
+      injuries_home: extracted.injuries_home || [],
+      injuries_away: extracted.injuries_away || [],
+      lineup_home: extracted.lineup_home || [],
+      lineup_away: extracted.lineup_away || [],
+      suspensions: extracted.suspensions || [],
+      weather: extracted.weather || null,
+      news_items: extracted.news_items || [],
+    };
+  } catch (e) {
+    console.error("Structured extraction failed:", e);
+    return defaultResult;
+  }
+}
+
+// ── Cache context to match_context table with structured fields ──
 async function cacheContext(
-  supabase: any, matchId: string | undefined, contextText: string
+  supabase: any, matchId: string | undefined, contextText: string,
+  structured: {
+    injuries_home: any[]; injuries_away: any[];
+    lineup_home: any[]; lineup_away: any[];
+    suspensions: any[]; weather: string | null; news_items: any[];
+  }
 ) {
   if (!matchId) return;
   try {
     await supabase.from("match_context").upsert({
       match_id: matchId,
       h2h_summary: contextText.slice(0, 10000),
+      injuries_home: structured.injuries_home,
+      injuries_away: structured.injuries_away,
+      lineup_home: structured.lineup_home,
+      lineup_away: structured.lineup_away,
+      suspensions: structured.suspensions,
+      weather: structured.weather,
+      news_items: structured.news_items,
       scraped_at: new Date().toISOString(),
     }, { onConflict: "match_id" });
-  } catch (_) {
-    // Non-critical
+  } catch (e) {
+    console.error("Cache context error:", e);
   }
 }
 
@@ -275,8 +477,11 @@ Deno.serve(async (req) => {
 
       if (cached?.scraped_at) {
         const age = Date.now() - new Date(cached.scraped_at).getTime();
-        if (age < 6 * 60 * 60 * 1000 && cached.h2h_summary) {
-          console.log("Returning cached match context");
+        // Return cache if <6h AND has structured data populated
+        const hasStructured = (cached.injuries_home?.length > 0 || cached.injuries_away?.length > 0 ||
+          cached.lineup_home?.length > 0 || cached.news_items?.length > 0);
+        if (age < 6 * 60 * 60 * 1000 && cached.h2h_summary && hasStructured) {
+          console.log("Returning cached match context (with structured data)");
           return new Response(JSON.stringify({ context: cached.h2h_summary }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
@@ -286,6 +491,10 @@ Deno.serve(async (req) => {
 
     // ── Step 1: Fetch structured data from API-Football ──
     let structuredContext = "";
+    let apiInjuriesHome: any[] = [];
+    let apiInjuriesAway: any[] = [];
+    let apiLineupsHome: any[] = [];
+    let apiLineupsAway: any[] = [];
 
     if (apiKey) {
       const fetches: Promise<any[]>[] = [];
@@ -323,9 +532,16 @@ Deno.serve(async (req) => {
           }
           const s = formatInjuries(filtered);
           if (s) parts.push(s);
+          // Extract structured injuries
+          const extracted = extractInjuries(filtered, home_team_api_id);
+          apiInjuriesHome = extracted.home;
+          apiInjuriesAway = extracted.away;
         } else if (label === "lineups") {
           const s = formatLineups(data);
           if (s) parts.push(s);
+          const extracted = extractLineups(data);
+          apiLineupsHome = extracted.home;
+          apiLineupsAway = extracted.away;
         } else if (label === "predictions") {
           const s = formatPredictions(data);
           if (s) parts.push(s);
@@ -402,9 +618,19 @@ Format as plain text paragraphs, not markdown.`;
 
     const combinedContext = [structuredContext, firecrawlContext, webContext].filter(Boolean).join("\n\n---\n\n");
 
-    // Cache the result
+    // ── Step 4: Extract structured fields from all context using AI tool calling ──
+    const allContextForExtraction = [structuredContext, firecrawlContext, webContext].filter(Boolean).join("\n\n");
+    const structuredFields = await extractStructuredContext(allContextForExtraction, home_team, away_team, lovableApiKey);
+
+    // Merge API-Football structured data with AI-extracted data (API data takes priority)
+    if (apiInjuriesHome.length > 0) structuredFields.injuries_home = apiInjuriesHome;
+    if (apiInjuriesAway.length > 0) structuredFields.injuries_away = apiInjuriesAway;
+    if (apiLineupsHome.length > 0) structuredFields.lineup_home = apiLineupsHome;
+    if (apiLineupsAway.length > 0) structuredFields.lineup_away = apiLineupsAway;
+
+    // Cache the result with structured fields
     if (supabase) {
-      await cacheContext(supabase, match_id, combinedContext);
+      await cacheContext(supabase, match_id, combinedContext, structuredFields);
     }
 
     return new Response(JSON.stringify({ context: combinedContext }), {

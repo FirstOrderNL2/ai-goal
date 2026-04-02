@@ -86,6 +86,57 @@ Be specific and factual. Format as plain text paragraphs.`;
   }
 }
 
+// ── Brier score calculation ──
+function computeBrierScore(
+  prediction: any,
+  actualGoalsHome: number,
+  actualGoalsAway: number
+): { brier_1x2: number; brier_ou: number; brier_btts: number; exact_score_hit: boolean; outcome_hit: boolean } {
+  // Determine actual outcomes
+  const homeWon = actualGoalsHome > actualGoalsAway;
+  const drawn = actualGoalsHome === actualGoalsAway;
+  const awayWon = actualGoalsHome < actualGoalsAway;
+  const totalGoals = actualGoalsHome + actualGoalsAway;
+  const actualOver = totalGoals > 2.5;
+  const actualBtts = actualGoalsHome > 0 && actualGoalsAway > 0;
+
+  // 1X2 Brier score (lower is better, 0 = perfect, 2 = worst)
+  const hw = Number(prediction.home_win) || 0;
+  const dr = Number(prediction.draw) || 0;
+  const aw = Number(prediction.away_win) || 0;
+  const brier_1x2 = Math.round((
+    Math.pow(hw - (homeWon ? 1 : 0), 2) +
+    Math.pow(dr - (drawn ? 1 : 0), 2) +
+    Math.pow(aw - (awayWon ? 1 : 0), 2)
+  ) * 1000) / 1000;
+
+  // Over/Under Brier score
+  const predOver = prediction.over_under_25 === "over" ? 1 : 0;
+  const brier_ou = Math.round(Math.pow(predOver - (actualOver ? 1 : 0), 2) * 1000) / 1000;
+
+  // BTTS Brier score
+  const predBtts = prediction.btts === "yes" ? 1 : 0;
+  const brier_btts = Math.round(Math.pow(predBtts - (actualBtts ? 1 : 0), 2) * 1000) / 1000;
+
+  // Exact score hit
+  const exact_score_hit = (
+    prediction.predicted_score_home === actualGoalsHome &&
+    prediction.predicted_score_away === actualGoalsAway
+  );
+
+  // Outcome hit (correct 1X2)
+  const predictedHomeWin = hw > dr && hw > aw;
+  const predictedDraw = dr >= hw && dr >= aw;
+  const predictedAwayWin = aw > hw && aw > dr;
+  const outcome_hit = (
+    (predictedHomeWin && homeWon) ||
+    (predictedDraw && drawn) ||
+    (predictedAwayWin && awayWon)
+  );
+
+  return { brier_1x2, brier_ou, brier_btts, exact_score_hit, outcome_hit };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -132,6 +183,12 @@ Deno.serve(async (req) => {
     const homeName = match.home_team?.name ?? "Home";
     const awayName = match.away_team?.name ?? "Away";
 
+    // ── Compute mathematical accuracy (Brier scores) ──
+    let brierScores: any = null;
+    if (prediction && match.goals_home != null && match.goals_away != null) {
+      brierScores = computeBrierScore(prediction, match.goals_home, match.goals_away);
+    }
+
     // ── Fetch structured match stats from API-Football ──
     let matchStatsBlock = "";
     const apiKey = Deno.env.get("API_FOOTBALL_KEY");
@@ -152,6 +209,17 @@ ${eventsStr ? `\nMATCH EVENTS:\n${eventsStr}` : ""}`;
     // Fetch post-match web context
     const postMatchContext = await fetchPostMatchContext(homeName, awayName, match.league, match.match_date);
 
+    // Build mathematical accuracy section
+    let brierBlock = "";
+    if (brierScores) {
+      brierBlock = `\nMATHEMATICAL ACCURACY (Brier scores — lower is better, 0 = perfect):
+1X2 Brier: ${brierScores.brier_1x2} (${brierScores.outcome_hit ? "✓ Correct outcome" : "✗ Wrong outcome"})
+Over/Under Brier: ${brierScores.brier_ou} (${prediction.over_under_25 === "over" ? "Over" : "Under"} 2.5 → actual: ${(match.goals_home + match.goals_away)} goals)
+BTTS Brier: ${brierScores.brier_btts} (${prediction.btts === "yes" ? "Yes" : "No"} → actual: ${match.goals_home > 0 && match.goals_away > 0 ? "Yes" : "No"})
+Exact Score: ${brierScores.exact_score_hit ? "✓ HIT!" : `✗ Predicted ${prediction.predicted_score_home ?? "?"}-${prediction.predicted_score_away ?? "?"}, actual ${match.goals_home}-${match.goals_away}`}
+Combined Brier: ${Math.round((brierScores.brier_1x2 + brierScores.brier_ou + brierScores.brier_btts) * 1000 / 3) / 1000}`;
+    }
+
     const prompt = `You are an expert football analyst performing a post-match review of your own prediction. Be brutally honest about what you got right and wrong.
 
 MATCH RESULT:
@@ -168,8 +236,11 @@ Home win: ${Math.round(prediction.home_win * 100)}%
 Draw: ${Math.round(prediction.draw * 100)}%
 Away win: ${Math.round(prediction.away_win * 100)}%
 Expected goals: ${prediction.expected_goals_home} - ${prediction.expected_goals_away}
+Predicted score: ${prediction.predicted_score_home ?? "?"}-${prediction.predicted_score_away ?? "?"}
 Over/Under 2.5: ${prediction.over_under_25}
+BTTS: ${prediction.btts}
 Model confidence: ${Math.round(prediction.model_confidence * 100)}%` : ""}
+${brierBlock}
 
 ${odds ? `ODDS: Home ${odds.home_win_odds}, Draw ${odds.draw_odds}, Away ${odds.away_win_odds}` : ""}
 ${matchStatsBlock}
@@ -177,7 +248,9 @@ ${postMatchContext ? `\nPOST-MATCH REPORTS FROM THE WEB:\n${postMatchContext}` :
 
 INSTRUCTIONS:
 1. Compare your prediction against the actual result
-2. Give yourself an accuracy score from 0-100 (be honest — 0 = completely wrong, 100 = perfect prediction)
+2. Give yourself an accuracy score from 0-100 based on BOTH the mathematical Brier scores AND qualitative analysis
+   - Use the Brier scores as your starting point (lower Brier = higher accuracy)
+   - A combined Brier of 0.0-0.3 = excellent (80-100), 0.3-0.6 = good (60-80), 0.6-1.0 = poor (30-60), >1.0 = very poor (0-30)
 3. Explain what you got right
 4. Explain what you got wrong and why
 5. Identify factors you underestimated or missed
@@ -237,12 +310,26 @@ Then your detailed review in flowing paragraphs (3-4 paragraphs). No markdown he
       review = lines.slice(1).join("\n").trim();
     }
 
+    // If we have Brier scores, constrain the AI score to be within range of mathematical reality
+    if (brierScores) {
+      const combinedBrier = (brierScores.brier_1x2 + brierScores.brier_ou + brierScores.brier_btts) / 3;
+      // Map Brier to score: 0 = 100, 0.5 = 50, 1.0 = 0
+      const mathScore = Math.max(0, Math.min(100, Math.round(100 - (combinedBrier * 100))));
+      // Blend: 60% math, 40% AI self-assessment
+      accuracyScore = Math.round(mathScore * 0.6 + accuracyScore * 0.4);
+    }
+
     await supabase
       .from("matches")
       .update({ ai_post_match_review: review, ai_accuracy_score: accuracyScore })
       .eq("id", match_id);
 
-    return new Response(JSON.stringify({ success: true, review, accuracy_score: accuracyScore }), {
+    return new Response(JSON.stringify({
+      success: true,
+      review,
+      accuracy_score: accuracyScore,
+      brier_scores: brierScores,
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {

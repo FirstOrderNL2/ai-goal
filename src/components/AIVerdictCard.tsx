@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Trophy, Target, BarChart3, Zap } from "lucide-react";
+import { Trophy, Target, BarChart3, Zap, ShieldCheck, TrendingUp } from "lucide-react";
 import type { Prediction } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -8,9 +8,10 @@ interface AIVerdictCardProps {
   prediction: Prediction;
   homeTeamName: string;
   awayTeamName: string;
+  odds?: { home_win_odds: number; draw_odds: number; away_win_odds: number } | null;
 }
 
-export function AIVerdictCard({ prediction, homeTeamName, awayTeamName }: AIVerdictCardProps) {
+export function AIVerdictCard({ prediction, homeTeamName, awayTeamName, odds }: AIVerdictCardProps) {
   const hw = Number(prediction.home_win);
   const dr = Number(prediction.draw);
   const aw = Number(prediction.away_win);
@@ -31,6 +32,29 @@ export function AIVerdictCard({ prediction, homeTeamName, awayTeamName }: AIVerd
     winnerColor = "text-yellow-400";
   }
 
+  // Market comparison
+  let marketComparison: { label: string; delta: number; side: string } | null = null;
+  if (odds) {
+    const impliedH = 1 / odds.home_win_odds;
+    const impliedD = 1 / odds.draw_odds;
+    const impliedA = 1 / odds.away_win_odds;
+    const total = impliedH + impliedD + impliedA;
+    const marketHw = impliedH / total;
+    const marketDr = impliedD / total;
+    const marketAw = impliedA / total;
+
+    // Find biggest deviation
+    const deltas = [
+      { label: `${homeTeamName} win`, delta: hw - marketHw, side: "home" },
+      { label: "Draw", delta: dr - marketDr, side: "draw" },
+      { label: `${awayTeamName} win`, delta: aw - marketAw, side: "away" },
+    ];
+    const biggest = deltas.reduce((a, b) => Math.abs(a.delta) > Math.abs(b.delta) ? a : b);
+    if (Math.abs(biggest.delta) > 0.05) {
+      marketComparison = biggest;
+    }
+  }
+
   // Parse reasoning sections from ai_reasoning
   const reasoning = prediction.ai_reasoning || "";
   const sections = parseReasoningSections(reasoning);
@@ -42,6 +66,7 @@ export function AIVerdictCard({ prediction, homeTeamName, awayTeamName }: AIVerd
           <Trophy className="h-4 w-4 text-primary" />
           AI Verdict
           <Badge variant="outline" className="ml-auto text-xs">
+            <ShieldCheck className="h-3 w-3 mr-1" />
             {confidence}% confident
           </Badge>
         </CardTitle>
@@ -80,6 +105,21 @@ export function AIVerdictCard({ prediction, homeTeamName, awayTeamName }: AIVerd
             </Badge>
           </div>
         </div>
+
+        {/* Market comparison */}
+        {marketComparison && (
+          <div className="flex items-center gap-2 rounded-lg bg-muted/30 border border-border/30 p-2.5">
+            <TrendingUp className="h-4 w-4 text-primary shrink-0" />
+            <p className="text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground">Market insight:</span>{" "}
+              AI rates {marketComparison.label} at{" "}
+              <span className={marketComparison.delta > 0 ? "text-emerald-400 font-semibold" : "text-red-400 font-semibold"}>
+                {marketComparison.delta > 0 ? "+" : ""}{Math.round(marketComparison.delta * 100)}%
+              </span>{" "}
+              vs odds — {marketComparison.delta > 0 ? "potential value" : "market disagrees"}
+            </p>
+          </div>
+        )}
 
         {/* Reasoning sections */}
         {sections.length > 0 && (

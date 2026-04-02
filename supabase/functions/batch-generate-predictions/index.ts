@@ -34,6 +34,58 @@ async function fetchMatchContextForBatch(
   }
 }
 
+// ── Poisson helpers (same as main engine) ──
+function poissonPMF(lambda: number, k: number): number {
+  let result = Math.exp(-lambda);
+  for (let i = 1; i <= k; i++) {
+    result *= lambda / i;
+  }
+  return result;
+}
+
+function computeStatisticalAnchors(
+  homeStats: { avgScored: string; avgConceded: string } | null,
+  awayStats: { avgScored: string; avgConceded: string } | null,
+  odds: any | null
+) {
+  const result: any = {};
+  if (homeStats && awayStats) {
+    const leagueAvg = 1.35;
+    const hAtk = parseFloat(homeStats.avgScored) / leagueAvg;
+    const aDefW = parseFloat(awayStats.avgConceded) / leagueAvg;
+    const aAtk = parseFloat(awayStats.avgScored) / leagueAvg;
+    const hDefW = parseFloat(homeStats.avgConceded) / leagueAvg;
+
+    result.poisson_xg_home = Math.round(hAtk * aDefW * leagueAvg * 100) / 100;
+    result.poisson_xg_away = Math.round(aAtk * hDefW * leagueAvg * 100) / 100;
+
+    let hw = 0, dr = 0, aw = 0, o25 = 0;
+    for (let h = 0; h <= 8; h++) {
+      for (let a = 0; a <= 8; a++) {
+        const p = poissonPMF(result.poisson_xg_home, h) * poissonPMF(result.poisson_xg_away, a);
+        if (h > a) hw += p; else if (h === a) dr += p; else aw += p;
+        if (h + a > 2) o25 += p;
+      }
+    }
+    result.poisson_home_win = Math.round(hw * 1000) / 1000;
+    result.poisson_draw = Math.round(dr * 1000) / 1000;
+    result.poisson_away_win = Math.round(aw * 1000) / 1000;
+    result.poisson_over_25 = Math.round(o25 * 1000) / 1000;
+
+    const hScore = parseFloat(homeStats.avgScored);
+    const aScore = parseFloat(awayStats.avgScored);
+    result.poisson_btts = Math.round((1 - poissonPMF(hScore, 0)) * (1 - poissonPMF(aScore, 0)) * 1000) / 1000;
+  }
+  if (odds) {
+    const h = 1 / odds.home_win_odds, d = 1 / odds.draw_odds, a = 1 / odds.away_win_odds;
+    const t = h + d + a;
+    result.implied_home_win = Math.round((h / t) * 1000) / 1000;
+    result.implied_draw = Math.round((d / t) * 1000) / 1000;
+    result.implied_away_win = Math.round((a / t) * 1000) / 1000;
+  }
+  return result;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -53,9 +105,6 @@ Deno.serve(async (req) => {
 
     if (mode === "review") {
       return await generateReviews(supabase, supabaseUrl, serviceKey, lovableApiKey, limit);
-    }
-    if (mode === "backfill_xg") {
-      return await backfillXg(supabase, lovableApiKey, limit);
     }
 
     // Get upcoming matches without predictions
@@ -99,18 +148,41 @@ Deno.serve(async (req) => {
       .order("match_date", { ascending: false })
       .limit(500);
 
-    // Build form lookup
+    // Get odds for all matches
+    const { data: allOdds } = await supabase
+      .from("odds")
+      .select("match_id, home_win_odds, draw_odds, away_win_odds")
+      .in("match_id", needsPrediction.map((m: any) => m.id));
+    const oddsMap = new Map((allOdds || []).map((o: any) => [o.match_id, o]));
+
+    // Get past reviews for learning
+    const { data: pastReviews } = await supabase
+      .from("matches")
+      .select("ai_post_match_review, ai_accuracy_score, home_team:teams!matches_team_home_id_fkey(name), away_team:teams!matches_team_away_id_fkey(name)")
+      .not("ai_post_match_review", "is", null)
+      .eq("status", "completed")
+      .order("match_date", { ascending: false })
+      .limit(5);
+
+    let learningBlock = "";
+    if (pastReviews && pastReviews.length > 0) {
+      const avgScore = pastReviews.reduce((s: number, r: any) => s + (Number(r.ai_accuracy_score) || 0), 0) / pastReviews.length;
+      learningBlock = `\nLEARNING FROM PAST PREDICTIONS (avg accuracy: ${Math.round(avgScore)}/100):
+${pastReviews.slice(0, 3).map((r: any) => `- ${(r as any).home_team?.name} vs ${(r as any).away_team?.name} (${r.ai_accuracy_score}/100): ${r.ai_post_match_review?.slice(0, 200)}...`).join("\n")}
+Apply the lessons above.`;
+    }
+
+    // Build form + stats lookup
     const formMap = new Map<string, string[]>();
     const homeFormMap = new Map<string, string[]>();
     const awayFormMap = new Map<string, string[]>();
-    const statsMap = new Map<string, { avgScored: string; avgConceded: string; cleanSheets: number; played: number }>();
+    const statsMap = new Map<string, { avgScored: string; avgConceded: string; cleanSheets: number; played: number; bttsRate: number }>();
 
     for (const tid of teamIds) {
       const teamMatches = (recentMatches || [])
         .filter((m: any) => m.team_home_id === tid || m.team_away_id === tid)
         .slice(0, 10);
 
-      // Overall form (last 5)
       const form = teamMatches.slice(0, 5).map((m: any) => {
         const isHome = m.team_home_id === tid;
         const gf = isHome ? m.goals_home : m.goals_away;
@@ -119,22 +191,19 @@ Deno.serve(async (req) => {
       });
       formMap.set(tid, form);
 
-      // Home-only form
       const homeMatches = teamMatches.filter((m: any) => m.team_home_id === tid).slice(0, 5);
       homeFormMap.set(tid, homeMatches.map((m: any) => {
         const r = (m.goals_home ?? 0) > (m.goals_away ?? 0) ? "W" : (m.goals_home ?? 0) === (m.goals_away ?? 0) ? "D" : "L";
         return `${r} (${m.goals_home}-${m.goals_away})`;
       }));
 
-      // Away-only form
       const awayMatches = teamMatches.filter((m: any) => m.team_away_id === tid).slice(0, 5);
       awayFormMap.set(tid, awayMatches.map((m: any) => {
         const r = (m.goals_away ?? 0) > (m.goals_home ?? 0) ? "W" : (m.goals_away ?? 0) === (m.goals_home ?? 0) ? "D" : "L";
         return `${r} (${m.goals_away}-${m.goals_home})`;
       }));
 
-      // Stats
-      let scored = 0, conceded = 0, cleanSheets = 0;
+      let scored = 0, conceded = 0, cleanSheets = 0, bttsCount = 0;
       for (const m of teamMatches) {
         const isHome = m.team_home_id === tid;
         const gf = isHome ? (m.goals_home ?? 0) : (m.goals_away ?? 0);
@@ -142,6 +211,7 @@ Deno.serve(async (req) => {
         scored += gf;
         conceded += ga;
         if (ga === 0) cleanSheets++;
+        if (gf > 0 && ga > 0) bttsCount++;
       }
       if (teamMatches.length > 0) {
         statsMap.set(tid, {
@@ -149,11 +219,11 @@ Deno.serve(async (req) => {
           avgScored: (scored / teamMatches.length).toFixed(1),
           avgConceded: (conceded / teamMatches.length).toFixed(1),
           cleanSheets,
+          bttsRate: Math.round((bttsCount / teamMatches.length) * 100),
         });
       }
     }
 
-    // Build H2H lookup
     function getH2H(homeId: string, awayId: string): string {
       const h2h = (recentMatches || []).filter(
         (m: any) =>
@@ -177,6 +247,10 @@ Deno.serve(async (req) => {
       const homeStats = statsMap.get(match.team_home_id);
       const awayStats = statsMap.get(match.team_away_id);
       const h2h = getH2H(match.team_home_id, match.team_away_id);
+      const matchOdds = oddsMap.get(match.id);
+
+      // Compute statistical anchors
+      const anchors = computeStatisticalAnchors(homeStats || null, awayStats || null, matchOdds || null);
 
       // Fetch live context (cached after first call)
       let liveContext = "";
@@ -185,25 +259,46 @@ Deno.serve(async (req) => {
           homeName, awayName, match.league, match.match_date, match.id,
           supabaseUrl, serviceKey
         );
-      } catch (_) {
-        // Non-critical
+      } catch (_) {}
+
+      let anchorsBlock = "";
+      if (anchors.poisson_xg_home != null) {
+        anchorsBlock += `\nSTATISTICAL MODEL (Poisson):
+Poisson xG: ${homeName} ${anchors.poisson_xg_home} - ${anchors.poisson_xg_away} ${awayName}
+Poisson probabilities: Home ${Math.round(anchors.poisson_home_win * 100)}%, Draw ${Math.round(anchors.poisson_draw * 100)}%, Away ${Math.round(anchors.poisson_away_win * 100)}%
+Poisson Over 2.5: ${Math.round(anchors.poisson_over_25 * 100)}%, Poisson BTTS: ${Math.round(anchors.poisson_btts * 100)}%`;
+      }
+      if (anchors.implied_home_win != null) {
+        anchorsBlock += `\nMARKET IMPLIED: Home ${Math.round(anchors.implied_home_win * 100)}%, Draw ${Math.round(anchors.implied_draw * 100)}%, Away ${Math.round(anchors.implied_away_win * 100)}%`;
       }
 
-      const prompt = `Analyze this football match and provide a prediction.
+      const systemPrompt = `You are a world-class football analyst. Make ACCURATE, FACT-BASED predictions.
+
+RULES:
+1. Use the STATISTICAL MODEL (Poisson) as your mathematical anchor — deviate only with clear justification
+2. Compare against MARKET IMPLIED PROBABILITIES — note disagreements
+3. Every claim must reference a specific stat from the data
+4. Predicted score must be consistent with BTTS and Over/Under verdicts
+5. Be honest about uncertainty when data is sparse
+${learningBlock}
+
+Call predict_match with your structured analysis.`;
+
+      const prompt = `Analyze and predict:
 
 Match: ${homeName} vs ${awayName}
 League: ${match.league}
 Date: ${match.match_date}
+${matchOdds ? `Odds: Home ${matchOdds.home_win_odds}, Draw ${matchOdds.draw_odds}, Away ${matchOdds.away_win_odds}` : ""}
+${anchorsBlock}
 ${homeName} overall form (last 5): ${homeForm.join(", ") || "Unknown"}
 ${awayName} overall form (last 5): ${awayForm.join(", ") || "Unknown"}
 ${homeHome.length ? `${homeName} HOME form: ${homeHome.join(", ")}` : ""}
 ${awayAway.length ? `${awayName} AWAY form: ${awayAway.join(", ")}` : ""}
 ${h2h ? `Head-to-head recent: ${h2h}` : "No H2H data"}
-${homeStats ? `${homeName} stats (last ${homeStats.played}): avg scored ${homeStats.avgScored}, avg conceded ${homeStats.avgConceded}, clean sheets ${homeStats.cleanSheets}` : ""}
-${awayStats ? `${awayName} stats (last ${awayStats.played}): avg scored ${awayStats.avgScored}, avg conceded ${awayStats.avgConceded}, clean sheets ${awayStats.cleanSheets}` : ""}
-${liveContext ? `\nLIVE CONTEXT (injuries, lineups, news):\n${liveContext.slice(0, 3000)}` : ""}
-
-Call the predict_match function with your analysis.`;
+${homeStats ? `${homeName} stats (last ${homeStats.played}): avg scored ${homeStats.avgScored}, avg conceded ${homeStats.avgConceded}, clean sheets ${homeStats.cleanSheets}, BTTS rate ${homeStats.bttsRate}%` : ""}
+${awayStats ? `${awayName} stats (last ${awayStats.played}): avg scored ${awayStats.avgScored}, avg conceded ${awayStats.avgConceded}, clean sheets ${awayStats.cleanSheets}, BTTS rate ${awayStats.bttsRate}%` : ""}
+${liveContext ? `\nLIVE CONTEXT:\n${liveContext.slice(0, 3000)}` : ""}`;
 
       try {
         const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -215,30 +310,40 @@ Call the predict_match function with your analysis.`;
           body: JSON.stringify({
             model: "google/gemini-2.5-pro",
             messages: [
-              { role: "system", content: "You are an expert football analyst. Use team form, home/away splits, head-to-head history, goal-scoring stats, injuries, lineups, and league context to make calibrated predictions. Be data-driven and precise." },
+              { role: "system", content: systemPrompt },
               { role: "user", content: prompt },
             ],
+            reasoning: { effort: "high" },
+            max_tokens: 3000,
             tools: [{
               type: "function",
               function: {
                 name: "predict_match",
-                description: "Submit structured match prediction",
+                description: "Submit structured match prediction with fact-based reasoning",
                 parameters: {
                   type: "object",
                   properties: {
                     home_win: { type: "number", description: "Home win probability 0-1" },
                     draw: { type: "number", description: "Draw probability 0-1" },
                     away_win: { type: "number", description: "Away win probability 0-1" },
-                    expected_goals_home: { type: "number", description: "Expected goals for home team (e.g. 1.4)" },
-                    expected_goals_away: { type: "number", description: "Expected goals for away team (e.g. 1.1)" },
+                    expected_goals_home: { type: "number", description: "Expected goals home (e.g. 1.4)" },
+                    expected_goals_away: { type: "number", description: "Expected goals away (e.g. 1.1)" },
                     predicted_score_home: { type: "integer", description: "Predicted exact goals for home team" },
                     predicted_score_away: { type: "integer", description: "Predicted exact goals for away team" },
                     over_under_25: { type: "string", enum: ["over", "under"], description: "Over or under 2.5 total goals" },
                     btts: { type: "string", enum: ["yes", "no"], description: "Both teams to score" },
-                    confidence: { type: "number", description: "Model confidence 0-1 based on data quality" },
-                    reasoning: { type: "string", description: "Brief fact-based justification for the prediction citing specific stats" },
+                    confidence: { type: "number", description: "Confidence 0-1 based on data quality" },
+                    winner_reasoning: { type: "string", description: "2-3 bullet points with specific stats for winner prediction. Reference Poisson vs market." },
+                    btts_reasoning: { type: "string", description: "1-2 bullet points with scoring/conceding rates for BTTS verdict." },
+                    over_under_reasoning: { type: "string", description: "1-2 bullet points with goal averages and Poisson probability." },
+                    key_factors: { type: "string", description: "2-3 bullet points on injuries, context, market disagreements." },
                   },
-                  required: ["home_win", "draw", "away_win", "expected_goals_home", "expected_goals_away", "predicted_score_home", "predicted_score_away", "over_under_25", "btts", "confidence", "reasoning"],
+                  required: [
+                    "home_win", "draw", "away_win", "expected_goals_home", "expected_goals_away",
+                    "predicted_score_home", "predicted_score_away", "over_under_25", "btts",
+                    "confidence", "winner_reasoning", "btts_reasoning", "over_under_reasoning", "key_factors"
+                  ],
+                  additionalProperties: false,
                 },
               },
             }],
@@ -266,11 +371,31 @@ Call the predict_match function with your analysis.`;
 
         const pred = JSON.parse(toolCall.function.arguments);
 
+        // Auto-fix consistency
+        const totalScore = (pred.predicted_score_home ?? 0) + (pred.predicted_score_away ?? 0);
+        pred.over_under_25 = totalScore > 2 ? "over" : "under";
+        pred.btts = (pred.predicted_score_home > 0 && pred.predicted_score_away > 0) ? "yes" : "no";
+
         // Normalize probabilities
         const total = (pred.home_win || 0) + (pred.draw || 0) + (pred.away_win || 0);
         const hw = total > 0 ? pred.home_win / total : 0.4;
         const dr = total > 0 ? pred.draw / total : 0.3;
         const aw = total > 0 ? pred.away_win / total : 0.3;
+
+        // Build structured reasoning
+        const reasoning = [
+          `🏆 WINNER ANALYSIS:`,
+          pred.winner_reasoning || "",
+          ``,
+          `⚽ BTTS (${(pred.btts || "no").toUpperCase()}):`,
+          pred.btts_reasoning || "",
+          ``,
+          `📊 OVER/UNDER 2.5 (${(pred.over_under_25 || "under").toUpperCase()}):`,
+          pred.over_under_reasoning || "",
+          ``,
+          `🔑 KEY FACTORS:`,
+          pred.key_factors || "",
+        ].join("\n");
 
         const { error: upsertErr } = await supabase.from("predictions").upsert({
           match_id: match.id,
@@ -284,7 +409,7 @@ Call the predict_match function with your analysis.`;
           over_under_25: pred.over_under_25 || "under",
           btts: pred.btts || "no",
           model_confidence: Math.round((pred.confidence || 0.5) * 1000) / 1000,
-          ai_reasoning: pred.reasoning || null,
+          ai_reasoning: reasoning,
         }, { onConflict: "match_id" });
 
         if (upsertErr) {
@@ -293,7 +418,7 @@ Call the predict_match function with your analysis.`;
           generated++;
         }
 
-        // Rate limit: longer delay because we're calling fetch-match-context + AI
+        // Rate limit delay
         await new Promise(r => setTimeout(r, 3000));
       } catch (e) {
         errors.push(`Error for ${homeName} vs ${awayName}: ${e.message}`);
@@ -351,99 +476,6 @@ async function generateReviews(supabase: any, supabaseUrl: string, serviceKey: s
   }
 
   return new Response(JSON.stringify({ success: true, reviewed, errors }), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
-}
-
-async function backfillXg(supabase: any, lovableApiKey: string, limit: number) {
-  const { data: preds } = await supabase
-    .from("predictions")
-    .select("id, match_id, home_win, draw, away_win")
-    .eq("expected_goals_home", 0)
-    .eq("expected_goals_away", 0)
-    .limit(limit);
-
-  if (!preds || preds.length === 0) {
-    return new Response(JSON.stringify({ success: true, message: "No predictions need xG backfill", backfilled: 0 }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  const matchIds = preds.map((p: any) => p.match_id);
-  const { data: matches } = await supabase
-    .from("matches")
-    .select("id, league, team_home_id, team_away_id, home_team:teams!matches_team_home_id_fkey(name), away_team:teams!matches_team_away_id_fkey(name)")
-    .in("id", matchIds);
-
-  const matchMap = new Map((matches || []).map((m: any) => [m.id, m]));
-
-  let backfilled = 0;
-  const errors: string[] = [];
-
-  for (const pred of preds) {
-    const match = matchMap.get(pred.match_id);
-    if (!match) continue;
-
-    const homeName = match.home_team?.name ?? "Home";
-    const awayName = match.away_team?.name ?? "Away";
-
-    try {
-      const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${lovableApiKey}` },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
-          messages: [
-            { role: "system", content: "You are a football analyst. Estimate expected goals (xG) for a match based on the teams and probabilities provided." },
-            { role: "user", content: `Match: ${homeName} vs ${awayName}, League: ${match.league}. Win probabilities: Home ${(pred.home_win * 100).toFixed(0)}%, Draw ${(pred.draw * 100).toFixed(0)}%, Away ${(pred.away_win * 100).toFixed(0)}%. Estimate realistic xG for each team. Use the set_xg tool.` },
-          ],
-          tools: [{
-            type: "function",
-            function: {
-              name: "set_xg",
-              description: "Set expected goals",
-              parameters: {
-                type: "object",
-                properties: {
-                  expected_goals_home: { type: "number", description: "Home team xG (e.g. 1.4)" },
-                  expected_goals_away: { type: "number", description: "Away team xG (e.g. 1.1)" },
-                  over_under_25: { type: "string", enum: ["over", "under"] },
-                },
-                required: ["expected_goals_home", "expected_goals_away", "over_under_25"],
-              },
-            },
-          }],
-          tool_choice: { type: "function", function: { name: "set_xg" } },
-        }),
-      });
-
-      if (!aiRes.ok) {
-        if (aiRes.status === 429) { errors.push("Rate limited, stopping"); break; }
-        await aiRes.text();
-        continue;
-      }
-
-      const aiData = await aiRes.json();
-      const tc = aiData.choices?.[0]?.message?.tool_calls?.[0];
-      if (!tc?.function?.arguments) continue;
-
-      const xg = JSON.parse(tc.function.arguments);
-      const { error: upErr } = await supabase.from("predictions").update({
-        expected_goals_home: Math.round((xg.expected_goals_home || 1.2) * 10) / 10,
-        expected_goals_away: Math.round((xg.expected_goals_away || 1.0) * 10) / 10,
-        over_under_25: xg.over_under_25 || "under",
-      }).eq("id", pred.id);
-
-      if (!upErr) backfilled++;
-      else errors.push(`Update error: ${upErr.message}`);
-
-      await new Promise(r => setTimeout(r, 1000));
-    } catch (e) {
-      errors.push(`xG error for ${homeName} vs ${awayName}: ${e.message}`);
-    }
-  }
-
-  return new Response(JSON.stringify({ success: true, backfilled, total: preds.length, errors }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
