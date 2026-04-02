@@ -9,15 +9,28 @@ const corsHeaders = {
 const API_BASE = "https://v3.football.api-sports.io";
 
 const LEAGUES = [
-  { id: 39, name: "Premier League", country: "England" },
-  { id: 140, name: "La Liga", country: "Spain" },
-  { id: 135, name: "Serie A", country: "Italy" },
-  { id: 78, name: "Bundesliga", country: "Germany" },
-  { id: 61, name: "Ligue 1", country: "France" },
-  { id: 1, name: "World Cup", country: "World" },
-  { id: 32, name: "WC Qualifiers Europe", country: "World" },
-  { id: 34, name: "WC Qualifiers South America", country: "World" },
-  { id: 10, name: "Friendlies", country: "World" },
+  // Domestic leagues
+  { id: 39, name: "Premier League", country: "England", type: "league" },
+  { id: 140, name: "La Liga", country: "Spain", type: "league" },
+  { id: 135, name: "Serie A", country: "Italy", type: "league" },
+  { id: 78, name: "Bundesliga", country: "Germany", type: "league" },
+  { id: 61, name: "Ligue 1", country: "France", type: "league" },
+  { id: 88, name: "Eredivisie", country: "Netherlands", type: "league" },
+  { id: 89, name: "Keuken Kampioen Divisie", country: "Netherlands", type: "league" },
+  // European cups
+  { id: 2, name: "Champions League", country: "World", type: "cup" },
+  { id: 3, name: "Europa League", country: "World", type: "cup" },
+  { id: 848, name: "Conference League", country: "World", type: "cup" },
+  { id: 748, name: "Women's Champions League", country: "World", type: "cup" },
+  // International
+  { id: 1, name: "World Cup", country: "World", type: "cup" },
+  { id: 32, name: "WC Qualifiers Europe", country: "World", type: "cup" },
+  { id: 34, name: "WC Qualifiers South America", country: "World", type: "cup" },
+  { id: 33, name: "WC Qualifiers CONCACAF", country: "World", type: "cup" },
+  { id: 5, name: "Nations League", country: "World", type: "cup" },
+  { id: 4, name: "Euro Championship", country: "World", type: "cup" },
+  { id: 9, name: "Copa America", country: "World", type: "cup" },
+  { id: 10, name: "Friendlies", country: "World", type: "cup" },
 ];
 
 const now = new Date();
