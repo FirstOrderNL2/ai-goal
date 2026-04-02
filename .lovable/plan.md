@@ -1,46 +1,57 @@
 
 
-# Fix Missing Scores & Stale Match Bugs
+# Fix Remaining Garbage Data & Clarify Match Status
 
-## Problems Found
+## Analysis
 
-1. **Chelsea Women vs Arsenal Women shows 0-0** — was manually patched incorrectly. The actual score was **1-0** (Chelsea won, per your screenshot). The scraped UWCL matches have no `sportradar_id` so the sync never updates them.
+### Bayern Munich Women vs Man Utd Women (71347f3b)
+This match is scheduled for **today April 2 at 16:45 UTC** (18:45 CET). It has NOT been played yet — it's ~6 hours from now. The confusion comes from the **AI insights text**, which scraped first-leg match reports (Bayern beat Man Utd 2-1 on April 1) and mistakenly interpreted them as this match having concluded. The AI even says "CRITICAL NOTE: this match has already concluded" — but that refers to the first leg. The match entry itself is correctly "upcoming."
 
-2. **41 completed matches have NULL goals** — the Sportradar sync fetches schedules which contain scores, but the `team+date` matching path (line 338-346) only links `sportradar_id` without backfilling scores. So matches that were created by the scraper and later matched by Sportradar still have no scores.
+**This is an AI reasoning bug, not a data bug.** The prediction engine confused first-leg results with the second-leg fixture.
 
-3. **Scraped matches can never get scores** — `scrape-matches` only creates upcoming matches and never re-scrapes to update scores. UWCL matches come from scraping, not Sportradar (UWCL isn't in `ALL_LEAGUES`).
+### Garbage Teams Still Present
+Two garbage teams survived the previous cleanup:
+- `SC Cambuur Copier` (f2f96f8e)
+- `SC Cambuur Joint` (81b284c3)
 
-4. **MatchCard shows `null - null` for completed matches** — when `goals_home`/`goals_away` are NULL but status is "completed", the card renders empty scores.
+Each has a duplicate match (VVV-Venlo vs SC Cambuur appears 3 times on Apr 3).
+
+### Duplicate Matches Summary
+The real VVV-Venlo vs SC Cambuur match is `5f107ea4`. The other two (`b7c47d5b` and `a0a92e14`) are garbage duplicates.
 
 ## Fix Plan
 
-### 1. Fix the team+date matching to also backfill scores
-**File: `supabase/functions/sync-sportradar-data/index.ts`**
-- In the team+date matching block (around line 338-346), when a match is found by team+date, also update `goals_home`, `goals_away`, `status`, and `sportradar_id` — not just `sportradar_id`
+### 1. Database Cleanup (migration)
+- Delete predictions for matches linked to garbage teams (SC Cambuur Copier, SC Cambuur Joint)
+- Delete those 2 garbage matches
+- Delete the 2 garbage teams
 
-### 2. Fix Chelsea Women vs Arsenal Women score
-**Database migration** — update the match `edefd315-e587-44d4-85ed-16bf595b3f4b` to the correct score: 1-0
+SQL:
+```sql
+DELETE FROM predictions WHERE match_id IN (
+  SELECT m.id FROM matches m
+  JOIN teams t ON t.id = m.team_home_id OR t.id = m.team_away_id
+  WHERE t.name IN ('SC Cambuur Copier', 'SC Cambuur Joint')
+);
+DELETE FROM matches WHERE id IN (
+  SELECT m.id FROM matches m
+  JOIN teams t ON t.id = m.team_home_id OR t.id = m.team_away_id
+  WHERE t.name IN ('SC Cambuur Copier', 'SC Cambuur Joint')
+);
+DELETE FROM teams WHERE name IN ('SC Cambuur Copier', 'SC Cambuur Joint');
+```
 
-### 3. Add UWCL to Sportradar sync
-**File: `supabase/functions/sync-sportradar-data/index.ts`**
-- Add Women's Champions League season to `ALL_LEAGUES` so future UWCL matches get `sportradar_id` and scores automatically
-- Add Women's team name aliases (e.g. "Chelsea FC Women" → "chelsea women")
+### 2. Fix misleading AI insights on Bayern match
+- Update match `71347f3b` to clear the misleading `ai_insights` that says the match already concluded (it hasn't — that was first-leg data)
+- Also regenerate or clear the prediction that has 10.8% confidence and post-match language
 
-### 4. Handle NULL scores in MatchCard
-**File: `src/components/MatchCard.tsx`**
-- When status is "completed" but goals are null, show "FT" or a dash instead of "null - null"
-
-### 5. Make scrape-matches update scores for past matches
-**File: `supabase/functions/scrape-matches/index.ts`**
-- Currently skips matches where `new Date(matchDate) < new Date()` — instead, for past matches, check if they exist in DB and update scores if the scraped data includes them
-- Update the AI extraction prompt to also extract scores from completed matches
+### 3. No code changes needed
+The garbage name filter in `sync-sportradar-data` already blocks "copier" and "joint" — these teams were created before the filter was added. The frontend 2-hour filter is working correctly. No code changes required.
 
 ## Files to Change
 
-| File | Change |
+| Target | Change |
 |---|---|
-| DB migration | Fix Chelsea Women vs Arsenal Women score to 1-0 |
-| `supabase/functions/sync-sportradar-data/index.ts` | Backfill scores in team+date match path; add UWCL season + women's team aliases |
-| `supabase/functions/scrape-matches/index.ts` | Update scores for past matches; extract scores from scraped content |
-| `src/components/MatchCard.tsx` | Handle null goals gracefully for completed matches |
+| DB migration | Delete 2 garbage teams, their matches, and predictions |
+| DB migration | Clear misleading AI insights on Bayern Women match |
 
