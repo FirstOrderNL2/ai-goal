@@ -6,11 +6,12 @@ export function useUpcomingMatches(league?: string) {
   return useQuery({
     queryKey: ["matches", "upcoming", league],
     queryFn: async () => {
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
       let query = supabase
         .from("matches")
         .select("*")
         .eq("status", "upcoming")
-        .gte("match_date", new Date().toISOString())
+        .gte("match_date", twoHoursAgo)
         .order("match_date", { ascending: true })
         .limit(20);
 
