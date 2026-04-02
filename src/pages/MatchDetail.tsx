@@ -1,19 +1,17 @@
 import { useParams, Link } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { useMatch, useMatchFeatures } from "@/hooks/useMatches";
-import { useHeadToHead } from "@/hooks/useH2H";
 import { ProbabilityBar } from "@/components/ProbabilityBar";
-import { FunFactsCard } from "@/components/FunFactsCard";
-import { MatchInsightsCard } from "@/components/MatchInsightsCard";
-import { StatsBombSection } from "@/components/StatsBombSection";
 import { AIInsightsCard } from "@/components/AIInsightsCard";
 import { AIVerdictCard } from "@/components/AIVerdictCard";
 import { MatchContextCard } from "@/components/MatchContextCard";
+import { TeamComparisonCard } from "@/components/TeamComparisonCard";
+import { H2HCard } from "@/components/H2HCard";
+import { OverUnderCard } from "@/components/OverUnderCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { format } from "date-fns";
-import { ArrowLeft, TrendingUp, Target, BarChart3, Swords, Activity } from "lucide-react";
+import { ArrowLeft, TrendingUp, Target, BarChart3 } from "lucide-react";
 
 export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
@@ -22,10 +20,6 @@ export default function MatchDetail() {
 
   const home_team = match?.home_team;
   const away_team = match?.away_team;
-  const { data: h2h, isLoading: h2hLoading } = useHeadToHead(
-    home_team?.api_football_id,
-    away_team?.api_football_id
-  );
 
   if (isLoading) {
     return (
@@ -52,6 +46,7 @@ export default function MatchDetail() {
 
   const { prediction, odds } = match;
   const isUpcoming = match.status === "upcoming";
+  const h2hResults = features?.h2h_results as any[] | null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -62,7 +57,7 @@ export default function MatchDetail() {
           Back to Dashboard
         </Link>
 
-        {/* Match Header */}
+        {/* 1. Match Header */}
         <Card className="border-border/50">
           <CardContent className="p-6 space-y-4">
             <div className="flex items-center justify-between">
@@ -112,7 +107,7 @@ export default function MatchDetail() {
           </CardContent>
         </Card>
 
-        {/* AI Verdict */}
+        {/* 2. AI Verdict */}
         {prediction && (
           <AIVerdictCard
             prediction={prediction}
@@ -122,107 +117,12 @@ export default function MatchDetail() {
           />
         )}
 
-        {/* Match Features / Statistics */}
+        {/* 3. Team Comparison */}
         {features && (
-          <Card className="border-border/50">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Activity className="h-4 w-4 text-primary" />
-                Match Statistics
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Form */}
-              {(features.home_form_last5 || features.away_form_last5) && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">{home_team?.name} Form</p>
-                    <div className="flex gap-1">
-                      {(features.home_form_last5 || "").split("").map((c, i) => (
-                        <span key={i} className={`w-6 h-6 rounded text-xs font-bold flex items-center justify-center ${
-                          c === "W" ? "bg-green-500/20 text-green-500" :
-                          c === "D" ? "bg-yellow-500/20 text-yellow-500" :
-                          "bg-red-500/20 text-red-500"
-                        }`}>{c}</span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">{away_team?.name} Form</p>
-                    <div className="flex gap-1">
-                      {(features.away_form_last5 || "").split("").map((c, i) => (
-                        <span key={i} className={`w-6 h-6 rounded text-xs font-bold flex items-center justify-center ${
-                          c === "W" ? "bg-green-500/20 text-green-500" :
-                          c === "D" ? "bg-yellow-500/20 text-yellow-500" :
-                          "bg-red-500/20 text-red-500"
-                        }`}>{c}</span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Averages */}
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div className="rounded-lg bg-muted p-3 space-y-1">
-                  <p className="text-xs text-muted-foreground font-medium">{home_team?.name}</p>
-                  <p>Avg Scored: <span className="font-bold">{Number(features.home_avg_scored).toFixed(2)}</span></p>
-                  <p>Avg Conceded: <span className="font-bold">{Number(features.home_avg_conceded).toFixed(2)}</span></p>
-                  <p>Clean Sheet: <span className="font-bold">{Math.round(Number(features.home_clean_sheet_pct) * 100)}%</span></p>
-                  <p>BTTS Rate: <span className="font-bold">{Math.round(Number(features.home_btts_pct) * 100)}%</span></p>
-                </div>
-                <div className="rounded-lg bg-muted p-3 space-y-1">
-                  <p className="text-xs text-muted-foreground font-medium">{away_team?.name}</p>
-                  <p>Avg Scored: <span className="font-bold">{Number(features.away_avg_scored).toFixed(2)}</span></p>
-                  <p>Avg Conceded: <span className="font-bold">{Number(features.away_avg_conceded).toFixed(2)}</span></p>
-                  <p>Clean Sheet: <span className="font-bold">{Math.round(Number(features.away_clean_sheet_pct) * 100)}%</span></p>
-                  <p>BTTS Rate: <span className="font-bold">{Math.round(Number(features.away_btts_pct) * 100)}%</span></p>
-                </div>
-              </div>
-
-              {/* League Positions + Poisson */}
-              <div className="grid grid-cols-3 gap-3 text-center">
-                {features.league_position_home != null && (
-                  <div className="rounded-lg bg-muted p-3">
-                    <p className="text-lg font-bold text-primary">#{features.league_position_home}</p>
-                    <p className="text-xs text-muted-foreground">{home_team?.name}</p>
-                  </div>
-                )}
-                {features.poisson_xg_home > 0 && (
-                  <div className="rounded-lg bg-muted p-3">
-                    <p className="text-lg font-bold">{Number(features.poisson_xg_home).toFixed(1)} - {Number(features.poisson_xg_away).toFixed(1)}</p>
-                    <p className="text-xs text-muted-foreground">Poisson xG</p>
-                  </div>
-                )}
-                {features.league_position_away != null && (
-                  <div className="rounded-lg bg-muted p-3">
-                    <p className="text-lg font-bold text-primary">#{features.league_position_away}</p>
-                    <p className="text-xs text-muted-foreground">{away_team?.name}</p>
-                  </div>
-                )}
-              </div>
-
-              {/* H2H from features */}
-              {features.h2h_results && Array.isArray(features.h2h_results) && features.h2h_results.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground font-medium">Recent Head-to-Head</p>
-                  {(features.h2h_results as any[]).slice(0, 5).map((h: any, i: number) => (
-                    <div key={i} className="flex items-center justify-between text-sm rounded-lg bg-muted p-2">
-                      <span className="text-xs text-muted-foreground w-20">
-                        {h.date ? format(new Date(h.date), "MMM d, yyyy") : ""}
-                      </span>
-                      <span className="font-medium truncate flex-1 text-right">{h.home}</span>
-                      <span className="font-bold tabular-nums px-3">{h.score_home} - {h.score_away}</span>
-                      <span className="font-medium truncate flex-1">{h.away}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <TeamComparisonCard features={features} homeTeam={home_team} awayTeam={away_team} />
         )}
 
-        {/* Prediction Breakdown */}
+        {/* 4. Prediction Probabilities */}
         {prediction && (
           <Card className="border-border/50">
             <CardHeader className="pb-3">
@@ -277,66 +177,28 @@ export default function MatchDetail() {
           </Card>
         )}
 
-        {/* Match Intelligence */}
+        {/* 5. Over/Under & BTTS */}
+        {prediction && (
+          <OverUnderCard prediction={prediction} features={features} />
+        )}
+
+        {/* 6. Head-to-Head */}
+        {h2hResults && h2hResults.length > 0 && (
+          <H2HCard
+            results={h2hResults}
+            homeTeamName={home_team?.name || "Home"}
+            awayTeamName={away_team?.name || "Away"}
+          />
+        )}
+
+        {/* 7. Match Intelligence */}
         <MatchContextCard
           matchId={match.id}
           homeTeamName={home_team?.name}
           awayTeamName={away_team?.name}
         />
 
-        {/* Odds */}
-        {odds && (
-          <Card className="border-border/50">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Odds</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-3 gap-4 text-center">
-                <div className="rounded-lg bg-muted p-3">
-                  <p className="text-lg font-bold">{Number(odds.home_win_odds).toFixed(2)}</p>
-                  <p className="text-xs text-muted-foreground">Home</p>
-                </div>
-                <div className="rounded-lg bg-muted p-3">
-                  <p className="text-lg font-bold">{Number(odds.draw_odds).toFixed(2)}</p>
-                  <p className="text-xs text-muted-foreground">Draw</p>
-                </div>
-                <div className="rounded-lg bg-muted p-3">
-                  <p className="text-lg font-bold">{Number(odds.away_win_odds).toFixed(2)}</p>
-                  <p className="text-xs text-muted-foreground">Away</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Head to Head (API-Football live) */}
-        {(h2h && h2h.length > 0) && (
-          <Card className="border-border/50">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Swords className="h-4 w-4 text-primary" />
-                Head to Head ({h2h.length} matches)
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {h2h.slice(0, 5).map((m) => (
-                <div key={m.fixture.id} className="flex items-center justify-between text-sm rounded-lg bg-muted p-2.5">
-                  <span className="text-xs text-muted-foreground w-20">
-                    {format(new Date(m.fixture.date), "MMM d, yyyy")}
-                  </span>
-                  <span className="font-medium truncate flex-1 text-right">{m.teams.home.name}</span>
-                  <span className="font-bold tabular-nums px-3">
-                    {m.goals.home} - {m.goals.away}
-                  </span>
-                  <span className="font-medium truncate flex-1">{m.teams.away.name}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        )}
-        {h2hLoading && <Skeleton className="h-48" />}
-
-        {/* AI Insights */}
+        {/* 8. AI Commentary */}
         <AIInsightsCard
           matchId={match.id}
           existingInsights={match.ai_insights}
@@ -345,13 +207,39 @@ export default function MatchDetail() {
           accuracyScore={match.ai_accuracy_score}
         />
 
-        <FunFactsCard sportradarEventId={match.sportradar_id} />
-        <MatchInsightsCard sportradarEventId={match.sportradar_id} />
-        <StatsBombSection
-          homeTeamName={home_team?.name}
-          awayTeamName={away_team?.name}
-          matchDate={match.match_date}
-        />
+        {/* 9. Odds + Market Edge */}
+        {odds && (
+          <Card className="border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Odds & Market Edge</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-3 gap-4 text-center">
+                {[
+                  { label: "Home", value: Number(odds.home_win_odds), aiProb: prediction ? Number(prediction.home_win) : null },
+                  { label: "Draw", value: Number(odds.draw_odds), aiProb: prediction ? Number(prediction.draw) : null },
+                  { label: "Away", value: Number(odds.away_win_odds), aiProb: prediction ? Number(prediction.away_win) : null },
+                ].map(({ label, value, aiProb }) => {
+                  const implied = 1 / value;
+                  const delta = aiProb != null ? aiProb - implied : null;
+                  const isValue = delta != null && delta > 0.05;
+                  return (
+                    <div key={label} className={`rounded-lg p-3 ${isValue ? "bg-green-500/10 border border-green-500/30" : "bg-muted"}`}>
+                      <p className="text-lg font-bold">{value.toFixed(2)}</p>
+                      <p className="text-xs text-muted-foreground">{label}</p>
+                      {delta != null && Math.abs(delta) > 0.03 && (
+                        <p className={`text-[10px] font-semibold mt-1 ${delta > 0 ? "text-green-500" : "text-red-400"}`}>
+                          {delta > 0 ? "+" : ""}{Math.round(delta * 100)}% vs AI
+                          {isValue && " 💎"}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </main>
     </div>
   );

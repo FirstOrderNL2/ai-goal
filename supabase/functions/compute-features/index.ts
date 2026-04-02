@@ -23,7 +23,6 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Get upcoming matches
     const { data: upcomingMatches, error: matchErr } = await supabase
       .from("matches")
       .select("id, team_home_id, team_away_id, league")
@@ -38,19 +37,17 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get all team IDs involved
     const teamIds = [...new Set(upcomingMatches.flatMap(m => [m.team_home_id, m.team_away_id]))];
 
-    // Get completed matches for form computation
+    // Get completed matches for form + H2H computation
     const { data: completedMatches } = await supabase
       .from("matches")
-      .select("team_home_id, team_away_id, goals_home, goals_away, match_date")
+      .select("team_home_id, team_away_id, goals_home, goals_away, match_date, league, home_team:teams!matches_team_home_id_fkey(name), away_team:teams!matches_team_away_id_fkey(name)")
       .eq("status", "completed")
       .or(teamIds.map(id => `team_home_id.eq.${id},team_away_id.eq.${id}`).join(","))
       .order("match_date", { ascending: false })
       .limit(1000);
 
-    // Get team statistics
     const { data: teamStats } = await supabase
       .from("team_statistics")
       .select("*")
@@ -59,32 +56,22 @@ Deno.serve(async (req) => {
     const statsMap = new Map<string, any>();
     teamStats?.forEach(s => statsMap.set(s.team_id, s));
 
-    // Get leagues for standings positions
     const { data: leagues } = await supabase.from("leagues").select("name, standings_data");
-
-    // Build position lookup from standings_data
-    const positionMap = new Map<string, number>(); // team_api_football_id → rank
-    // We need team api_football_id mapping
     const { data: teamsData } = await supabase.from("teams").select("id, api_football_id, name").in("id", teamIds);
-    const teamApiIdMap = new Map<string, number>(); // uuid → api_football_id
-    const teamNameMap = new Map<string, string>(); // uuid → name
-    teamsData?.forEach(t => {
-      if (t.api_football_id) teamApiIdMap.set(t.id, t.api_football_id);
-      teamNameMap.set(t.id, t.name);
-    });
+
+    const teamNameMap = new Map<string, string>();
+    teamsData?.forEach(t => teamNameMap.set(t.id, t.name));
 
     // Parse standings to get positions
-    const teamPositionMap = new Map<string, number>(); // team uuid → rank
+    const teamPositionMap = new Map<string, number>();
     leagues?.forEach(league => {
       const standings = league.standings_data as any[];
       if (!Array.isArray(standings)) return;
-      // standings is array of groups, each group is array of team standings
       for (const group of standings) {
         if (!Array.isArray(group)) continue;
         for (const entry of group) {
           const apiId = entry?.team?.id;
           if (!apiId) continue;
-          // Find uuid for this apiId
           teamsData?.forEach(t => {
             if (t.api_football_id === apiId) {
               teamPositionMap.set(t.id, entry.rank);
@@ -94,7 +81,7 @@ Deno.serve(async (req) => {
       }
     });
 
-    // Compute form for each team
+    // Compute overall form (last 5)
     function computeForm(teamId: string): string {
       const matches = (completedMatches || [])
         .filter(m => m.team_home_id === teamId || m.team_away_id === teamId)
@@ -107,7 +94,35 @@ Deno.serve(async (req) => {
       }).join("");
     }
 
-    // Compute stats from completed matches
+    // NEW: Compute home-only or away-only form
+    function computeVenueForm(teamId: string, asHome: boolean): string {
+      const matches = (completedMatches || [])
+        .filter(m => asHome ? m.team_home_id === teamId : m.team_away_id === teamId)
+        .slice(0, 5);
+      return matches.map(m => {
+        const gf = asHome ? (m.goals_home ?? 0) : (m.goals_away ?? 0);
+        const ga = asHome ? (m.goals_away ?? 0) : (m.goals_home ?? 0);
+        return gf > ga ? "W" : gf === ga ? "D" : "L";
+      }).join("");
+    }
+
+    // NEW: Compute H2H from completed matches
+    function computeH2H(homeId: string, awayId: string): any[] {
+      return (completedMatches || [])
+        .filter(m =>
+          (m.team_home_id === homeId && m.team_away_id === awayId) ||
+          (m.team_home_id === awayId && m.team_away_id === homeId)
+        )
+        .slice(0, 10)
+        .map(m => ({
+          date: m.match_date,
+          home: (m as any).home_team?.name || teamNameMap.get(m.team_home_id) || "?",
+          away: (m as any).away_team?.name || teamNameMap.get(m.team_away_id) || "?",
+          score_home: m.goals_home,
+          score_away: m.goals_away,
+        }));
+    }
+
     function computeMatchStats(teamId: string) {
       const matches = (completedMatches || [])
         .filter(m => m.team_home_id === teamId || m.team_away_id === teamId)
@@ -119,8 +134,7 @@ Deno.serve(async (req) => {
         const isHome = m.team_home_id === teamId;
         const gf = isHome ? (m.goals_home ?? 0) : (m.goals_away ?? 0);
         const ga = isHome ? (m.goals_away ?? 0) : (m.goals_home ?? 0);
-        scored += gf;
-        conceded += ga;
+        scored += gf; conceded += ga;
         if (ga === 0) cleanSheets++;
         if (gf > 0 && ga > 0) bttsCount++;
       }
@@ -145,13 +159,14 @@ Deno.serve(async (req) => {
         const homeMatchStats = computeMatchStats(match.team_home_id);
         const awayMatchStats = computeMatchStats(match.team_away_id);
 
-        // Use team_statistics if available, else computed from matches
+        // Compute H2H from DB
+        const h2hResults = computeH2H(match.team_home_id, match.team_away_id);
+
         const homeAvgScored = homeStats?.avg_goals_scored ?? homeMatchStats?.avgScored ?? 0;
         const homeAvgConceded = homeStats?.avg_goals_conceded ?? homeMatchStats?.avgConceded ?? 0;
         const awayAvgScored = awayStats?.avg_goals_scored ?? awayMatchStats?.avgScored ?? 0;
         const awayAvgConceded = awayStats?.avg_goals_conceded ?? awayMatchStats?.avgConceded ?? 0;
 
-        // Poisson xG
         const leagueAvg = 1.35;
         const hAtk = homeAvgScored > 0 ? homeAvgScored / leagueAvg : 1;
         const aDefW = awayAvgConceded > 0 ? awayAvgConceded / leagueAvg : 1;
@@ -164,13 +179,6 @@ Deno.serve(async (req) => {
         const posAway = teamPositionMap.get(match.team_away_id) ?? null;
         const posDiff = (posHome != null && posAway != null) ? posHome - posAway : null;
 
-        // Get existing h2h_results (may have been populated by sync-football-data)
-        const { data: existingFeatures } = await supabase
-          .from("match_features")
-          .select("h2h_results")
-          .eq("match_id", match.id)
-          .single();
-
         const { error } = await supabase.from("match_features").upsert({
           match_id: match.id,
           home_form_last5: homeForm || null,
@@ -179,7 +187,7 @@ Deno.serve(async (req) => {
           home_avg_conceded: Math.round(homeAvgConceded * 100) / 100,
           away_avg_scored: Math.round(awayAvgScored * 100) / 100,
           away_avg_conceded: Math.round(awayAvgConceded * 100) / 100,
-          h2h_results: existingFeatures?.h2h_results ?? null,
+          h2h_results: h2hResults.length > 0 ? h2hResults : null,
           league_position_home: posHome,
           league_position_away: posAway,
           position_diff: posDiff,
