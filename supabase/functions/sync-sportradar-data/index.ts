@@ -236,7 +236,16 @@ Deno.serve(async (req) => {
       if (t.sportradar_id) teamsBySrId.set(t.sportradar_id, t);
     });
 
+    const GARBAGE_SUFFIXES = ["outreach", "cup", "joint", "copier", "glasgow", "sint-petersburg"];
+
+    function isGarbageName(name: string): boolean {
+      const lower = name.toLowerCase();
+      return GARBAGE_SUFFIXES.some((s) => lower.includes(s));
+    }
+
     async function findOrCreateTeam(comp: any, league: string, country: string) {
+      if (isGarbageName(comp.name)) return null;
+
       if (teamsBySrId.has(comp.id)) return teamsBySrId.get(comp.id);
 
       const resolved = resolveTeamName(comp.name);
