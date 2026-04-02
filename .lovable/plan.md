@@ -1,74 +1,140 @@
 
 
-# Add Player Roster to Teams Page + Dashboard Verification
+# Enhance AI Reasoning + Deep Match Detail Page
 
-## Current State
+## Summary
 
-- **Sync completed successfully**: UCL (8), UEL (8), UECL (8), Eredivisie (54), KKD (51), Friendlies (1) now populated with API-Football data
-- **139 players synced** — distributed across teams (Liverpool has 19, most teams have 2-5)
-- **Dashboard dedup working**: `API_FOOTBALL_LEAGUES` filter correctly excludes Sportradar duplicates
-- **"World Cup 2026" (104 matches)** from scraper still showing — needs cleanup since it's not in `API_FOOTBALL_LEAGUES` list and has no `api_football_id`
-- **Teams page** is a flat grid with no detail view or player roster — clicking a team does nothing
+Upgrade the AI prediction engine to use weighted feature composition and richer API-Football data, then redesign the `/match/:id` page to present deep, actionable insights with better visual hierarchy and new UI components.
 
-## Plan
+## Part 1: AI Reasoning Enhancement
 
-### 1. Create Team Detail page with player roster
+### 1A. Upgrade `generate-ai-prediction` edge function
 
-New page at `/teams/:id` showing:
-- Team header (logo, name, country, league)
-- Player roster table/grid from `usePlayers(teamId)` hook (already exists)
-- Each player: photo, name, position, age, nationality
-- Group players by position (Goalkeeper, Defender, Midfielder, Attacker)
+The function already has strong bones (Poisson model, odds comparison, validation, tool calling). Enhancements:
 
-### 2. Make team cards clickable on Teams page
+- **Fetch team_statistics from DB** — the function currently computes stats from raw match rows but ignores the `team_statistics` table which has richer data (form string, home/away records). Query it and merge.
+- **Fetch players** — query the `players` table for both teams, include in the prompt (squad size, key positions).
+- **Weighted feature prompt** — restructure the system prompt to explicitly instruct the AI to weight features: Recent Form (35%), H2H (15%), Offensive/Defensive Stats (25%), Home/Away Advantage (15%), Market Odds (10%). Add competition-type awareness (international matches get different weights — less H2H weight, more form).
+- **Anomaly detection** — add a new tool parameter `anomalies` (array of strings) for the AI to flag when its prediction conflicts with market odds or when data is insufficient. Store in `ai_reasoning`.
+- **Enhanced data quality scoring** — factor in player data availability and team_statistics presence.
 
-Wrap each team card in a `<Link to={/teams/${team.id}>` so users can navigate to the detail page.
+### 1B. Upgrade `compute-features` edge function
 
-### 3. Add route for team detail
+- Fetch and include H2H data from completed matches (currently only preserves existing h2h_results, doesn't compute them).
+- Compute home-only and away-only form separately (currently only computes overall form).
 
-Add `/teams/:id` route in `App.tsx` pointing to the new `TeamDetail` page.
+**File**: `supabase/functions/generate-ai-prediction/index.ts`
+**File**: `supabase/functions/compute-features/index.ts`
 
-### 4. Clean up stale non-API-Football matches
+## Part 2: Match Detail Page Redesign
 
-- Add "World Cup 2026" and "Football League Championship" and "Football League Two" to cleanup — either delete scraped matches without `api_football_id` for these leagues, or add them to the dedup filter
-- Simplest: delete matches where `api_football_id IS NULL` and league names don't match any active filter (stale scraped data)
+### 2A. New `TeamComparisonCard` component
 
-### 5. Dashboard verification fix
+Side-by-side visual comparison of both teams:
+- Form visualization (colored W/D/L pills — already exists but will be extracted into its own card)
+- Goals for/against bars (horizontal bar chart using div widths)
+- League position comparison
+- Clean sheet % and BTTS % comparison bars
 
-The "World Cup 2026" league name doesn't match any `LeagueFilter` option, but these 104 matches pass through the "all" filter because "World Cup 2026" is not in `API_FOOTBALL_LEAGUES`. Fix by adding a DB cleanup migration to remove matches without `api_football_id` for leagues not actively tracked.
+### 2B. New `GoalDistributionChart` component
+
+Simple CSS-based bar chart showing goal frequency distribution for each team (0, 1, 2, 3+ goals scored/conceded per match) computed from `match_features` data.
+
+### 2C. Enhanced H2H section
+
+Replace current plain list with a richer card:
+- Summary line: "Team A leads 3-1 (1 draw) in last 5 meetings"
+- Each result with score, date, and venue indicator
+- Total goals trend
+
+### 2D. Restructured page layout
+
+Reorder sections for better flow:
+
+1. **Match Header** (existing, keep)
+2. **AI Verdict** (existing, keep — already excellent)
+3. **Team Comparison** (new — form, stats, positions side-by-side)
+4. **Prediction Probabilities** (existing, keep)
+5. **Goal Distribution** (new)
+6. **Head-to-Head** (enhanced)
+7. **Match Intelligence** (existing injuries/suspensions/weather)
+8. **AI Commentary** (existing AIInsightsCard — keep)
+9. **Odds + Market Edge** (existing, enhanced with value highlighting)
+
+Remove: FunFactsCard, MatchInsightsCard, StatsBombSection (Sportradar/StatsBomb data is deprecated in favor of API-Football).
+
+### 2E. Over/Under & BTTS visual indicators
+
+Add dedicated mini-cards showing:
+- Over/Under 2.5 probability with a gauge-style indicator
+- BTTS probability with reasoning snippet
+- These exist in AIVerdictCard but deserve more prominence
 
 ## Files to Change
 
 | File | Change |
 |---|---|
-| `src/pages/TeamDetail.tsx` | **New** — team header + player roster grouped by position |
-| `src/pages/Teams.tsx` | Make team cards clickable links to `/teams/:id` |
-| `src/App.tsx` | Add `/teams/:id` route |
-| DB migration | Delete stale scraped matches without `api_football_id` (World Cup 2026, Football League Championship, Football League Two) |
+| `supabase/functions/generate-ai-prediction/index.ts` | Add team_statistics + players queries, weighted prompt, anomaly detection |
+| `supabase/functions/compute-features/index.ts` | Compute H2H from DB, home/away-specific form |
+| `src/pages/MatchDetail.tsx` | Restructure layout, add new components, remove Sportradar sections |
+| `src/components/TeamComparisonCard.tsx` | **New** — side-by-side team stats comparison |
+| `src/components/GoalDistributionChart.tsx` | **New** — CSS bar chart for goal frequencies |
+| `src/components/H2HCard.tsx` | **New** — enhanced H2H display with summary |
+| `src/components/OverUnderCard.tsx` | **New** — dedicated O/U and BTTS visual |
 
 ## Technical Detail
 
 ```text
-TeamDetail page layout:
+AI Prompt Weight Structure:
+──────────────────────────
+FEATURE WEIGHTS (instruct AI to apply):
+├─ Recent Form (last 5):     35%  → home/away split
+├─ Offensive/Defensive:      25%  → avg goals, xG, clean sheets
+├─ H2H History:              15%  → last 5-10 meetings
+├─ Home/Away Advantage:      15%  → home-only vs away-only records
+└─ Market Odds:              10%  → implied probabilities
+
+International match override:
+├─ Recent Form:              40%
+├─ Squad Quality:            25%
+├─ H2H:                     10%
+├─ Home Advantage:           15%
+└─ Market Odds:              10%
+```
+
+```text
+Match Detail Page Layout:
 ┌─────────────────────────────┐
-│  ← Back to Teams            │
-│  [Logo] Team Name            │
-│  Country · League            │
+│  Match Header (teams/score) │
 ├─────────────────────────────┤
-│  Squad (X players)           │
-│                              │
-│  Goalkeepers                 │
-│  [photo] Name  Age  Nation   │
-│                              │
-│  Defenders                   │
-│  [photo] Name  Age  Nation   │
-│  ...                         │
-│                              │
-│  Midfielders                 │
-│  ...                         │
-│                              │
-│  Attackers                   │
-│  ...                         │
+│  AI Verdict (winner/score/  │
+│  BTTS/O-U/market edge)      │
+├──────────────┬──────────────┤
+│  Home Stats  │  Away Stats  │  ← TeamComparisonCard
+│  Form: WWDLW │  Form: LWWDL │
+│  GF: ████░░  │  GF: ███░░░  │
+│  GA: ██░░░░  │  GA: ████░░  │
+│  Pos: #3     │  Pos: #12    │
+├──────────────┴──────────────┤
+│  Prediction Probabilities   │
+├─────────────────────────────┤
+│  O/U 2.5: 62% Over  │ BTTS │  ← OverUnderCard
+├─────────────────────────────┤
+│  H2H: Arsenal leads 3-1    │  ← H2HCard
+│  2026: 2-1 │ 2025: 0-0 ... │
+├─────────────────────────────┤
+│  Match Intelligence         │
+│  (injuries/suspensions)     │
+├─────────────────────────────┤
+│  AI Commentary (reasoning)  │
+├─────────────────────────────┤
+│  Odds + Market Edge         │
 └─────────────────────────────┘
 ```
+
+## Priority
+
+1. AI reasoning upgrade (backend — immediate prediction quality improvement)
+2. New frontend components (TeamComparison, H2H, OverUnder)
+3. MatchDetail page restructure
 
