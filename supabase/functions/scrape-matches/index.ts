@@ -117,7 +117,7 @@ Deno.serve(async (req) => {
     }
 
     // Use AI to extract structured match data
-    const today = new Date().toISOString().substring(0, 10);
+    const nowUtc = new Date().toISOString();
     const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -129,7 +129,7 @@ Deno.serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: `You extract football match data from web content. Today's date is ${today}. Extract ALL matches you can find — today's, tomorrow's, upcoming, and recently completed ones. For each match identify the home team, away team, date/time, competition/league name, and if available the final score. IMPORTANT: Translate all Dutch team names to English (e.g. "Brazilië" → "Brazil", "Verenigde Staten" → "USA", "Kroatië" → "Croatia"). Use the extract_matches tool.`,
+            content: `You extract football match data from web content. The current UTC time is ${nowUtc}. The scraped content comes from Dutch websites where times are displayed in CET/CEST (Europe/Amsterdam timezone, UTC+1 in winter, UTC+2 in summer). IMPORTANT: When extracting dates, be precise — do NOT use relative terms like "today" or "tomorrow". Use the actual calendar date shown on the page. If a match has already been played (date/time is before ${nowUtc}), include the score if available. Extract ALL matches — upcoming, today's, and recently completed ones. Translate all Dutch team names to English. Use the extract_matches tool.`,
           },
           {
             role: "user",
