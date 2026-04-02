@@ -275,18 +275,35 @@ Deno.serve(async (req) => {
         const awayId = await findOrCreateTeam(m.away_team, league);
         if (!homeId || !awayId) continue;
 
-        const matchDate = m.time
-          ? `${m.date}T${m.time}:00+02:00`
-          : `${m.date}T20:00:00+02:00`;
+        // Determine CET/CEST offset: CEST (UTC+2) from last Sunday of March to last Sunday of October
+        function getCetOffset(dateStr: string): string {
+          const d = new Date(dateStr);
+          const month = d.getMonth(); // 0-indexed
+          if (month > 2 && month < 9) return "+02:00"; // Apr-Sep always CEST
+          if (month < 2 || month > 9) return "+01:00"; // Jan-Feb, Nov-Dec always CET
+          // March or October: check last Sunday
+          const lastDay = new Date(d.getFullYear(), month + 1, 0).getDate();
+          const lastSunday = lastDay - new Date(d.getFullYear(), month, lastDay).getDay();
+          if (month === 2) return d.getDate() >= lastSunday ? "+02:00" : "+01:00";
+          return d.getDate() < lastSunday ? "+02:00" : "+01:00";
+        }
 
-        // Check if match already exists (same teams, same date)
+        const cetOffset = getCetOffset(m.date);
+        const matchDate = m.time
+          ? `${m.date}T${m.time}:00${cetOffset}`
+          : `${m.date}T20:00:00${cetOffset}`;
+
+        // Check if match already exists (same teams, +/- 1 day window for dedup)
+        const matchDateObj = new Date(matchDate);
+        const dayBefore = new Date(matchDateObj.getTime() - 24 * 60 * 60 * 1000).toISOString();
+        const dayAfter = new Date(matchDateObj.getTime() + 24 * 60 * 60 * 1000).toISOString();
         const { data: existing } = await supabase
           .from("matches")
           .select("id")
           .eq("team_home_id", homeId)
           .eq("team_away_id", awayId)
-          .gte("match_date", `${m.date}T00:00:00Z`)
-          .lte("match_date", `${m.date}T23:59:59Z`)
+          .gte("match_date", dayBefore)
+          .lte("match_date", dayAfter)
           .limit(1);
 
         if (existing && existing.length > 0) {
