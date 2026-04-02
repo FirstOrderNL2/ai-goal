@@ -295,27 +295,41 @@ Deno.serve(async (req) => {
           : `${m.date}T20:00:00${cetOffset}`;
 
         // Check if match already exists (same teams, +/- 1 day window for dedup)
+        // But skip dedup if round/leg info differs (two-legged ties are NOT duplicates)
         const matchDateObj = new Date(matchDate);
         const dayBefore = new Date(matchDateObj.getTime() - 24 * 60 * 60 * 1000).toISOString();
         const dayAfter = new Date(matchDateObj.getTime() + 24 * 60 * 60 * 1000).toISOString();
         const { data: existing } = await supabase
           .from("matches")
-          .select("id")
+          .select("id, round")
           .eq("team_home_id", homeId)
           .eq("team_away_id", awayId)
           .gte("match_date", dayBefore)
           .lte("match_date", dayAfter)
-          .limit(1);
+          .limit(5);
 
-        if (existing && existing.length > 0) {
+        const extractedRound = m.round || null;
+        
+        // Find a true duplicate: same round, or both have no round info
+        const trueDuplicate = existing?.find((ex: any) => {
+          const exRound = ex.round || null;
+          // If both have round info and they differ, NOT a duplicate (e.g. Leg 1 vs Leg 2)
+          if (extractedRound && exRound && extractedRound !== exRound) return false;
+          // If one has round info and the other doesn't, treat as potential duplicate
+          // If both null or both match, it's a duplicate
+          return true;
+        });
+
+        if (trueDuplicate) {
           // If match exists and we have scores, update them
           if (m.score_home != null && m.score_away != null) {
             const { error: updateErr } = await supabase.from("matches").update({
               goals_home: m.score_home,
               goals_away: m.score_away,
               status: "completed",
-            }).eq("id", existing[0].id);
-            if (!updateErr) summary.matchesCreated++; // reusing counter for "updated"
+              round: extractedRound || trueDuplicate.round,
+            }).eq("id", trueDuplicate.id);
+            if (!updateErr) summary.matchesCreated++;
           }
           continue;
         }
@@ -329,6 +343,7 @@ Deno.serve(async (req) => {
           match_date: matchDate,
           league,
           status: m.score_home != null ? "completed" : "upcoming",
+          round: extractedRound,
         };
 
         if (m.score_home != null && m.score_away != null) {
