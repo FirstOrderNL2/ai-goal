@@ -55,11 +55,16 @@ function extractInjuries(injuries: any[], teamApiId?: number | null): { home: an
   return { home, away };
 }
 
-// Extract structured lineup data
-function extractLineups(lineups: any[]): { home: any[]; away: any[] } {
-  const result: { home: any[]; away: any[] } = { home: [], away: [] };
+// Extract structured lineup data with bench
+function extractLineups(lineups: any[]): { home: any; away: any } {
+  const result: { home: any; away: any } = { home: null, away: null };
   lineups.forEach((l: any, idx: number) => {
-    const players = (l.startXI ?? []).map((p: any) => ({
+    const starters = (l.startXI ?? []).map((p: any) => ({
+      name: p.player?.name ?? "?",
+      number: p.player?.number ?? null,
+      pos: p.player?.pos ?? null,
+    }));
+    const bench = (l.substitutes ?? []).map((p: any) => ({
       name: p.player?.name ?? "?",
       number: p.player?.number ?? null,
       pos: p.player?.pos ?? null,
@@ -67,10 +72,12 @@ function extractLineups(lineups: any[]): { home: any[]; away: any[] } {
     const entry = {
       team: l.team?.name ?? "Unknown",
       formation: l.formation ?? "?",
-      players,
+      starters,
+      bench,
+      captain: starters.find((_: any, i: number) => i === 0)?.name ?? null,
     };
-    if (idx === 0) result.home.push(entry);
-    else result.away.push(entry);
+    if (idx === 0) result.home = entry;
+    else result.away = entry;
   });
   return result;
 }
