@@ -14,6 +14,42 @@ export type Database = {
   }
   public: {
     Tables: {
+      leagues: {
+        Row: {
+          api_football_id: number
+          country: string
+          created_at: string
+          id: string
+          logo_url: string | null
+          name: string
+          season: number
+          standings_data: Json | null
+          updated_at: string
+        }
+        Insert: {
+          api_football_id: number
+          country: string
+          created_at?: string
+          id?: string
+          logo_url?: string | null
+          name: string
+          season: number
+          standings_data?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          api_football_id?: number
+          country?: string
+          created_at?: string
+          id?: string
+          logo_url?: string | null
+          name?: string
+          season?: number
+          standings_data?: Json | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       match_context: {
         Row: {
           h2h_summary: string | null
@@ -57,6 +93,83 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "match_context_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: true
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      match_features: {
+        Row: {
+          away_avg_conceded: number | null
+          away_avg_scored: number | null
+          away_btts_pct: number | null
+          away_clean_sheet_pct: number | null
+          away_form_last5: string | null
+          computed_at: string
+          created_at: string
+          h2h_results: Json | null
+          home_avg_conceded: number | null
+          home_avg_scored: number | null
+          home_btts_pct: number | null
+          home_clean_sheet_pct: number | null
+          home_form_last5: string | null
+          id: string
+          league_position_away: number | null
+          league_position_home: number | null
+          match_id: string
+          poisson_xg_away: number | null
+          poisson_xg_home: number | null
+          position_diff: number | null
+        }
+        Insert: {
+          away_avg_conceded?: number | null
+          away_avg_scored?: number | null
+          away_btts_pct?: number | null
+          away_clean_sheet_pct?: number | null
+          away_form_last5?: string | null
+          computed_at?: string
+          created_at?: string
+          h2h_results?: Json | null
+          home_avg_conceded?: number | null
+          home_avg_scored?: number | null
+          home_btts_pct?: number | null
+          home_clean_sheet_pct?: number | null
+          home_form_last5?: string | null
+          id?: string
+          league_position_away?: number | null
+          league_position_home?: number | null
+          match_id: string
+          poisson_xg_away?: number | null
+          poisson_xg_home?: number | null
+          position_diff?: number | null
+        }
+        Update: {
+          away_avg_conceded?: number | null
+          away_avg_scored?: number | null
+          away_btts_pct?: number | null
+          away_clean_sheet_pct?: number | null
+          away_form_last5?: string | null
+          computed_at?: string
+          created_at?: string
+          h2h_results?: Json | null
+          home_avg_conceded?: number | null
+          home_avg_scored?: number | null
+          home_btts_pct?: number | null
+          home_clean_sheet_pct?: number | null
+          home_form_last5?: string | null
+          id?: string
+          league_position_away?: number | null
+          league_position_home?: number | null
+          match_id?: string
+          poisson_xg_away?: number | null
+          poisson_xg_home?: number | null
+          position_diff?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_features_match_id_fkey"
             columns: ["match_id"]
             isOneToOne: true
             referencedRelation: "matches"
@@ -232,6 +345,90 @@ export type Database = {
             columns: ["match_id"]
             isOneToOne: true
             referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      team_statistics: {
+        Row: {
+          avg_goals_conceded: number
+          avg_goals_scored: number
+          away_record: Json | null
+          clean_sheets: number
+          created_at: string
+          draws: number
+          failed_to_score: number
+          form: string | null
+          goal_diff: number
+          goals_against: number
+          goals_for: number
+          home_record: Json | null
+          id: string
+          league_id: string
+          losses: number
+          matches_played: number
+          season: number
+          team_id: string
+          updated_at: string
+          wins: number
+        }
+        Insert: {
+          avg_goals_conceded?: number
+          avg_goals_scored?: number
+          away_record?: Json | null
+          clean_sheets?: number
+          created_at?: string
+          draws?: number
+          failed_to_score?: number
+          form?: string | null
+          goal_diff?: number
+          goals_against?: number
+          goals_for?: number
+          home_record?: Json | null
+          id?: string
+          league_id: string
+          losses?: number
+          matches_played?: number
+          season: number
+          team_id: string
+          updated_at?: string
+          wins?: number
+        }
+        Update: {
+          avg_goals_conceded?: number
+          avg_goals_scored?: number
+          away_record?: Json | null
+          clean_sheets?: number
+          created_at?: string
+          draws?: number
+          failed_to_score?: number
+          form?: string | null
+          goal_diff?: number
+          goals_against?: number
+          goals_for?: number
+          home_record?: Json | null
+          id?: string
+          league_id?: string
+          losses?: number
+          matches_played?: number
+          season?: number
+          team_id?: string
+          updated_at?: string
+          wins?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_statistics_league_id_fkey"
+            columns: ["league_id"]
+            isOneToOne: false
+            referencedRelation: "leagues"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "team_statistics_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
             referencedColumns: ["id"]
           },
         ]
