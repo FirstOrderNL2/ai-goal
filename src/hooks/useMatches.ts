@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { Match, Team, Prediction, Odds, MatchFeatures } from "@/lib/types";
+import type { Match, Team, Prediction, Odds, MatchFeatures, Player } from "@/lib/types";
 
 const API_FOOTBALL_LEAGUES = [
   "Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
