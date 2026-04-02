@@ -175,19 +175,21 @@ Apply the lessons above.`;
     for (const match of needsPrediction) {
       const homeName = (match as any).home_team?.name ?? "Home";
       const awayName = (match as any).away_team?.name ?? "Away";
-      const homeForm = formMap.get(match.team_home_id) || [];
-      const awayForm = formMap.get(match.team_away_id) || [];
-      const homeHome = homeFormMap.get(match.team_home_id) || [];
-      const awayAway = awayFormMap.get(match.team_away_id) || [];
-      const homeStats = statsMap.get(match.team_home_id);
-      const awayStats = statsMap.get(match.team_away_id);
-      const h2h = getH2H(match.team_home_id, match.team_away_id);
       const matchOdds = oddsMap.get(match.id);
+      const features = featuresMap.get(match.id);
 
-      // Compute statistical anchors
-      const anchors = computeStatisticalAnchors(homeStats || null, awayStats || null, matchOdds || null);
+      // Use features if available, fallback to empty
+      const homeForm = features?.home_form_last5 || "";
+      const awayForm = features?.away_form_last5 || "";
 
-      // Fetch live context (cached after first call)
+      // Compute statistical anchors from features or odds
+      const anchors = computeStatisticalAnchors(
+        features ? { avgScored: String(features.home_avg_scored), avgConceded: String(features.home_avg_conceded) } : null,
+        features ? { avgScored: String(features.away_avg_scored), avgConceded: String(features.away_avg_conceded) } : null,
+        matchOdds || null
+      );
+
+      // Fetch live context
       let liveContext = "";
       try {
         liveContext = await fetchMatchContextForBatch(
@@ -195,6 +197,12 @@ Apply the lessons above.`;
           supabaseUrl, serviceKey
         );
       } catch (_) {}
+
+      // H2H from features
+      let h2hBlock = "";
+      if (features?.h2h_results && Array.isArray(features.h2h_results) && features.h2h_results.length > 0) {
+        h2hBlock = `Head-to-head recent: ${features.h2h_results.map((h: any) => `${h.date?.slice(0, 10)}: ${h.home} ${h.score_home}-${h.score_away} ${h.away}`).join(", ")}`;
+      }
 
       let anchorsBlock = "";
       if (anchors.poisson_xg_home != null) {
@@ -226,13 +234,13 @@ League: ${match.league}
 Date: ${match.match_date}
 ${matchOdds ? `Odds: Home ${matchOdds.home_win_odds}, Draw ${matchOdds.draw_odds}, Away ${matchOdds.away_win_odds}` : ""}
 ${anchorsBlock}
-${homeName} overall form (last 5): ${homeForm.join(", ") || "Unknown"}
-${awayName} overall form (last 5): ${awayForm.join(", ") || "Unknown"}
-${homeHome.length ? `${homeName} HOME form: ${homeHome.join(", ")}` : ""}
-${awayAway.length ? `${awayName} AWAY form: ${awayAway.join(", ")}` : ""}
-${h2h ? `Head-to-head recent: ${h2h}` : "No H2H data"}
-${homeStats ? `${homeName} stats (last ${homeStats.played}): avg scored ${homeStats.avgScored}, avg conceded ${homeStats.avgConceded}, clean sheets ${homeStats.cleanSheets}, BTTS rate ${homeStats.bttsRate}%` : ""}
-${awayStats ? `${awayName} stats (last ${awayStats.played}): avg scored ${awayStats.avgScored}, avg conceded ${awayStats.avgConceded}, clean sheets ${awayStats.cleanSheets}, BTTS rate ${awayStats.bttsRate}%` : ""}
+${homeName} overall form (last 5): ${homeForm || "Unknown"}
+${awayName} overall form (last 5): ${awayForm || "Unknown"}
+${features?.league_position_home ? `${homeName} league position: #${features.league_position_home}` : ""}
+${features?.league_position_away ? `${awayName} league position: #${features.league_position_away}` : ""}
+${h2hBlock || "No H2H data"}
+${features ? `${homeName} stats: avg scored ${features.home_avg_scored}, avg conceded ${features.home_avg_conceded}, clean sheet ${Math.round(Number(features.home_clean_sheet_pct) * 100)}%, BTTS ${Math.round(Number(features.home_btts_pct) * 100)}%` : ""}
+${features ? `${awayName} stats: avg scored ${features.away_avg_scored}, avg conceded ${features.away_avg_conceded}, clean sheet ${Math.round(Number(features.away_clean_sheet_pct) * 100)}%, BTTS ${Math.round(Number(features.away_btts_pct) * 100)}%` : ""}
 ${liveContext ? `\nLIVE CONTEXT:\n${liveContext.slice(0, 3000)}` : ""}`;
 
       try {
