@@ -458,6 +458,33 @@ Deno.serve(async (req) => {
           console.error(`Lineups error for fixture ${f.fixture.id}:`, e);
         }
       }
+      // ── 9. Fetch players for this league (first page = 20 players) ──
+      if (apiCallCount < API_CALL_LIMIT && league.type === "league") {
+        try {
+          const playersData = await apiFetch(`/players?league=${league.id}&season=${SEASON}&page=1`, apiKey);
+          await delay(300);
+          for (const entry of playersData) {
+            const p = entry.player;
+            const stats = entry.statistics?.[0];
+            const teamApiId = stats?.team?.id;
+            const teamUuid = teamApiId ? (teamUuidMap.get(teamApiId) ?? teamsByApiId.get(teamApiId)?.id) : null;
+            if (!p?.id) continue;
+            const { error } = await supabase.from("players").upsert({
+              api_football_id: p.id,
+              name: p.name,
+              position: stats?.games?.position ?? p.position ?? null,
+              age: p.age ?? null,
+              nationality: p.nationality ?? null,
+              photo_url: p.photo ?? null,
+              team_id: teamUuid ?? null,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: "api_football_id" });
+            if (!error) summary.players++;
+          }
+        } catch (e) {
+          console.error(`Players error for ${league.name}:`, e);
+        }
+      }
     }
 
     return new Response(JSON.stringify({ success: true, summary, apiCalls: apiCallCount }), {

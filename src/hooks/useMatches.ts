@@ -4,6 +4,10 @@ import type { Match, Team, Prediction, Odds, MatchFeatures } from "@/lib/types";
 
 const API_FOOTBALL_LEAGUES = [
   "Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
+  "Eredivisie", "Keuken Kampioen Divisie",
+  "Champions League", "Europa League", "Conference League", "Women's Champions League",
+  "World Cup", "WC Qualifiers Europe", "WC Qualifiers South America", "WC Qualifiers CONCACAF",
+  "Nations League", "Euro Championship", "Copa America", "Friendlies",
 ];
 
 export function useUpcomingMatches(league?: string) {
