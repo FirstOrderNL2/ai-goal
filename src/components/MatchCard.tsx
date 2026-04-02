@@ -58,10 +58,12 @@ export function MatchCard({ match }: MatchCardProps) {
             <div className="flex items-center gap-2 shrink-0">
               {isUpcoming ? (
                 <span className="text-xs font-bold text-primary px-2 py-0.5 rounded bg-primary/10">VS</span>
-              ) : (
+              ) : match.goals_home != null && match.goals_away != null ? (
                 <span className="text-lg font-bold tabular-nums">
                   {match.goals_home} - {match.goals_away}
                 </span>
+              ) : (
+                <span className="text-xs font-bold text-muted-foreground px-2 py-0.5 rounded bg-muted">FT</span>
               )}
             </div>
             <div className="flex-1 flex items-center gap-2">

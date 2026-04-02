@@ -23,6 +23,7 @@ const ALL_LEAGUES: Record<string, { seasonId: string; league: string; country: s
   champions_league: { seasonId: "sr:season:131071", league: "Champions League", country: "Europe" },
   europa_league: { seasonId: "sr:season:131073", league: "Europa League", country: "Europe" },
   eredivisie: { seasonId: "sr:season:130587", league: "Eredivisie", country: "Netherlands" },
+  womens_champions_league: { seasonId: "sr:season:131075", league: "Women's Champions League", country: "Europe" },
 };
 
 const TEAM_NAME_ALIASES: Record<string, string> = {
@@ -165,6 +166,24 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   "as saint-etienne": "saint-etienne",
   "angers sco": "angers",
   "aj auxerre": "auxerre",
+  // Women's teams
+  "chelsea fc women": "chelsea women",
+  "arsenal wfc": "arsenal women",
+  "fc barcelona femení": "barcelona women",
+  "fc barcelona women": "barcelona women",
+  "olympique lyonnais women": "lyon women",
+  "olympique lyonnais féminin": "lyon women",
+  "vfl wolfsburg women": "wolfsburg women",
+  "vfl wolfsburg frauen": "wolfsburg women",
+  "real madrid femenino": "real madrid women",
+  "real madrid cf women": "real madrid women",
+  "bayern munich women": "bayern munich women",
+  "fc bayern münchen women": "bayern munich women",
+  "fc bayern münchen frauen": "bayern munich women",
+  "paris saint-germain women": "psg women",
+  "paris saint-germain féminin": "psg women",
+  "manchester city women": "manchester city women",
+  "manchester city wfc": "manchester city women",
 };
 
 function resolveTeamName(name: string): string {
@@ -335,12 +354,19 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // Check by teams + date
+        // Check by teams + date — backfill scores + sportradar_id
         const teamDateKey = `${homeTeam.id}_${awayTeam.id}_${eventDate}`;
         if (matchesByKey.has(teamDateKey)) {
           const existing = matchesByKey.get(teamDateKey);
-          if (!existing.sportradar_id) {
-            updateBatch.push({ id: existing.id, data: { sportradar_id: event.id } });
+          const updateData: any = {};
+          if (!existing.sportradar_id) updateData.sportradar_id = event.id;
+          if (matchStatus) updateData.status = matchStatus;
+          if (status?.home_score != null && status?.away_score != null) {
+            updateData.goals_home = status.home_score;
+            updateData.goals_away = status.away_score;
+          }
+          if (Object.keys(updateData).length > 0) {
+            updateBatch.push({ id: existing.id, data: updateData });
           }
           summary.matchesMatched++;
           continue;

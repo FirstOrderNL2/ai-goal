@@ -129,7 +129,7 @@ Deno.serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: `You extract football match data from web content. Today's date is ${today}. Extract ALL matches you can find — today's, tomorrow's, and upcoming ones. For each match identify the home team, away team, date/time, and competition/league name. IMPORTANT: Translate all Dutch team names to English (e.g. "Brazilië" → "Brazil", "Verenigde Staten" → "USA", "Kroatië" → "Croatia"). Use the extract_matches tool.`,
+            content: `You extract football match data from web content. Today's date is ${today}. Extract ALL matches you can find — today's, tomorrow's, upcoming, and recently completed ones. For each match identify the home team, away team, date/time, competition/league name, and if available the final score. IMPORTANT: Translate all Dutch team names to English (e.g. "Brazilië" → "Brazil", "Verenigde Staten" → "USA", "Kroatië" → "Croatia"). Use the extract_matches tool.`,
           },
           {
             role: "user",
@@ -155,6 +155,8 @@ Deno.serve(async (req) => {
                       time: { type: "string", description: "Kick-off time in HH:MM format (24h, CET/CEST)" },
                       competition: { type: "string", description: "Competition name in English (e.g. Champions League, Eredivisie, Premier League)" },
                       is_womens: { type: "boolean", description: "True if this is a women's match" },
+                      score_home: { type: "number", description: "Final score for home team, if match is completed" },
+                      score_away: { type: "number", description: "Final score for away team, if match is completed" },
                     },
                     required: ["home_team", "away_team", "date", "competition"],
                   },
@@ -287,18 +289,36 @@ Deno.serve(async (req) => {
           .lte("match_date", `${m.date}T23:59:59Z`)
           .limit(1);
 
-        if (existing && existing.length > 0) continue;
+        if (existing && existing.length > 0) {
+          // If match exists and we have scores, update them
+          if (m.score_home != null && m.score_away != null) {
+            const { error: updateErr } = await supabase.from("matches").update({
+              goals_home: m.score_home,
+              goals_away: m.score_away,
+              status: "completed",
+            }).eq("id", existing[0].id);
+            if (!updateErr) summary.matchesCreated++; // reusing counter for "updated"
+          }
+          continue;
+        }
 
-        // Don't insert if match date is in the past
-        if (new Date(matchDate) < new Date()) continue;
+        // For past matches without scores, skip creation
+        if (new Date(matchDate) < new Date() && m.score_home == null) continue;
 
-        const { error: insertErr } = await supabase.from("matches").insert({
+        const matchInsert: any = {
           team_home_id: homeId,
           team_away_id: awayId,
           match_date: matchDate,
           league,
-          status: "upcoming",
-        });
+          status: m.score_home != null ? "completed" : "upcoming",
+        };
+
+        if (m.score_home != null && m.score_away != null) {
+          matchInsert.goals_home = m.score_home;
+          matchInsert.goals_away = m.score_away;
+        }
+
+        const { error: insertErr } = await supabase.from("matches").insert(matchInsert);
 
         if (insertErr) {
           summary.errors.push(`Match insert error (${m.home_team} vs ${m.away_team}): ${insertErr.message}`);
