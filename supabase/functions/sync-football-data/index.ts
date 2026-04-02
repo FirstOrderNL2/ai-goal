@@ -284,6 +284,7 @@ Deno.serve(async (req) => {
                 season: SEASON,
                 logo_url: leagueData.logo ?? null,
                 standings_data: leagueData.standings ?? [],
+                type: league.type,
                 updated_at: new Date().toISOString(),
               }, { onConflict: "api_football_id" });
               if (error) console.error("leagues upsert error:", error);
