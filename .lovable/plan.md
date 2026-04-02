@@ -1,94 +1,74 @@
 
 
-# Expand API-Football as Complete Data Source
+# Add Player Roster to Teams Page + Dashboard Verification
 
 ## Current State
 
-- **9 leagues synced**: PL, La Liga, Serie A, Bundesliga, Ligue 1, World Cup, WCQ Europe, WCQ South America, Friendlies
-- **Missing from sync**: UCL, UEL, UWCL, Eredivisie, KKD, Nations League, WCQ CONCACAF, Copa America, etc.
-- **Massive duplicates**: 853 upcoming matches, ~half are Sportradar duplicates (e.g., La Liga has 180 upcoming but only 90 from API-Football)
-- **No players table**: No player data stored at all
-- **LeagueFilter has options** (UCL, UEL, UWCL, Eredivisie) that return zero API-Football results
+- **Sync completed successfully**: UCL (8), UEL (8), UECL (8), Eredivisie (54), KKD (51), Friendlies (1) now populated with API-Football data
+- **139 players synced** — distributed across teams (Liverpool has 19, most teams have 2-5)
+- **Dashboard dedup working**: `API_FOOTBALL_LEAGUES` filter correctly excludes Sportradar duplicates
+- **"World Cup 2026" (104 matches)** from scraper still showing — needs cleanup since it's not in `API_FOOTBALL_LEAGUES` list and has no `api_football_id`
+- **Teams page** is a flat grid with no detail view or player roster — clicking a team does nothing
 
 ## Plan
 
-### 1. Database migration — Add `players` table + `type` column to leagues
+### 1. Create Team Detail page with player roster
 
-**`players`** table: `id`, `api_football_id` (unique), `team_id` (FK teams), `name`, `position`, `age`, `nationality`, `photo_url`, `created_at`, `updated_at`. Public SELECT RLS.
+New page at `/teams/:id` showing:
+- Team header (logo, name, country, league)
+- Player roster table/grid from `usePlayers(teamId)` hook (already exists)
+- Each player: photo, name, position, age, nationality
+- Group players by position (Goalkeeper, Defender, Midfielder, Attacker)
 
-Add `type` column (text, nullable) to `leagues` table for "league" vs "cup".
+### 2. Make team cards clickable on Teams page
 
-### 2. Expand LEAGUES config in `sync-football-data`
+Wrap each team card in a `<Link to={/teams/${team.id}>` so users can navigate to the detail page.
 
-Add all competitions the user wants:
+### 3. Add route for team detail
 
-| Competition | API ID | Name |
-|---|---|---|
-| Champions League | 2 | UCL |
-| Europa League | 3 | UEL |
-| UWCL | 748 | Women's Champions League |
-| Eredivisie | 88 | Eredivisie |
-| KKD | 89 | Keuken Kampioen Divisie |
-| Nations League | 5 | Nations League |
-| WCQ CONCACAF | 33 | WCQ CONCACAF |
-| Copa America | 9 | Copa America |
-| Euro Championship | 4 | Euro |
+Add `/teams/:id` route in `App.tsx` pointing to the new `TeamDetail` page.
 
-Keep existing: PL (39), La Liga (140), Serie A (135), Bundesliga (78), Ligue 1 (61), World Cup (1), WCQ Europe (32), WCQ South America (34), Friendlies (10).
+### 4. Clean up stale non-API-Football matches
 
-Total: ~18 leagues. Increase rate limit to 400 calls per run.
+- Add "World Cup 2026" and "Football League Championship" and "Football League Two" to cleanup — either delete scraped matches without `api_football_id` for these leagues, or add them to the dedup filter
+- Simplest: delete matches where `api_football_id IS NULL` and league names don't match any active filter (stale scraped data)
 
-### 3. Add player sync to `sync-football-data`
+### 5. Dashboard verification fix
 
-For each league, fetch top squad players:
-- `/players?league={id}&season={SEASON}&page=1` — fetch first page (20 players)
-- Upsert into `players` table
-- Link to team via `team_id`
-
-### 4. Update dedup filter in `useMatches.ts`
-
-Expand `API_FOOTBALL_LEAGUES` to include all newly synced leagues:
-```
-["Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
- "UCL", "UEL", "Women's Champions League", "Eredivisie", 
- "Keuken Kampioen Divisie", "Nations League", "World Cup",
- "WC Qualifiers Europe", "WC Qualifiers South America", "WC Qualifiers CONCACAF"]
-```
-
-This ensures Sportradar/scraper duplicates are filtered out for all API-Football covered leagues.
-
-### 5. Database cleanup — Delete Sportradar-only duplicates
-
-SQL migration to delete upcoming matches without `api_football_id` for leagues now covered by API-Football. This removes ~400 duplicate rows.
-
-### 6. Align LeagueFilter names with API-Football league names
-
-Ensure the filter values match exactly what `sync-football-data` stores as `league` in the matches table. Map API-Football names:
-- "UEFA Champions League" → "UCL" (store as "UCL")
-- "UEFA Europa League" → "UEL"
-- etc.
-
-### 7. Add `players` hook and types
-
-- Add `Player` interface to `src/lib/types.ts`
-- Add `usePlayers(teamId)` hook
+The "World Cup 2026" league name doesn't match any `LeagueFilter` option, but these 104 matches pass through the "all" filter because "World Cup 2026" is not in `API_FOOTBALL_LEAGUES`. Fix by adding a DB cleanup migration to remove matches without `api_football_id` for leagues not actively tracked.
 
 ## Files to Change
 
 | File | Change |
 |---|---|
-| DB migration | Create `players` table; add `type` to `leagues` |
-| `supabase/functions/sync-football-data/index.ts` | Add ~9 new leagues, player sync, league type, raise rate limit |
-| `src/hooks/useMatches.ts` | Expand `API_FOOTBALL_LEAGUES` dedup list |
-| `src/components/LeagueFilter.tsx` | Ensure filter values match stored league names |
-| `src/lib/types.ts` | Add `Player` interface |
-| `src/hooks/useMatches.ts` | Add `usePlayers` hook |
-| DB cleanup | Delete Sportradar duplicates for covered leagues |
+| `src/pages/TeamDetail.tsx` | **New** — team header + player roster grouped by position |
+| `src/pages/Teams.tsx` | Make team cards clickable links to `/teams/:id` |
+| `src/App.tsx` | Add `/teams/:id` route |
+| DB migration | Delete stale scraped matches without `api_football_id` (World Cup 2026, Football League Championship, Football League Two) |
 
-## Priority
+## Technical Detail
 
-1. Expand leagues + dedup (immediate impact on dashboard accuracy)
-2. Database cleanup
-3. Players table + sync
-4. LeagueFilter alignment
+```text
+TeamDetail page layout:
+┌─────────────────────────────┐
+│  ← Back to Teams            │
+│  [Logo] Team Name            │
+│  Country · League            │
+├─────────────────────────────┤
+│  Squad (X players)           │
+│                              │
+│  Goalkeepers                 │
+│  [photo] Name  Age  Nation   │
+│                              │
+│  Defenders                   │
+│  [photo] Name  Age  Nation   │
+│  ...                         │
+│                              │
+│  Midfielders                 │
+│  ...                         │
+│                              │
+│  Attackers                   │
+│  ...                         │
+└─────────────────────────────┘
+```
 
