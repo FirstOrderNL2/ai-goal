@@ -385,6 +385,27 @@ Market margin: ${Math.round(statsAnchors.market_margin * 100)}%`;
       if (ctx.weather) {
         contextBlock += `\nWEATHER: ${ctx.weather}`;
       }
+      // Lineup quality assessment
+      const homeLineup = ctx.lineup_home;
+      const awayLineup = ctx.lineup_away;
+      if (homeLineup && (Array.isArray(homeLineup) ? homeLineup.length > 0 : homeLineup.starters)) {
+        const lu = Array.isArray(homeLineup) ? homeLineup[0] : homeLineup;
+        if (lu?.starters) {
+          contextBlock += `\n${homeName} CONFIRMED LINEUP (${lu.formation || "?"}): ${lu.starters.map((p: any) => `${p.name}${p.pos ? ` [${p.pos}]` : ""}`).join(", ")}`;
+          if (lu.bench?.length > 0) {
+            contextBlock += `\n${homeName} BENCH: ${lu.bench.map((p: any) => p.name).join(", ")}`;
+          }
+        }
+      }
+      if (awayLineup && (Array.isArray(awayLineup) ? awayLineup.length > 0 : awayLineup.starters)) {
+        const lu = Array.isArray(awayLineup) ? awayLineup[0] : awayLineup;
+        if (lu?.starters) {
+          contextBlock += `\n${awayName} CONFIRMED LINEUP (${lu.formation || "?"}): ${lu.starters.map((p: any) => `${p.name}${p.pos ? ` [${p.pos}]` : ""}`).join(", ")}`;
+          if (lu.bench?.length > 0) {
+            contextBlock += `\n${awayName} BENCH: ${lu.bench.map((p: any) => p.name).join(", ")}`;
+          }
+        }
+      }
     }
 
     // Data quality confidence — enhanced
