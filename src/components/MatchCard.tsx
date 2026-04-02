@@ -51,9 +51,9 @@ export function MatchCard({ match }: MatchCardProps) {
               <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
                 {match.league}
               </Badge>
-              {match.round && (
-                <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                  {match.round}
+              {roundLabel && (
+                <Badge variant="outline" className="text-[10px] font-medium text-foreground border-primary/30">
+                  {roundLabel}
                 </Badge>
               )}
               {isLive && (
