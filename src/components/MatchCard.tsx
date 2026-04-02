@@ -1,10 +1,34 @@
 import { useNavigate } from "react-router-dom";
-import { format } from "date-fns";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProbabilityBar } from "./ProbabilityBar";
 import type { Match } from "@/lib/types";
 import { TrendingUp, ArrowRight } from "lucide-react";
+
+function formatRound(round: string | null | undefined): string | null {
+  if (!round) return null;
+  // "Regular Season - 28" → "MD 28"
+  const regMatch = round.match(/Regular Season\s*-\s*(\d+)/i);
+  if (regMatch) return `MD ${regMatch[1]}`;
+  // "Quarter-finals" → "QF", "Semi-finals" → "SF", "Final" → "Final"
+  if (/quarter/i.test(round)) {
+    const leg = round.match(/leg\s*(\d)/i);
+    return leg ? `QF Leg ${leg[1]}` : "QF";
+  }
+  if (/semi/i.test(round)) {
+    const leg = round.match(/leg\s*(\d)/i);
+    return leg ? `SF Leg ${leg[1]}` : "SF";
+  }
+  if (/final/i.test(round) && !/quarter|semi/i.test(round)) return "Final";
+  // "Round of 16" style
+  if (/round of/i.test(round)) {
+    const leg = round.match(/leg\s*(\d)/i);
+    const base = round.match(/round of (\d+)/i);
+    return base ? `R${base[1]}${leg ? ` Leg ${leg[1]}` : ""}` : round;
+  }
+  // Fallback: truncate if too long
+  return round.length > 20 ? round.substring(0, 18) + "…" : round;
+}
 
 interface MatchCardProps {
   match: Match;
@@ -15,6 +39,7 @@ export function MatchCard({ match }: MatchCardProps) {
   const { home_team, away_team, prediction, odds } = match;
   const isUpcoming = match.status === "upcoming";
   const isLive = match.status === "live" || match.status === "1H" || match.status === "2H" || match.status === "HT";
+  const roundLabel = formatRound(match.round);
 
   return (
     <div onClick={() => navigate(`/match/${match.id}`)} className="cursor-pointer">
@@ -26,9 +51,9 @@ export function MatchCard({ match }: MatchCardProps) {
               <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
                 {match.league}
               </Badge>
-              {match.round && (
-                <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                  {match.round}
+              {roundLabel && (
+                <Badge variant="outline" className="text-[10px] font-medium text-foreground border-primary/30">
+                  {roundLabel}
                 </Badge>
               )}
               {isLive && (
