@@ -7,6 +7,7 @@ import Index from "./pages/Index";
 import MatchDetail from "./pages/MatchDetail";
 import Accuracy from "./pages/Accuracy";
 import Teams from "./pages/Teams";
+import TeamDetail from "./pages/TeamDetail";
 import StatsBomb from "./pages/StatsBomb";
 import Standings from "./pages/Standings";
 import NotFound from "./pages/NotFound";
@@ -24,6 +25,7 @@ const App = () => (
           <Route path="/match/:id" element={<MatchDetail />} />
           <Route path="/accuracy" element={<Accuracy />} />
           <Route path="/teams" element={<Teams />} />
+          <Route path="/teams/:id" element={<TeamDetail />} />
           <Route path="/statsbomb" element={<StatsBomb />} />
           <Route path="/standings" element={<Standings />} />
           <Route path="*" element={<NotFound />} />

@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { useTeams } from "@/hooks/useMatches";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,7 +45,8 @@ export default function Teams() {
               </h2>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {leagueTeams!.map((team) => (
-                  <Card key={team.id} className="border-border/50">
+                  <Link key={team.id} to={`/teams/${team.id}`} className="block">
+                  <Card className="border-border/50 hover:border-primary/30 transition-colors">
                     <CardContent className="flex items-center gap-3 p-4">
                       {team.logo_url ? (
                         <img src={team.logo_url} alt={team.name} className="h-10 w-10 object-contain" />
@@ -60,6 +62,7 @@ export default function Teams() {
                       <Badge variant="secondary" className="text-[10px]">{league}</Badge>
                     </CardContent>
                   </Card>
+                  </Link>
                 ))}
               </div>
             </section>
