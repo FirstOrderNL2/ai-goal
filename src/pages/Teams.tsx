@@ -62,6 +62,7 @@ export default function Teams() {
                       <Badge variant="secondary" className="text-[10px]">{league}</Badge>
                     </CardContent>
                   </Card>
+                  </Link>
                 ))}
               </div>
             </section>
