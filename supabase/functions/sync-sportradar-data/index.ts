@@ -23,6 +23,7 @@ const ALL_LEAGUES: Record<string, { seasonId: string; league: string; country: s
   champions_league: { seasonId: "sr:season:131071", league: "Champions League", country: "Europe" },
   europa_league: { seasonId: "sr:season:131073", league: "Europa League", country: "Europe" },
   eredivisie: { seasonId: "sr:season:130587", league: "Eredivisie", country: "Netherlands" },
+  womens_champions_league: { seasonId: "sr:season:131075", league: "Women's Champions League", country: "Europe" },
 };
 
 const TEAM_NAME_ALIASES: Record<string, string> = {
