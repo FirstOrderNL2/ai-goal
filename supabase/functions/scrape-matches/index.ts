@@ -289,18 +289,36 @@ Deno.serve(async (req) => {
           .lte("match_date", `${m.date}T23:59:59Z`)
           .limit(1);
 
-        if (existing && existing.length > 0) continue;
+        if (existing && existing.length > 0) {
+          // If match exists and we have scores, update them
+          if (m.score_home != null && m.score_away != null) {
+            const { error: updateErr } = await supabase.from("matches").update({
+              goals_home: m.score_home,
+              goals_away: m.score_away,
+              status: "completed",
+            }).eq("id", existing[0].id);
+            if (!updateErr) summary.matchesCreated++; // reusing counter for "updated"
+          }
+          continue;
+        }
 
-        // Don't insert if match date is in the past
-        if (new Date(matchDate) < new Date()) continue;
+        // For past matches without scores, skip creation
+        if (new Date(matchDate) < new Date() && m.score_home == null) continue;
 
-        const { error: insertErr } = await supabase.from("matches").insert({
+        const matchInsert: any = {
           team_home_id: homeId,
           team_away_id: awayId,
           match_date: matchDate,
           league,
-          status: "upcoming",
-        });
+          status: m.score_home != null ? "completed" : "upcoming",
+        };
+
+        if (m.score_home != null && m.score_away != null) {
+          matchInsert.goals_home = m.score_home;
+          matchInsert.goals_away = m.score_away;
+        }
+
+        const { error: insertErr } = await supabase.from("matches").insert(matchInsert);
 
         if (insertErr) {
           summary.errors.push(`Match insert error (${m.home_team} vs ${m.away_team}): ${insertErr.message}`);
