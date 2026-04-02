@@ -117,6 +117,7 @@ export default function MatchDetail() {
             prediction={prediction}
             homeTeamName={home_team?.name || "Home"}
             awayTeamName={away_team?.name || "Away"}
+            odds={odds}
           />
         )}
 
