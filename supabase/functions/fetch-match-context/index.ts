@@ -541,6 +541,11 @@ Deno.serve(async (req) => {
         labels.push("lineups");
         fetches.push(apiFootballFetch(`/predictions?fixture=${api_football_id}`, apiKey));
         labels.push("predictions");
+        fetches.push(apiFootballFetch(`/fixtures/events?fixture=${api_football_id}`, apiKey));
+        labels.push("events");
+        fetches.push(apiFootballFetch(`/fixtures?id=${api_football_id}`, apiKey));
+        labels.push("live");
+      }
       } else {
         const leagueId = LEAGUE_IDS[league];
         const now = new Date();
