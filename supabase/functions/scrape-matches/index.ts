@@ -155,6 +155,8 @@ Deno.serve(async (req) => {
                       time: { type: "string", description: "Kick-off time in HH:MM format (24h, CET/CEST)" },
                       competition: { type: "string", description: "Competition name in English (e.g. Champions League, Eredivisie, Premier League)" },
                       is_womens: { type: "boolean", description: "True if this is a women's match" },
+                      score_home: { type: "number", description: "Final score for home team, if match is completed" },
+                      score_away: { type: "number", description: "Final score for away team, if match is completed" },
                     },
                     required: ["home_team", "away_team", "date", "competition"],
                   },
