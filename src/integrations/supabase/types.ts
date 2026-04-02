@@ -24,6 +24,7 @@ export type Database = {
           name: string
           season: number
           standings_data: Json | null
+          type: string | null
           updated_at: string
         }
         Insert: {
@@ -35,6 +36,7 @@ export type Database = {
           name: string
           season: number
           standings_data?: Json | null
+          type?: string | null
           updated_at?: string
         }
         Update: {
@@ -46,6 +48,7 @@ export type Database = {
           name?: string
           season?: number
           standings_data?: Json | null
+          type?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -286,6 +289,53 @@ export type Database = {
             columns: ["match_id"]
             isOneToOne: true
             referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      players: {
+        Row: {
+          age: number | null
+          api_football_id: number
+          created_at: string
+          id: string
+          name: string
+          nationality: string | null
+          photo_url: string | null
+          position: string | null
+          team_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          age?: number | null
+          api_football_id: number
+          created_at?: string
+          id?: string
+          name: string
+          nationality?: string | null
+          photo_url?: string | null
+          position?: string | null
+          team_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          age?: number | null
+          api_football_id?: number
+          created_at?: string
+          id?: string
+          name?: string
+          nationality?: string | null
+          photo_url?: string | null
+          position?: string | null
+          team_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "players_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
             referencedColumns: ["id"]
           },
         ]
