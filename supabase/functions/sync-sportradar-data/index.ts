@@ -336,12 +336,19 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // Check by teams + date
+        // Check by teams + date — backfill scores + sportradar_id
         const teamDateKey = `${homeTeam.id}_${awayTeam.id}_${eventDate}`;
         if (matchesByKey.has(teamDateKey)) {
           const existing = matchesByKey.get(teamDateKey);
-          if (!existing.sportradar_id) {
-            updateBatch.push({ id: existing.id, data: { sportradar_id: event.id } });
+          const updateData: any = {};
+          if (!existing.sportradar_id) updateData.sportradar_id = event.id;
+          if (matchStatus) updateData.status = matchStatus;
+          if (status?.home_score != null && status?.away_score != null) {
+            updateData.goals_home = status.home_score;
+            updateData.goals_away = status.away_score;
+          }
+          if (Object.keys(updateData).length > 0) {
+            updateBatch.push({ id: existing.id, data: updateData });
           }
           summary.matchesMatched++;
           continue;
