@@ -129,7 +129,7 @@ Deno.serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: `You extract football match data from web content. Today's date is ${today}. Extract ALL matches you can find — today's, tomorrow's, and upcoming ones. For each match identify the home team, away team, date/time, and competition/league name. IMPORTANT: Translate all Dutch team names to English (e.g. "Brazilië" → "Brazil", "Verenigde Staten" → "USA", "Kroatië" → "Croatia"). Use the extract_matches tool.`,
+            content: `You extract football match data from web content. Today's date is ${today}. Extract ALL matches you can find — today's, tomorrow's, upcoming, and recently completed ones. For each match identify the home team, away team, date/time, competition/league name, and if available the final score. IMPORTANT: Translate all Dutch team names to English (e.g. "Brazilië" → "Brazil", "Verenigde Staten" → "USA", "Kroatië" → "Croatia"). Use the extract_matches tool.`,
           },
           {
             role: "user",
