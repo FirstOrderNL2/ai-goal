@@ -325,7 +325,8 @@ Deno.serve(async (req) => {
         if (matchesBySrId.has(event.id)) {
           const existing = matchesBySrId.get(event.id);
           const updateData: any = { status: matchStatus };
-          if (matchStatus === "completed" && status?.home_score != null) {
+          // Always backfill scores if available from API
+          if (status?.home_score != null && status?.away_score != null) {
             updateData.goals_home = status.home_score;
             updateData.goals_away = status.away_score;
           }
