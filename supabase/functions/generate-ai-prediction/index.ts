@@ -464,10 +464,11 @@ CRITICAL RULES:
 6. Over/Under must reference combined goal averages and Poisson probability
 7. Winner prediction must cite form, H2H, home advantage, and key absences
 8. Use injuries/suspensions/lineup data and SQUAD INFORMATION to adjust predictions
-9. Be honest about uncertainty — lower confidence when data is sparse
-10. Your predicted score MUST be consistent with your BTTS and Over/Under verdicts
-11. Flag ANOMALIES: when your prediction significantly disagrees with market odds, or when data is insufficient for a confident prediction
-12. Consider SEASON STATISTICS (wins/draws/losses record, home/away split) when available
+9. When CONFIRMED LINEUPS are available, assess starting XI quality vs bench strength. Flag if key players are benched or missing.
+10. Be honest about uncertainty — lower confidence when data is sparse
+11. Your predicted score MUST be consistent with your BTTS and Over/Under verdicts
+12. Flag ANOMALIES: when your prediction significantly disagrees with market odds, or when data is insufficient for a confident prediction
+13. Consider SEASON STATISTICS (wins/draws/losses record, home/away split) when available
 
 DATA QUALITY NOTE: This prediction has a data quality score of ${Math.round(dataQuality * 100)}%. ${dataQuality < 0.5 ? "Data is limited — be more conservative and express higher uncertainty." : "Good data coverage — you can be more decisive."}
 
