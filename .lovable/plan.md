@@ -1,140 +1,137 @@
 
 
-# Enhance AI Reasoning + Deep Match Detail Page
+# Enhance AI with Lineups/Bench + Live Data + Match Page Upgrade
 
-## Summary
+## Current State
 
-Upgrade the AI prediction engine to use weighted feature composition and richer API-Football data, then redesign the `/match/:id` page to present deep, actionable insights with better visual hierarchy and new UI components.
+- **`fetch-match-context`** already fetches `/fixtures/lineups` and `/injuries` from API-Football when `api_football_id` is available, but does NOT fetch bench players or live match events
+- **`generate-ai-prediction`** receives lineup/injury data via `fetchMatchContext()` but doesn't directly query the live API for in-play status
+- **`get-football-data`** proxy already whitelists `/fixtures`, `/fixtures/lineups`, `/fixtures/events`, `/fixtures/players` — can be used from frontend
+- **Match detail page** shows static predictions but has no live score polling or lineup display
+- **`match_context`** table stores `lineup_home`/`lineup_away` as JSONB — already supports structured lineup data
 
-## Part 1: AI Reasoning Enhancement
+## Plan
 
-### 1A. Upgrade `generate-ai-prediction` edge function
+### Part 1: Backend — Fetch Lineups + Bench + Live Events
 
-The function already has strong bones (Poisson model, odds comparison, validation, tool calling). Enhancements:
+#### 1A. Upgrade `fetch-match-context` to include bench players
 
-- **Fetch team_statistics from DB** — the function currently computes stats from raw match rows but ignores the `team_statistics` table which has richer data (form string, home/away records). Query it and merge.
-- **Fetch players** — query the `players` table for both teams, include in the prompt (squad size, key positions).
-- **Weighted feature prompt** — restructure the system prompt to explicitly instruct the AI to weight features: Recent Form (35%), H2H (15%), Offensive/Defensive Stats (25%), Home/Away Advantage (15%), Market Odds (10%). Add competition-type awareness (international matches get different weights — less H2H weight, more form).
-- **Anomaly detection** — add a new tool parameter `anomalies` (array of strings) for the AI to flag when its prediction conflicts with market odds or when data is insufficient. Store in `ai_reasoning`.
-- **Enhanced data quality scoring** — factor in player data availability and team_statistics presence.
+Currently `extractLineups()` only processes `startXI`. Add bench extraction from `l.substitutes` array (same API response). Store as `{ starters: [...], bench: [...], formation: "4-3-3" }` in `lineup_home`/`lineup_away`.
 
-### 1B. Upgrade `compute-features` edge function
+**File**: `supabase/functions/fetch-match-context/index.ts`
+- Update `extractLineups()` to include `substitutes` from each lineup entry
+- Change output shape to `{ team, formation, starters: [], bench: [] }`
 
-- Fetch and include H2H data from completed matches (currently only preserves existing h2h_results, doesn't compute them).
-- Compute home-only and away-only form separately (currently only computes overall form).
+#### 1B. Add live match events fetching to `fetch-match-context`
+
+When `api_football_id` exists, also fetch:
+- `/fixtures?id={api_football_id}` — for live status, elapsed minutes, current score
+- `/fixtures/events?fixture={api_football_id}` — for goals, cards, substitutions
+
+Add these to the parallel fetch block. Format into context text for AI. Store key events in a new field or merge into `news_items`.
+
+**File**: `supabase/functions/fetch-match-context/index.ts`
+
+#### 1C. Upgrade `generate-ai-prediction` to include lineup quality assessment
+
+Add to the system prompt: instructions to evaluate starting XI vs bench strength, flag missing key players, and adjust prediction if lineups are confirmed. Already has `playersBlock` — enhance to note which squad players are in the starting XI vs bench.
 
 **File**: `supabase/functions/generate-ai-prediction/index.ts`
-**File**: `supabase/functions/compute-features/index.ts`
 
-## Part 2: Match Detail Page Redesign
+### Part 2: Frontend — Live Data + Lineups on Match Page
 
-### 2A. New `TeamComparisonCard` component
+#### 2A. New `LineupsCard` component
 
-Side-by-side visual comparison of both teams:
-- Form visualization (colored W/D/L pills — already exists but will be extracted into its own card)
-- Goals for/against bars (horizontal bar chart using div widths)
-- League position comparison
-- Clean sheet % and BTTS % comparison bars
+Display for each team:
+- Formation (e.g., "4-3-3")
+- Starting XI in a list with shirt numbers and positions
+- Bench players in a secondary section
+- Visual indicator for captain
 
-### 2B. New `GoalDistributionChart` component
+Uses the `get-football-data` proxy to fetch `/fixtures/lineups?fixture={api_football_id}` directly from the frontend. Falls back to `match_context.lineup_home`/`lineup_away` from DB.
 
-Simple CSS-based bar chart showing goal frequency distribution for each team (0, 1, 2, 3+ goals scored/conceded per match) computed from `match_features` data.
+**File**: `src/components/LineupsCard.tsx` (new)
 
-### 2C. Enhanced H2H section
+#### 2B. New `LiveMatchCard` component
 
-Replace current plain list with a richer card:
-- Summary line: "Team A leads 3-1 (1 draw) in last 5 meetings"
-- Each result with score, date, and venue indicator
-- Total goals trend
+For live/in-play matches:
+- Current score with elapsed time badge
+- Key events timeline (goals, cards, subs) from `/fixtures/events`
+- Auto-refresh every 30 seconds using `refetchInterval`
 
-### 2D. Restructured page layout
+For upcoming matches: hidden. For completed matches: show final events summary.
 
-Reorder sections for better flow:
+**File**: `src/components/LiveMatchCard.tsx` (new)
 
-1. **Match Header** (existing, keep)
-2. **AI Verdict** (existing, keep — already excellent)
-3. **Team Comparison** (new — form, stats, positions side-by-side)
-4. **Prediction Probabilities** (existing, keep)
-5. **Goal Distribution** (new)
-6. **Head-to-Head** (enhanced)
-7. **Match Intelligence** (existing injuries/suspensions/weather)
-8. **AI Commentary** (existing AIInsightsCard — keep)
-9. **Odds + Market Edge** (existing, enhanced with value highlighting)
+#### 2C. New `useFixtureData` hook
 
-Remove: FunFactsCard, MatchInsightsCard, StatsBombSection (Sportradar/StatsBomb data is deprecated in favor of API-Football).
+Frontend hook that calls `get-football-data` proxy:
+- `useLineups(apiFootballId)` — fetches `/fixtures/lineups`
+- `useLiveFixture(apiFootballId)` — fetches `/fixtures?id=X` with 30s refetch for live matches
+- `useFixtureEvents(apiFootballId)` — fetches `/fixtures/events`
 
-### 2E. Over/Under & BTTS visual indicators
+**File**: `src/hooks/useFixtureData.ts` (new)
 
-Add dedicated mini-cards showing:
-- Over/Under 2.5 probability with a gauge-style indicator
-- BTTS probability with reasoning snippet
-- These exist in AIVerdictCard but deserve more prominence
+#### 2D. Update `MatchDetail.tsx` page layout
+
+Add new sections:
+- **Live score** (between header and AI Verdict) — only for live matches
+- **Lineups** (after Team Comparison) — starters + bench
+- **Match Events** (after Lineups for live/completed) — timeline of goals, cards, subs
+
+Updated order:
+1. Match Header (existing)
+2. Live Score + Events (new — live matches only)
+3. AI Verdict (existing)
+4. Team Comparison (existing)
+5. Lineups (new)
+6. Prediction Probabilities (existing)
+7. Over/Under & BTTS (existing)
+8. Head-to-Head (existing)
+9. Match Intelligence (existing)
+10. AI Commentary (existing)
+11. Odds & Market Edge (existing)
+
+**File**: `src/pages/MatchDetail.tsx`
+
+### Part 3: Enhanced MatchContextCard with lineups
+
+Update existing `MatchContextCard` to render lineups from DB when available (formation + starters list). This is the fallback when API-Football live data isn't directly fetched.
+
+**File**: `src/components/MatchContextCard.tsx`
 
 ## Files to Change
 
 | File | Change |
 |---|---|
-| `supabase/functions/generate-ai-prediction/index.ts` | Add team_statistics + players queries, weighted prompt, anomaly detection |
-| `supabase/functions/compute-features/index.ts` | Compute H2H from DB, home/away-specific form |
-| `src/pages/MatchDetail.tsx` | Restructure layout, add new components, remove Sportradar sections |
-| `src/components/TeamComparisonCard.tsx` | **New** — side-by-side team stats comparison |
-| `src/components/GoalDistributionChart.tsx` | **New** — CSS bar chart for goal frequencies |
-| `src/components/H2HCard.tsx` | **New** — enhanced H2H display with summary |
-| `src/components/OverUnderCard.tsx` | **New** — dedicated O/U and BTTS visual |
+| `supabase/functions/fetch-match-context/index.ts` | Extract bench from lineups, fetch live events |
+| `supabase/functions/generate-ai-prediction/index.ts` | Add lineup quality assessment to prompt |
+| `src/hooks/useFixtureData.ts` | **New** — hooks for lineups, live fixture, events |
+| `src/components/LineupsCard.tsx` | **New** — starters + bench display |
+| `src/components/LiveMatchCard.tsx` | **New** — live score + events timeline |
+| `src/pages/MatchDetail.tsx` | Add LineupsCard, LiveMatchCard, reorder sections |
+| `src/components/MatchContextCard.tsx` | Render lineups from DB as fallback |
 
 ## Technical Detail
 
 ```text
-AI Prompt Weight Structure:
-──────────────────────────
-FEATURE WEIGHTS (instruct AI to apply):
-├─ Recent Form (last 5):     35%  → home/away split
-├─ Offensive/Defensive:      25%  → avg goals, xG, clean sheets
-├─ H2H History:              15%  → last 5-10 meetings
-├─ Home/Away Advantage:      15%  → home-only vs away-only records
-└─ Market Odds:              10%  → implied probabilities
+API-Football endpoints used:
+├─ /fixtures/lineups?fixture=X    → startXI + substitutes (bench)
+├─ /fixtures/events?fixture=X     → goals, cards, subs timeline
+├─ /fixtures?id=X                 → live status, elapsed, score
+├─ /injuries?fixture=X            → (already used)
+└─ /predictions?fixture=X         → (already used)
 
-International match override:
-├─ Recent Form:              40%
-├─ Squad Quality:            25%
-├─ H2H:                     10%
-├─ Home Advantage:           15%
-└─ Market Odds:              10%
+Lineup data shape (upgraded):
+{
+  team: "Arsenal",
+  formation: "4-3-3",
+  starters: [{ name, number, pos }],
+  bench: [{ name, number, pos }]
+}
+
+Live polling:
+- Frontend: 30s refetchInterval for useQuery when match status is "live"
+- Only active when user is on the match detail page
 ```
-
-```text
-Match Detail Page Layout:
-┌─────────────────────────────┐
-│  Match Header (teams/score) │
-├─────────────────────────────┤
-│  AI Verdict (winner/score/  │
-│  BTTS/O-U/market edge)      │
-├──────────────┬──────────────┤
-│  Home Stats  │  Away Stats  │  ← TeamComparisonCard
-│  Form: WWDLW │  Form: LWWDL │
-│  GF: ████░░  │  GF: ███░░░  │
-│  GA: ██░░░░  │  GA: ████░░  │
-│  Pos: #3     │  Pos: #12    │
-├──────────────┴──────────────┤
-│  Prediction Probabilities   │
-├─────────────────────────────┤
-│  O/U 2.5: 62% Over  │ BTTS │  ← OverUnderCard
-├─────────────────────────────┤
-│  H2H: Arsenal leads 3-1    │  ← H2HCard
-│  2026: 2-1 │ 2025: 0-0 ... │
-├─────────────────────────────┤
-│  Match Intelligence         │
-│  (injuries/suspensions)     │
-├─────────────────────────────┤
-│  AI Commentary (reasoning)  │
-├─────────────────────────────┤
-│  Odds + Market Edge         │
-└─────────────────────────────┘
-```
-
-## Priority
-
-1. AI reasoning upgrade (backend — immediate prediction quality improvement)
-2. New frontend components (TeamComparison, H2H, OverUnder)
-3. MatchDetail page restructure
 
