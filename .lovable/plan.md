@@ -1,57 +1,94 @@
 
 
-# Fix Dashboard: Prioritize API-Football Data & Show Round Info
+# Expand API-Football as Complete Data Source
 
-## Problem
+## Current State
 
-The dashboard shows **854 upcoming matches** — nearly half are duplicates from multiple data sources (API-Football, Sportradar, scrapers). For example, La Liga has 180 upcoming matches but only 90 are from API-Football; the other 90 are Sportradar duplicates with different team IDs and no round info.
+- **9 leagues synced**: PL, La Liga, Serie A, Bundesliga, Ligue 1, World Cup, WCQ Europe, WCQ South America, Friendlies
+- **Missing from sync**: UCL, UEL, UWCL, Eredivisie, KKD, Nations League, WCQ CONCACAF, Copa America, etc.
+- **Massive duplicates**: 853 upcoming matches, ~half are Sportradar duplicates (e.g., La Liga has 180 upcoming but only 90 from API-Football)
+- **No players table**: No player data stored at all
+- **LeagueFilter has options** (UCL, UEL, UWCL, Eredivisie) that return zero API-Football results
 
-Additionally, there are duplicate team entries (e.g., "Real Sociedad" from API-Football and "Real Sociedad San Sebastian" from Sportradar), causing the same fixture to appear twice with different teams.
+## Plan
 
-## Solution
+### 1. Database migration — Add `players` table + `type` column to leagues
 
-### 1. Filter upcoming matches to prefer API-Football source
+**`players`** table: `id`, `api_football_id` (unique), `team_id` (FK teams), `name`, `position`, `age`, `nationality`, `photo_url`, `created_at`, `updated_at`. Public SELECT RLS.
 
-Update `useUpcomingMatches` in `src/hooks/useMatches.ts` to:
-- For leagues covered by API-Football (Premier League, La Liga, Serie A, Bundesliga, Ligue 1), only show matches **with** `api_football_id` (accurate data with round info)
-- For other leagues (UWCL, KKD, WCQ, etc.), show all matches as before
-- This eliminates duplicates without needing to delete data
+Add `type` column (text, nullable) to `leagues` table for "league" vs "cup".
 
-### 2. Database cleanup migration
+### 2. Expand LEAGUES config in `sync-football-data`
 
-- Delete the stale Friendlies match from Oct 2025
-- Optionally: mark Sportradar-only duplicates for leagues covered by API-Football (can be done later)
+Add all competitions the user wants:
 
-### 3. Improve MatchCard round display
+| Competition | API ID | Name |
+|---|---|---|
+| Champions League | 2 | UCL |
+| Europa League | 3 | UEL |
+| UWCL | 748 | Women's Champions League |
+| Eredivisie | 88 | Eredivisie |
+| KKD | 89 | Keuken Kampioen Divisie |
+| Nations League | 5 | Nations League |
+| WCQ CONCACAF | 33 | WCQ CONCACAF |
+| Copa America | 9 | Copa America |
+| Euro Championship | 4 | Euro |
 
-The `MatchCard` already shows `match.round` as a badge — this works. But improve formatting:
-- Parse "Regular Season - 28" → "Matchday 28"
-- Show "QF Leg 2" style for cup matches
-- Make the badge more prominent
+Keep existing: PL (39), La Liga (140), Serie A (135), Bundesliga (78), Ligue 1 (61), World Cup (1), WCQ Europe (32), WCQ South America (34), Friendlies (10).
 
-### 4. Increase match limit
+Total: ~18 leagues. Increase rate limit to 400 calls per run.
 
-The current limit of 20 upcoming matches is too low when filtering. Increase to 50 and let the frontend show more matches per league.
+### 3. Add player sync to `sync-football-data`
+
+For each league, fetch top squad players:
+- `/players?league={id}&season={SEASON}&page=1` — fetch first page (20 players)
+- Upsert into `players` table
+- Link to team via `team_id`
+
+### 4. Update dedup filter in `useMatches.ts`
+
+Expand `API_FOOTBALL_LEAGUES` to include all newly synced leagues:
+```
+["Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
+ "UCL", "UEL", "Women's Champions League", "Eredivisie", 
+ "Keuken Kampioen Divisie", "Nations League", "World Cup",
+ "WC Qualifiers Europe", "WC Qualifiers South America", "WC Qualifiers CONCACAF"]
+```
+
+This ensures Sportradar/scraper duplicates are filtered out for all API-Football covered leagues.
+
+### 5. Database cleanup — Delete Sportradar-only duplicates
+
+SQL migration to delete upcoming matches without `api_football_id` for leagues now covered by API-Football. This removes ~400 duplicate rows.
+
+### 6. Align LeagueFilter names with API-Football league names
+
+Ensure the filter values match exactly what `sync-football-data` stores as `league` in the matches table. Map API-Football names:
+- "UEFA Champions League" → "UCL" (store as "UCL")
+- "UEFA Europa League" → "UEL"
+- etc.
+
+### 7. Add `players` hook and types
+
+- Add `Player` interface to `src/lib/types.ts`
+- Add `usePlayers(teamId)` hook
 
 ## Files to Change
 
 | File | Change |
 |---|---|
-| `src/hooks/useMatches.ts` | Add `api_football_id` filter for covered leagues; increase limit |
-| `src/components/MatchCard.tsx` | Format round text nicely (e.g., "Regular Season - 28" → "MD 28") |
-| DB migration | Delete stale Friendlies match from 2025 |
+| DB migration | Create `players` table; add `type` to `leagues` |
+| `supabase/functions/sync-football-data/index.ts` | Add ~9 new leagues, player sync, league type, raise rate limit |
+| `src/hooks/useMatches.ts` | Expand `API_FOOTBALL_LEAGUES` dedup list |
+| `src/components/LeagueFilter.tsx` | Ensure filter values match stored league names |
+| `src/lib/types.ts` | Add `Player` interface |
+| `src/hooks/useMatches.ts` | Add `usePlayers` hook |
+| DB cleanup | Delete Sportradar duplicates for covered leagues |
 
-## Technical Detail
+## Priority
 
-```text
-useUpcomingMatches query logic:
-─────────────────────────────
-if league is "all":
-  → filter: api_football_id IS NOT NULL  (for covered leagues)
-    OR league NOT IN (PL, LaLiga, SerieA, Buli, L1)
-if league is a covered league (PL, LaLiga, etc.):
-  → filter: api_football_id IS NOT NULL
-if league is uncovered (UWCL, KKD, etc.):
-  → no api_football_id filter (show all)
-```
+1. Expand leagues + dedup (immediate impact on dashboard accuracy)
+2. Database cleanup
+3. Players table + sync
+4. LeagueFilter alignment
 
