@@ -151,7 +151,7 @@ Deno.serve(async (req) => {
     // Reset call counter per request
     apiCallCount = 0;
 
-    const summary = { teams: 0, matches: 0, predictions: 0, odds: 0, logosUpdated: 0, standings: 0, teamStats: 0, h2h: 0, lineups: 0 };
+    const summary = { teams: 0, matches: 0, predictions: 0, odds: 0, logosUpdated: 0, standings: 0, teamStats: 0, h2h: 0, lineups: 0, players: 0 };
 
     // Load ALL existing teams from DB for cross-matching
     const { data: existingTeams } = await supabase.from("teams").select("id, name, api_football_id, logo_url, sportradar_id");
