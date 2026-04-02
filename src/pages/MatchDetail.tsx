@@ -8,15 +8,34 @@ import { MatchContextCard } from "@/components/MatchContextCard";
 import { TeamComparisonCard } from "@/components/TeamComparisonCard";
 import { H2HCard } from "@/components/H2HCard";
 import { OverUnderCard } from "@/components/OverUnderCard";
+import { LineupsCard } from "@/components/LineupsCard";
+import { LiveMatchCard } from "@/components/LiveMatchCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowLeft, TrendingUp, Target, BarChart3 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 
 export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: match, isLoading } = useMatch(id!);
   const { data: features } = useMatchFeatures(id);
+
+  // Fetch match_context for lineup fallback
+  const { data: matchContext } = useQuery({
+    queryKey: ["match-context", id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("match_context")
+        .select("*")
+        .eq("match_id", id!)
+        .single();
+      if (error) return null;
+      return data;
+    },
+    enabled: !!id,
+  });
 
   const home_team = match?.home_team;
   const away_team = match?.away_team;
@@ -107,7 +126,15 @@ export default function MatchDetail() {
           </CardContent>
         </Card>
 
-        {/* 2. AI Verdict */}
+        {/* 2. Live Score + Events (live matches only) */}
+        <LiveMatchCard
+          apiFootballId={match.api_football_id}
+          matchStatus={match.status}
+          homeTeamName={home_team?.name}
+          awayTeamName={away_team?.name}
+        />
+
+        {/* 3. AI Verdict */}
         {prediction && (
           <AIVerdictCard
             prediction={prediction}
@@ -117,12 +144,21 @@ export default function MatchDetail() {
           />
         )}
 
-        {/* 3. Team Comparison */}
+        {/* 4. Team Comparison */}
         {features && (
           <TeamComparisonCard features={features} homeTeam={home_team} awayTeam={away_team} />
         )}
 
-        {/* 4. Prediction Probabilities */}
+        {/* 5. Lineups */}
+        <LineupsCard
+          apiFootballId={match.api_football_id}
+          homeTeamName={home_team?.name}
+          awayTeamName={away_team?.name}
+          dbLineupHome={matchContext?.lineup_home}
+          dbLineupAway={matchContext?.lineup_away}
+        />
+
+        {/* 6. Prediction Probabilities */}
         {prediction && (
           <Card className="border-border/50">
             <CardHeader className="pb-3">
@@ -177,12 +213,12 @@ export default function MatchDetail() {
           </Card>
         )}
 
-        {/* 5. Over/Under & BTTS */}
+        {/* 7. Over/Under & BTTS */}
         {prediction && (
           <OverUnderCard prediction={prediction} features={features} />
         )}
 
-        {/* 6. Head-to-Head */}
+        {/* 8. Head-to-Head */}
         {h2hResults && h2hResults.length > 0 && (
           <H2HCard
             results={h2hResults}
@@ -191,14 +227,14 @@ export default function MatchDetail() {
           />
         )}
 
-        {/* 7. Match Intelligence */}
+        {/* 9. Match Intelligence */}
         <MatchContextCard
           matchId={match.id}
           homeTeamName={home_team?.name}
           awayTeamName={away_team?.name}
         />
 
-        {/* 8. AI Commentary */}
+        {/* 10. AI Commentary */}
         <AIInsightsCard
           matchId={match.id}
           existingInsights={match.ai_insights}
@@ -207,7 +243,7 @@ export default function MatchDetail() {
           accuracyScore={match.ai_accuracy_score}
         />
 
-        {/* 9. Odds + Market Edge */}
+        {/* 11. Odds + Market Edge */}
         {odds && (
           <Card className="border-border/50">
             <CardHeader className="pb-3">
@@ -228,7 +264,7 @@ export default function MatchDetail() {
                       <p className="text-lg font-bold">{value.toFixed(2)}</p>
                       <p className="text-xs text-muted-foreground">{label}</p>
                       {delta != null && Math.abs(delta) > 0.03 && (
-                        <p className={`text-[10px] font-semibold mt-1 ${delta > 0 ? "text-green-500" : "text-red-400"}`}>
+                        <p className={`text-[10px] font-semibold mt-1 ${delta > 0 ? "text-green-500" : "text-destructive"}`}>
                           {delta > 0 ? "+" : ""}{Math.round(delta * 100)}% vs AI
                           {isValue && " 💎"}
                         </p>

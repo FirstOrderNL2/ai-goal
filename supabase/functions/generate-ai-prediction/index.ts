@@ -385,6 +385,27 @@ Market margin: ${Math.round(statsAnchors.market_margin * 100)}%`;
       if (ctx.weather) {
         contextBlock += `\nWEATHER: ${ctx.weather}`;
       }
+      // Lineup quality assessment
+      const homeLineup = ctx.lineup_home;
+      const awayLineup = ctx.lineup_away;
+      if (homeLineup && (Array.isArray(homeLineup) ? homeLineup.length > 0 : homeLineup.starters)) {
+        const lu = Array.isArray(homeLineup) ? homeLineup[0] : homeLineup;
+        if (lu?.starters) {
+          contextBlock += `\n${homeName} CONFIRMED LINEUP (${lu.formation || "?"}): ${lu.starters.map((p: any) => `${p.name}${p.pos ? ` [${p.pos}]` : ""}`).join(", ")}`;
+          if (lu.bench?.length > 0) {
+            contextBlock += `\n${homeName} BENCH: ${lu.bench.map((p: any) => p.name).join(", ")}`;
+          }
+        }
+      }
+      if (awayLineup && (Array.isArray(awayLineup) ? awayLineup.length > 0 : awayLineup.starters)) {
+        const lu = Array.isArray(awayLineup) ? awayLineup[0] : awayLineup;
+        if (lu?.starters) {
+          contextBlock += `\n${awayName} CONFIRMED LINEUP (${lu.formation || "?"}): ${lu.starters.map((p: any) => `${p.name}${p.pos ? ` [${p.pos}]` : ""}`).join(", ")}`;
+          if (lu.bench?.length > 0) {
+            contextBlock += `\n${awayName} BENCH: ${lu.bench.map((p: any) => p.name).join(", ")}`;
+          }
+        }
+      }
     }
 
     // Data quality confidence — enhanced
@@ -443,10 +464,11 @@ CRITICAL RULES:
 6. Over/Under must reference combined goal averages and Poisson probability
 7. Winner prediction must cite form, H2H, home advantage, and key absences
 8. Use injuries/suspensions/lineup data and SQUAD INFORMATION to adjust predictions
-9. Be honest about uncertainty — lower confidence when data is sparse
-10. Your predicted score MUST be consistent with your BTTS and Over/Under verdicts
-11. Flag ANOMALIES: when your prediction significantly disagrees with market odds, or when data is insufficient for a confident prediction
-12. Consider SEASON STATISTICS (wins/draws/losses record, home/away split) when available
+9. When CONFIRMED LINEUPS are available, assess starting XI quality vs bench strength. Flag if key players are benched or missing.
+10. Be honest about uncertainty — lower confidence when data is sparse
+11. Your predicted score MUST be consistent with your BTTS and Over/Under verdicts
+12. Flag ANOMALIES: when your prediction significantly disagrees with market odds, or when data is insufficient for a confident prediction
+13. Consider SEASON STATISTICS (wins/draws/losses record, home/away split) when available
 
 DATA QUALITY NOTE: This prediction has a data quality score of ${Math.round(dataQuality * 100)}%. ${dataQuality < 0.5 ? "Data is limited — be more conservative and express higher uncertainty." : "Good data coverage — you can be more decisive."}
 

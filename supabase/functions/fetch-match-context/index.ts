@@ -55,11 +55,16 @@ function extractInjuries(injuries: any[], teamApiId?: number | null): { home: an
   return { home, away };
 }
 
-// Extract structured lineup data
-function extractLineups(lineups: any[]): { home: any[]; away: any[] } {
-  const result: { home: any[]; away: any[] } = { home: [], away: [] };
+// Extract structured lineup data with bench
+function extractLineups(lineups: any[]): { home: any; away: any } {
+  const result: { home: any; away: any } = { home: null, away: null };
   lineups.forEach((l: any, idx: number) => {
-    const players = (l.startXI ?? []).map((p: any) => ({
+    const starters = (l.startXI ?? []).map((p: any) => ({
+      name: p.player?.name ?? "?",
+      number: p.player?.number ?? null,
+      pos: p.player?.pos ?? null,
+    }));
+    const bench = (l.substitutes ?? []).map((p: any) => ({
       name: p.player?.name ?? "?",
       number: p.player?.number ?? null,
       pos: p.player?.pos ?? null,
@@ -67,10 +72,12 @@ function extractLineups(lineups: any[]): { home: any[]; away: any[] } {
     const entry = {
       team: l.team?.name ?? "Unknown",
       formation: l.formation ?? "?",
-      players,
+      starters,
+      bench,
+      captain: starters.find((_: any, i: number) => i === 0)?.name ?? null,
     };
-    if (idx === 0) result.home.push(entry);
-    else result.away.push(entry);
+    if (idx === 0) result.home = entry;
+    else result.away = entry;
   });
   return result;
 }
@@ -93,9 +100,36 @@ function formatLineups(lineups: any[]): string {
     const team = l.team?.name ?? "Unknown";
     const formation = l.formation ?? "?";
     const starters = (l.startXI ?? []).map((p: any) => p.player?.name ?? "?").join(", ");
-    return `${team} (${formation}): ${starters}`;
+    const bench = (l.substitutes ?? []).map((p: any) => p.player?.name ?? "?").join(", ");
+    return `${team} (${formation}): ${starters}\n  Bench: ${bench || "N/A"}`;
   });
   return `CONFIRMED LINEUPS:\n${parts.join("\n")}`;
+}
+
+function formatEvents(events: any[]): string {
+  if (!events.length) return "";
+  const lines = events.map((e: any) => {
+    const time = e.time?.elapsed ?? "?";
+    const extra = e.time?.extra ? `+${e.time.extra}` : "";
+    const team = e.team?.name ?? "";
+    const player = e.player?.name ?? "?";
+    const type = e.type ?? "";
+    const detail = e.detail ?? "";
+    return `${time}${extra}' [${team}] ${type}: ${player}${detail ? ` (${detail})` : ""}`;
+  });
+  return `MATCH EVENTS:\n${lines.join("\n")}`;
+}
+
+function formatLiveStatus(fixture: any): string {
+  if (!fixture) return "";
+  const status = fixture.fixture?.status;
+  const goals = fixture.goals;
+  if (!status) return "";
+  const elapsed = status.elapsed ?? 0;
+  const short = status.short ?? "";
+  const home = fixture.teams?.home?.name ?? "Home";
+  const away = fixture.teams?.away?.name ?? "Away";
+  return `LIVE STATUS: ${home} ${goals?.home ?? 0}-${goals?.away ?? 0} ${away} | ${short} ${elapsed}'`;
 }
 
 function formatPredictions(preds: any[]): string {
@@ -507,6 +541,10 @@ Deno.serve(async (req) => {
         labels.push("lineups");
         fetches.push(apiFootballFetch(`/predictions?fixture=${api_football_id}`, apiKey));
         labels.push("predictions");
+        fetches.push(apiFootballFetch(`/fixtures/events?fixture=${api_football_id}`, apiKey));
+        labels.push("events");
+        fetches.push(apiFootballFetch(`/fixtures?id=${api_football_id}`, apiKey));
+        labels.push("live");
       } else {
         const leagueId = LEAGUE_IDS[league];
         const now = new Date();
@@ -540,11 +578,19 @@ Deno.serve(async (req) => {
           const s = formatLineups(data);
           if (s) parts.push(s);
           const extracted = extractLineups(data);
-          apiLineupsHome = extracted.home;
-          apiLineupsAway = extracted.away;
+          apiLineupsHome = extracted.home ? [extracted.home] : [];
+          apiLineupsAway = extracted.away ? [extracted.away] : [];
         } else if (label === "predictions") {
           const s = formatPredictions(data);
           if (s) parts.push(s);
+        } else if (label === "events") {
+          const s = formatEvents(data);
+          if (s) parts.push(s);
+        } else if (label === "live") {
+          if (data.length > 0) {
+            const s = formatLiveStatus(data[0]);
+            if (s) parts.push(s);
+          }
         }
       }
 
