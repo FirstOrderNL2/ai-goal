@@ -100,9 +100,36 @@ function formatLineups(lineups: any[]): string {
     const team = l.team?.name ?? "Unknown";
     const formation = l.formation ?? "?";
     const starters = (l.startXI ?? []).map((p: any) => p.player?.name ?? "?").join(", ");
-    return `${team} (${formation}): ${starters}`;
+    const bench = (l.substitutes ?? []).map((p: any) => p.player?.name ?? "?").join(", ");
+    return `${team} (${formation}): ${starters}\n  Bench: ${bench || "N/A"}`;
   });
   return `CONFIRMED LINEUPS:\n${parts.join("\n")}`;
+}
+
+function formatEvents(events: any[]): string {
+  if (!events.length) return "";
+  const lines = events.map((e: any) => {
+    const time = e.time?.elapsed ?? "?";
+    const extra = e.time?.extra ? `+${e.time.extra}` : "";
+    const team = e.team?.name ?? "";
+    const player = e.player?.name ?? "?";
+    const type = e.type ?? "";
+    const detail = e.detail ?? "";
+    return `${time}${extra}' [${team}] ${type}: ${player}${detail ? ` (${detail})` : ""}`;
+  });
+  return `MATCH EVENTS:\n${lines.join("\n")}`;
+}
+
+function formatLiveStatus(fixture: any): string {
+  if (!fixture) return "";
+  const status = fixture.fixture?.status;
+  const goals = fixture.goals;
+  if (!status) return "";
+  const elapsed = status.elapsed ?? 0;
+  const short = status.short ?? "";
+  const home = fixture.teams?.home?.name ?? "Home";
+  const away = fixture.teams?.away?.name ?? "Away";
+  return `LIVE STATUS: ${home} ${goals?.home ?? 0}-${goals?.away ?? 0} ${away} | ${short} ${elapsed}'`;
 }
 
 function formatPredictions(preds: any[]): string {
