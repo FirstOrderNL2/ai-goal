@@ -330,7 +330,13 @@ Deno.serve(async (req) => {
         };
       }).filter((m: any) => m.team_home_id && m.team_away_id);
 
-      // Get match uuid mapping
+      if (matchRows.length > 0) {
+        const { error: me } = await supabase.from("matches")
+          .upsert(matchRows, { onConflict: "api_football_id", ignoreDuplicates: false });
+        if (me) console.error("matches upsert error:", me);
+        else summary.matches += matchRows.length;
+      }
+
       const fixtureIds = allFixtures.map((f: any) => f.fixture.id);
       const { data: dbMatches } = await supabase.from("matches")
         .select("id, api_football_id").in("api_football_id", fixtureIds);
