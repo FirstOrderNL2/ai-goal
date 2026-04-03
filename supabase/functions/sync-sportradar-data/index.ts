@@ -482,6 +482,10 @@ Deno.serve(async (req) => {
             model_confidence: Math.max(homeWin, drawProb, awayWin),
             expected_goals_home: 0,
             expected_goals_away: 0,
+            goal_lines: null,
+            goal_distribution: null,
+            best_pick: null,
+            best_pick_confidence: null,
           });
         }
 
