@@ -6,6 +6,7 @@ const leagues = [
   { value: "Europa League", label: "UEL" },
   { value: "Conference League", label: "UECL" },
   { value: "Premier League", label: "Premier League" },
+  { value: "Championship", label: "Championship" },
   { value: "La Liga", label: "La Liga" },
   { value: "Serie A", label: "Serie A" },
   { value: "Bundesliga", label: "Bundesliga" },
