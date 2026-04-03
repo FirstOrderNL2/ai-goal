@@ -393,12 +393,19 @@ Deno.serve(async (req) => {
               const awayGoalAvg = parseFloat(p.teams?.away?.league?.goals?.for?.average?.total ?? "1.1");
               const totalXg = homeGoalAvg + awayGoalAvg;
 
+              // Compute multi-goal-line probabilities using Poisson
+              const goalLines = computeGoalLines(homeGoalAvg, awayGoalAvg);
+
               const { error: pe } = await supabase.from("predictions").upsert({
                 match_id: matchId,
                 home_win: homeWin, draw, away_win: awayWin,
                 expected_goals_home: homeGoalAvg, expected_goals_away: awayGoalAvg,
-                over_under_25: totalXg > 2.5 ? "over" : "under",
+                over_under_25: goalLines.over_2_5 > 0.5 ? "over" : "under",
                 model_confidence: Math.max(homeWin, draw, awayWin),
+                goal_lines: goalLines,
+                goal_distribution: computeGoalDistribution(homeGoalAvg, awayGoalAvg),
+                best_pick: findBestPick(goalLines),
+                best_pick_confidence: Math.max(...Object.values(goalLines) as number[]),
               }, { onConflict: "match_id" });
               if (pe) console.error("prediction upsert error:", pe);
               else summary.predictions++;
