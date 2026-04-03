@@ -37,10 +37,49 @@ async function fetchMatchContextForBatch(
 // ── Poisson helpers (same as main engine) ──
 function poissonPMF(lambda: number, k: number): number {
   let result = Math.exp(-lambda);
-  for (let i = 1; i <= k; i++) {
-    result *= lambda / i;
+  for (let i = 1; i <= k; i++) result *= lambda / i;
+  return result;
+}
+
+function computeGoalLines(lambdaHome: number, lambdaAway: number): Record<string, number> {
+  const thresholds = [0.5, 1.5, 2.5, 3.5, 4.5];
+  const result: Record<string, number> = {};
+  for (const t of thresholds) {
+    let probUnder = 0;
+    const maxGoals = Math.ceil(t) - 1;
+    for (let h = 0; h <= 8; h++) {
+      for (let a = 0; a <= 8; a++) {
+        const p = poissonPMF(lambdaHome, h) * poissonPMF(lambdaAway, a);
+        if (h + a <= maxGoals) probUnder += p;
+      }
+    }
+    const key = t.toString().replace(".", "_");
+    result[`over_${key}`] = Math.round((1 - probUnder) * 1000) / 1000;
+    result[`under_${key}`] = Math.round(probUnder * 1000) / 1000;
   }
   return result;
+}
+
+function computeGoalDistribution(lambdaHome: number, lambdaAway: number): Record<string, number> {
+  const dist: Record<string, number> = {};
+  for (let total = 0; total <= 6; total++) {
+    let prob = 0;
+    for (let h = 0; h <= total; h++) {
+      const a = total - h;
+      if (a <= 8) prob += poissonPMF(lambdaHome, h) * poissonPMF(lambdaAway, a);
+    }
+    dist[`total_${total}`] = Math.round(prob * 1000) / 1000;
+  }
+  return dist;
+}
+
+function findBestPick(goalLines: Record<string, number>): string {
+  let best = "Over 2.5";
+  let bestConf = 0;
+  for (const [key, val] of Object.entries(goalLines)) {
+    if (val > bestConf && val < 0.92) { bestConf = val; best = key.replace(/_/g, ".").replace("over.", "Over ").replace("under.", "Under "); }
+  }
+  return best;
 }
 
 function computeStatisticalAnchors(
