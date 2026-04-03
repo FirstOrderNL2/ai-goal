@@ -146,17 +146,21 @@ function computeGoalDistribution(lambdaHome: number, lambdaAway: number): Record
 }
 
 function findBestPick(goalLines: Record<string, number>): string {
-  const overEntries = Object.entries(goalLines).filter(([k]) => k.startsWith("over_"));
-  let best = "Over 2.5";
-  let bestConf = 0;
-  for (const [key, val] of overEntries) {
-    if (val > bestConf && val < 0.92) { bestConf = val; best = key.replace("over_", "Over ").replace("_", "."); }
+  // Find the "over" line with highest confidence that's still meaningful (55-85% range)
+  const candidates = Object.entries(goalLines)
+    .filter(([k, v]) => k.startsWith("over_") && v >= 0.55 && v <= 0.85)
+    .sort((a, b) => b[1] - a[1]);
+  if (candidates.length > 0) {
+    return candidates[0][0].replace("over_", "Over ").replace("_", ".");
   }
-  const underEntries = Object.entries(goalLines).filter(([k]) => k.startsWith("under_"));
-  for (const [key, val] of underEntries) {
-    if (val > bestConf && val < 0.92) { bestConf = val; best = key.replace("under_", "Under ").replace("_", "."); }
+  // Fallback: find under line in sweet spot
+  const underCandidates = Object.entries(goalLines)
+    .filter(([k, v]) => k.startsWith("under_") && v >= 0.55 && v <= 0.85)
+    .sort((a, b) => b[1] - a[1]);
+  if (underCandidates.length > 0) {
+    return underCandidates[0][0].replace("under_", "Under ").replace("_", ".");
   }
-  return best;
+  return goalLines.over_2_5 > 0.5 ? "Over 2.5" : "Under 2.5";
 }
 
 // Completed match statuses
