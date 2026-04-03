@@ -344,11 +344,15 @@ export type Database = {
         Row: {
           ai_reasoning: string | null
           away_win: number
+          best_pick: string | null
+          best_pick_confidence: number | null
           btts: string | null
           created_at: string
           draw: number
           expected_goals_away: number
           expected_goals_home: number
+          goal_distribution: Json | null
+          goal_lines: Json | null
           home_win: number
           id: string
           match_id: string
@@ -360,11 +364,15 @@ export type Database = {
         Insert: {
           ai_reasoning?: string | null
           away_win: number
+          best_pick?: string | null
+          best_pick_confidence?: number | null
           btts?: string | null
           created_at?: string
           draw: number
           expected_goals_away: number
           expected_goals_home: number
+          goal_distribution?: Json | null
+          goal_lines?: Json | null
           home_win: number
           id?: string
           match_id: string
@@ -376,11 +384,15 @@ export type Database = {
         Update: {
           ai_reasoning?: string | null
           away_win?: number
+          best_pick?: string | null
+          best_pick_confidence?: number | null
           btts?: string | null
           created_at?: string
           draw?: number
           expected_goals_away?: number
           expected_goals_home?: number
+          goal_distribution?: Json | null
+          goal_lines?: Json | null
           home_win?: number
           id?: string
           match_id?: string
