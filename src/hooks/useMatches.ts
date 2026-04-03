@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Match, Team, Prediction, Odds, MatchFeatures, Player } from "@/lib/types";
 
 const API_FOOTBALL_LEAGUES = [
-  "Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
+  "Premier League", "Championship", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
   "Eredivisie", "Keuken Kampioen Divisie",
   "Champions League", "Europa League", "Conference League", "Women's Champions League",
   "World Cup", "WC Qualifiers Europe", "WC Qualifiers South America", "WC Qualifiers CONCACAF",

@@ -11,6 +11,7 @@ const API_BASE = "https://v3.football.api-sports.io";
 const LEAGUES = [
   // Domestic leagues
   { id: 39, name: "Premier League", country: "England", type: "league" },
+  { id: 40, name: "Championship", country: "England", type: "league" },
   { id: 140, name: "La Liga", country: "Spain", type: "league" },
   { id: 135, name: "Serie A", country: "Italy", type: "league" },
   { id: 78, name: "Bundesliga", country: "Germany", type: "league" },
