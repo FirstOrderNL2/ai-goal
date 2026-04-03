@@ -306,7 +306,15 @@ Deno.serve(async (req) => {
       teamsByApiId.forEach((t, apiId) => { if (!teamUuidMap.has(apiId)) teamUuidMap.set(apiId, t.id); });
 
       // ── 3. Upsert matches with proper status mapping ──
-      const matchRows = allFixtures.map((f: any) => {
+      // Deduplicate fixtures by api_football_id (boundary date can appear in both ranges)
+      const seenFixtureIds = new Set<number>();
+      const dedupedFixtures = allFixtures.filter((f: any) => {
+        if (seenFixtureIds.has(f.fixture.id)) return false;
+        seenFixtureIds.add(f.fixture.id);
+        return true;
+      });
+
+      const matchRows = dedupedFixtures.map((f: any) => {
         const status = mapStatus(f.fixture.status.short);
         const isFinished = status === "completed";
         return {
@@ -316,18 +324,11 @@ Deno.serve(async (req) => {
           team_away_id: teamUuidMap.get(f.teams.away.id),
           goals_home: isFinished ? f.goals.home : null,
           goals_away: isFinished ? f.goals.away : null,
-          status: status === "live" ? "upcoming" : status, // treat live as upcoming for DB
+          status: status === "live" ? "upcoming" : status,
           league: league.name,
           round: f.league.round ?? null,
         };
       }).filter((m: any) => m.team_home_id && m.team_away_id);
-
-      if (matchRows.length > 0) {
-        const { error: me } = await supabase.from("matches")
-          .upsert(matchRows, { onConflict: "api_football_id", ignoreDuplicates: false });
-        if (me) console.error("matches upsert error:", me);
-        else summary.matches += matchRows.length;
-      }
 
       // Get match uuid mapping
       const fixtureIds = allFixtures.map((f: any) => f.fixture.id);
