@@ -46,10 +46,23 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   "newcastle united fc": "newcastle", "newcastle united": "newcastle",
   "brighton and hove albion": "brighton", "brighton & hove albion": "brighton",
   "aston villa fc": "aston villa", "nottingham forest fc": "nottingham forest",
-  "leicester city fc": "leicester", "crystal palace fc": "crystal palace",
+  "leicester city fc": "leicester", "leicester city": "leicester",
+  "crystal palace fc": "crystal palace",
   "everton fc": "everton", "fulham fc": "fulham",
   "bournemouth": "afc bournemouth", "ipswich town fc": "ipswich", "ipswich town": "ipswich",
   "southampton fc": "southampton", "brentford fc": "brentford",
+  // Championship aliases
+  "coventry city": "coventry", "derby county": "derby", "preston north end": "preston",
+  "hull city": "hull city", "middlesbrough fc": "middlesbrough",
+  "millwall fc": "millwall", "oxford united": "oxford united",
+  "norwich city": "norwich", "portsmouth fc": "portsmouth",
+  "birmingham city": "birmingham", "blackburn rovers": "blackburn",
+  "bristol city fc": "bristol city", "stoke city fc": "stoke city",
+  "swansea city": "swansea", "west bromwich albion": "west brom", "west bromwich": "west brom",
+  "queens park rangers": "qpr", "sheffield united": "sheffield utd",
+  "wrexham afc": "wrexham", "watford fc": "watford",
+  "charlton athletic": "charlton", "sheffield wednesday fc": "sheffield wednesday",
+  // Spain
   "real madrid cf": "real madrid", "fc barcelona": "barcelona", "rcd espanyol": "espanyol",
   "real sociedad de fútbol": "real sociedad", "real betis balompié": "real betis",
   "villarreal cf": "villarreal", "sevilla fc": "sevilla", "valencia cf": "valencia",
@@ -91,6 +104,63 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
 function resolveTeamName(name: string): string {
   const lower = name.toLowerCase().trim();
   return TEAM_NAME_ALIASES[lower] ?? lower;
+}
+
+// Poisson helpers for multi-goal-line predictions
+function poissonPMF(lambda: number, k: number): number {
+  let result = Math.exp(-lambda);
+  for (let i = 1; i <= k; i++) result *= lambda / i;
+  return result;
+}
+
+function computeGoalLines(lambdaHome: number, lambdaAway: number): Record<string, number> {
+  const thresholds = [0.5, 1.5, 2.5, 3.5, 4.5];
+  const result: Record<string, number> = {};
+  for (const t of thresholds) {
+    let probUnder = 0;
+    const maxGoals = Math.ceil(t) - 1;
+    for (let h = 0; h <= 8; h++) {
+      for (let a = 0; a <= 8; a++) {
+        const p = poissonPMF(lambdaHome, h) * poissonPMF(lambdaAway, a);
+        if (h + a <= maxGoals) probUnder += p;
+      }
+    }
+    const key = t.toString().replace(".", "_");
+    result[`over_${key}`] = Math.round((1 - probUnder) * 1000) / 1000;
+    result[`under_${key}`] = Math.round(probUnder * 1000) / 1000;
+  }
+  return result;
+}
+
+function computeGoalDistribution(lambdaHome: number, lambdaAway: number): Record<string, number> {
+  const dist: Record<string, number> = {};
+  for (let total = 0; total <= 6; total++) {
+    let prob = 0;
+    for (let h = 0; h <= total; h++) {
+      const a = total - h;
+      if (a <= 8) prob += poissonPMF(lambdaHome, h) * poissonPMF(lambdaAway, a);
+    }
+    dist[`total_${total}`] = Math.round(prob * 1000) / 1000;
+  }
+  return dist;
+}
+
+function findBestPick(goalLines: Record<string, number>): string {
+  // Find the "over" line with highest confidence that's still meaningful (55-85% range)
+  const candidates = Object.entries(goalLines)
+    .filter(([k, v]) => k.startsWith("over_") && v >= 0.55 && v <= 0.85)
+    .sort((a, b) => b[1] - a[1]);
+  if (candidates.length > 0) {
+    return candidates[0][0].replace("over_", "Over ").replace("_", ".");
+  }
+  // Fallback: find under line in sweet spot
+  const underCandidates = Object.entries(goalLines)
+    .filter(([k, v]) => k.startsWith("under_") && v >= 0.55 && v <= 0.85)
+    .sort((a, b) => b[1] - a[1]);
+  if (underCandidates.length > 0) {
+    return underCandidates[0][0].replace("under_", "Under ").replace("_", ".");
+  }
+  return goalLines.over_2_5 > 0.5 ? "Over 2.5" : "Under 2.5";
 }
 
 // Completed match statuses
@@ -232,15 +302,23 @@ Deno.serve(async (req) => {
         else summary.teams += teamsToUpsert.size;
       }
 
-      // Refresh team uuid mapping
-      const apiIds = [...Array.from(teamsToUpsert.keys()), ...teamsToUpdateLogo.map(u => u.api_football_id)];
-      const { data: dbTeams } = await supabase.from("teams").select("id, api_football_id").in("api_football_id", apiIds);
+      // Refresh team uuid mapping — include ALL teams with api_football_id for this league
+      const allLeagueApiIds = [...new Set(allFixtures.flatMap((f: any) => [f.teams.home.id, f.teams.away.id]))];
+      const { data: dbTeams } = await supabase.from("teams").select("id, api_football_id").in("api_football_id", allLeagueApiIds);
       const teamUuidMap = new Map<number, string>();
-      for (const t of dbTeams ?? []) teamUuidMap.set(t.api_football_id!, t.id);
+      for (const t of dbTeams ?? []) if (t.api_football_id) teamUuidMap.set(t.api_football_id, t.id);
       teamsByApiId.forEach((t, apiId) => { if (!teamUuidMap.has(apiId)) teamUuidMap.set(apiId, t.id); });
 
       // ── 3. Upsert matches with proper status mapping ──
-      const matchRows = allFixtures.map((f: any) => {
+      // Deduplicate fixtures by api_football_id (boundary date can appear in both ranges)
+      const seenFixtureIds = new Set<number>();
+      const dedupedFixtures = allFixtures.filter((f: any) => {
+        if (seenFixtureIds.has(f.fixture.id)) return false;
+        seenFixtureIds.add(f.fixture.id);
+        return true;
+      });
+
+      const matchRows = dedupedFixtures.map((f: any) => {
         const status = mapStatus(f.fixture.status.short);
         const isFinished = status === "completed";
         return {
@@ -250,7 +328,7 @@ Deno.serve(async (req) => {
           team_away_id: teamUuidMap.get(f.teams.away.id),
           goals_home: isFinished ? f.goals.home : null,
           goals_away: isFinished ? f.goals.away : null,
-          status: status === "live" ? "upcoming" : status, // treat live as upcoming for DB
+          status: status === "live" ? "upcoming" : status,
           league: league.name,
           round: f.league.round ?? null,
         };
@@ -263,7 +341,6 @@ Deno.serve(async (req) => {
         else summary.matches += matchRows.length;
       }
 
-      // Get match uuid mapping
       const fixtureIds = allFixtures.map((f: any) => f.fixture.id);
       const { data: dbMatches } = await supabase.from("matches")
         .select("id, api_football_id").in("api_football_id", fixtureIds);
@@ -380,12 +457,19 @@ Deno.serve(async (req) => {
               const awayGoalAvg = parseFloat(p.teams?.away?.league?.goals?.for?.average?.total ?? "1.1");
               const totalXg = homeGoalAvg + awayGoalAvg;
 
+              // Compute multi-goal-line probabilities using Poisson
+              const goalLines = computeGoalLines(homeGoalAvg, awayGoalAvg);
+
               const { error: pe } = await supabase.from("predictions").upsert({
                 match_id: matchId,
                 home_win: homeWin, draw, away_win: awayWin,
                 expected_goals_home: homeGoalAvg, expected_goals_away: awayGoalAvg,
-                over_under_25: totalXg > 2.5 ? "over" : "under",
+                over_under_25: goalLines.over_2_5 > 0.5 ? "over" : "under",
                 model_confidence: Math.max(homeWin, draw, awayWin),
+                goal_lines: goalLines,
+                goal_distribution: computeGoalDistribution(homeGoalAvg, awayGoalAvg),
+                best_pick: findBestPick(goalLines),
+                best_pick_confidence: Math.max(...Object.values(goalLines) as number[]),
               }, { onConflict: "match_id" });
               if (pe) console.error("prediction upsert error:", pe);
               else summary.predictions++;

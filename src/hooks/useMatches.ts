@@ -25,7 +25,7 @@ export function useUpcomingMatches(league?: string) {
         .eq("status", "upcoming")
         .gte("match_date", twoHoursAgo)
         .order("match_date", { ascending: true })
-        .limit(50);
+        .limit(200);
 
       if (league && league !== "all") {
         query = query.eq("league", league);

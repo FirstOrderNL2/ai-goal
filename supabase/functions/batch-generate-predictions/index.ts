@@ -37,10 +37,56 @@ async function fetchMatchContextForBatch(
 // ── Poisson helpers (same as main engine) ──
 function poissonPMF(lambda: number, k: number): number {
   let result = Math.exp(-lambda);
-  for (let i = 1; i <= k; i++) {
-    result *= lambda / i;
+  for (let i = 1; i <= k; i++) result *= lambda / i;
+  return result;
+}
+
+function computeGoalLines(lambdaHome: number, lambdaAway: number): Record<string, number> {
+  const thresholds = [0.5, 1.5, 2.5, 3.5, 4.5];
+  const result: Record<string, number> = {};
+  for (const t of thresholds) {
+    let probUnder = 0;
+    const maxGoals = Math.ceil(t) - 1;
+    for (let h = 0; h <= 8; h++) {
+      for (let a = 0; a <= 8; a++) {
+        const p = poissonPMF(lambdaHome, h) * poissonPMF(lambdaAway, a);
+        if (h + a <= maxGoals) probUnder += p;
+      }
+    }
+    const key = t.toString().replace(".", "_");
+    result[`over_${key}`] = Math.round((1 - probUnder) * 1000) / 1000;
+    result[`under_${key}`] = Math.round(probUnder * 1000) / 1000;
   }
   return result;
+}
+
+function computeGoalDistribution(lambdaHome: number, lambdaAway: number): Record<string, number> {
+  const dist: Record<string, number> = {};
+  for (let total = 0; total <= 6; total++) {
+    let prob = 0;
+    for (let h = 0; h <= total; h++) {
+      const a = total - h;
+      if (a <= 8) prob += poissonPMF(lambdaHome, h) * poissonPMF(lambdaAway, a);
+    }
+    dist[`total_${total}`] = Math.round(prob * 1000) / 1000;
+  }
+  return dist;
+}
+
+function findBestPick(goalLines: Record<string, number>): string {
+  const candidates = Object.entries(goalLines)
+    .filter(([k, v]) => k.startsWith("over_") && v >= 0.55 && v <= 0.85)
+    .sort((a, b) => b[1] - a[1]);
+  if (candidates.length > 0) {
+    return candidates[0][0].replace("over_", "Over ").replace("_", ".");
+  }
+  const underCandidates = Object.entries(goalLines)
+    .filter(([k, v]) => k.startsWith("under_") && v >= 0.55 && v <= 0.85)
+    .sort((a, b) => b[1] - a[1]);
+  if (underCandidates.length > 0) {
+    return underCandidates[0][0].replace("under_", "Under ").replace("_", ".");
+  }
+  return goalLines.over_2_5 > 0.5 ? "Over 2.5" : "Under 2.5";
 }
 
 function computeStatisticalAnchors(
@@ -340,19 +386,30 @@ ${liveContext ? `\nLIVE CONTEXT:\n${liveContext.slice(0, 3000)}` : ""}`;
           pred.key_factors || "",
         ].join("\n");
 
+        // Compute multi-goal-line probabilities
+        const lambdaH = pred.expected_goals_home || 1.2;
+        const lambdaA = pred.expected_goals_away || 1.0;
+        const goalLines = computeGoalLines(lambdaH, lambdaA);
+        const goalDist = computeGoalDistribution(lambdaH, lambdaA);
+        const bestPick = findBestPick(goalLines);
+
         const { error: upsertErr } = await supabase.from("predictions").upsert({
           match_id: match.id,
           home_win: Math.round(hw * 1000) / 1000,
           draw: Math.round(dr * 1000) / 1000,
           away_win: Math.round(aw * 1000) / 1000,
-          expected_goals_home: Math.round((pred.expected_goals_home || 1.2) * 10) / 10,
-          expected_goals_away: Math.round((pred.expected_goals_away || 1.0) * 10) / 10,
+          expected_goals_home: Math.round(lambdaH * 10) / 10,
+          expected_goals_away: Math.round(lambdaA * 10) / 10,
           predicted_score_home: pred.predicted_score_home ?? null,
           predicted_score_away: pred.predicted_score_away ?? null,
-          over_under_25: pred.over_under_25 || "under",
+          over_under_25: goalLines.over_2_5 > 0.5 ? "over" : "under",
           btts: pred.btts || "no",
           model_confidence: Math.round((pred.confidence || 0.5) * 1000) / 1000,
           ai_reasoning: reasoning,
+          goal_lines: goalLines,
+          goal_distribution: goalDist,
+          best_pick: bestPick,
+          best_pick_confidence: Math.max(...Object.values(goalLines).filter(v => typeof v === 'number') as number[]),
         }, { onConflict: "match_id" });
 
         if (upsertErr) {

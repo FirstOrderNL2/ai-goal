@@ -121,7 +121,9 @@ export function MatchCard({ match }: MatchCardProps) {
                   variant={prediction.over_under_25 === "over" ? "default" : "outline"}
                   className="text-[10px]"
                 >
-                  {prediction.over_under_25 === "over" ? "O2.5" : "U2.5"}
+                  {prediction.best_pick
+                    ? prediction.best_pick
+                    : prediction.over_under_25 === "over" ? "O2.5" : "U2.5"}
                 </Badge>
                 <div className="flex items-center gap-1 text-muted-foreground">
                   <span>{Math.round(Number(prediction.model_confidence) * 100)}%</span>
