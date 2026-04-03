@@ -92,17 +92,23 @@ export function AIVerdictCard({ prediction, homeTeamName, awayTeamName, odds }: 
           </div>
           <div className="rounded-lg bg-muted/50 p-3 space-y-1">
             <BarChart3 className="h-4 w-4 mx-auto text-primary" />
-            <div className="flex gap-1.5 justify-center">
+            <div className="flex flex-col items-center gap-1">
               <Badge variant={prediction.btts === "yes" ? "default" : "outline"} className="text-[10px] px-1.5 py-0">
                 BTTS {prediction.btts === "yes" ? "✓" : "✗"}
               </Badge>
+              <Badge
+                variant={prediction.over_under_25 === "over" ? "default" : "outline"}
+                className="text-[10px] px-1.5 py-0"
+              >
+                {prediction.over_under_25 === "over" ? "Over" : "Under"} 2.5
+              </Badge>
+              {prediction.best_pick && (
+                <Badge variant="default" className="text-[10px] px-1.5 py-0 bg-primary/80">
+                  ⭐ {prediction.best_pick}
+                </Badge>
+              )}
             </div>
-            <Badge
-              variant={prediction.over_under_25 === "over" ? "default" : "outline"}
-              className="text-[10px] px-1.5 py-0"
-            >
-              {prediction.over_under_25 === "over" ? "Over" : "Under"} 2.5
-            </Badge>
+            <p className="text-[10px] text-muted-foreground">Markets</p>
           </div>
         </div>
 

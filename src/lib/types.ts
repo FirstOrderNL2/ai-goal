@@ -46,6 +46,10 @@ export interface Prediction {
   btts: string | null;
   model_confidence: number;
   ai_reasoning: string | null;
+  goal_lines: Record<string, number> | null;
+  goal_distribution: Record<string, number> | null;
+  best_pick: string | null;
+  best_pick_confidence: number | null;
 }
 
 export interface Odds {
