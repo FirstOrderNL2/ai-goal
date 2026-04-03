@@ -628,19 +628,30 @@ IMPORTANT:
     const aiConfidence = pred.confidence || 0.5;
     const blendedConfidence = Math.round(((aiConfidence * 0.6) + (dataQuality * 0.4)) * 1000) / 1000;
 
+    // Compute multi-goal-line probabilities
+    const lambdaH = pred.expected_goals_home || 1.2;
+    const lambdaA = pred.expected_goals_away || 1.0;
+    const goalLines = computeGoalLines(lambdaH, lambdaA);
+    const goalDist = computeGoalDistribution(lambdaH, lambdaA);
+    const bestPick = findBestPick(goalLines);
+
     await supabase.from("predictions").upsert({
       match_id: match_id,
       home_win: Math.round(hw * 1000) / 1000,
       draw: Math.round(dr * 1000) / 1000,
       away_win: Math.round(aw * 1000) / 1000,
-      expected_goals_home: Math.round((pred.expected_goals_home || 1.2) * 10) / 10,
-      expected_goals_away: Math.round((pred.expected_goals_away || 1.0) * 10) / 10,
+      expected_goals_home: Math.round(lambdaH * 10) / 10,
+      expected_goals_away: Math.round(lambdaA * 10) / 10,
       predicted_score_home: pred.predicted_score_home ?? null,
       predicted_score_away: pred.predicted_score_away ?? null,
-      over_under_25: pred.over_under_25 || "under",
+      over_under_25: goalLines.over_2_5 > 0.5 ? "over" : "under",
       btts: pred.btts || "no",
       model_confidence: blendedConfidence,
       ai_reasoning: reasoning,
+      goal_lines: goalLines,
+      goal_distribution: goalDist,
+      best_pick: bestPick,
+      best_pick_confidence: Math.max(...Object.values(goalLines).filter(v => typeof v === 'number') as number[]),
     }, { onConflict: "match_id" });
 
     await supabase.from("matches").update({ ai_insights: reasoning }).eq("id", match_id);
