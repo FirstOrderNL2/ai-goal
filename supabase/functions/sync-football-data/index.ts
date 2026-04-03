@@ -245,11 +245,11 @@ Deno.serve(async (req) => {
         else summary.teams += teamsToUpsert.size;
       }
 
-      // Refresh team uuid mapping
-      const apiIds = [...Array.from(teamsToUpsert.keys()), ...teamsToUpdateLogo.map(u => u.api_football_id)];
-      const { data: dbTeams } = await supabase.from("teams").select("id, api_football_id").in("api_football_id", apiIds);
+      // Refresh team uuid mapping — include ALL teams with api_football_id for this league
+      const allLeagueApiIds = [...new Set(allFixtures.flatMap((f: any) => [f.teams.home.id, f.teams.away.id]))];
+      const { data: dbTeams } = await supabase.from("teams").select("id, api_football_id").in("api_football_id", allLeagueApiIds);
       const teamUuidMap = new Map<number, string>();
-      for (const t of dbTeams ?? []) teamUuidMap.set(t.api_football_id!, t.id);
+      for (const t of dbTeams ?? []) if (t.api_football_id) teamUuidMap.set(t.api_football_id, t.id);
       teamsByApiId.forEach((t, apiId) => { if (!teamUuidMap.has(apiId)) teamUuidMap.set(apiId, t.id); });
 
       // ── 3. Upsert matches with proper status mapping ──
