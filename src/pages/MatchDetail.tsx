@@ -10,6 +10,7 @@ import { H2HCard } from "@/components/H2HCard";
 import { OverUnderCard } from "@/components/OverUnderCard";
 import { LineupsCard } from "@/components/LineupsCard";
 import { PredictionComparisonCard } from "@/components/PredictionComparisonCard";
+import { PredictionHistoryCard } from "@/components/PredictionHistoryCard";
 import { LiveMatchCard } from "@/components/LiveMatchCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
