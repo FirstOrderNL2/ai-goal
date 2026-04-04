@@ -37,42 +37,29 @@ Deno.serve(async (req) => {
 
   // ── Phase A: Initial predictions for matches without any ──
   {
-    const { data: unpredicted } = await supabase
+    const { data: upcoming } = await supabase
       .from("matches")
       .select("id")
       .eq("status", "upcoming")
-      .not("id", "in", `(SELECT match_id FROM predictions)`)
       .order("match_date", { ascending: true })
-      .limit(5);
+      .limit(200);
 
-    // Fallback: query matches then filter by missing prediction
-    if (!unpredicted || unpredicted.length === 0) {
-      const { data: upcoming } = await supabase
-        .from("matches")
-        .select("id")
-        .eq("status", "upcoming")
-        .order("match_date", { ascending: true })
-        .limit(50);
+    if (upcoming && upcoming.length > 0) {
+      const ids = upcoming.map((m: any) => m.id);
+      const { data: existing } = await supabase
+        .from("predictions")
+        .select("match_id, ai_reasoning")
+        .in("match_id", ids);
 
-      if (upcoming && upcoming.length > 0) {
-        const ids = upcoming.map((m: any) => m.id);
-        const { data: existing } = await supabase
-          .from("predictions")
-          .select("match_id")
-          .in("match_id", ids);
+      const existingMap = new Map((existing ?? []).map((p: any) => [p.match_id, p]));
+      
+      // Find matches with no prediction OR incomplete prediction (no ai_reasoning)
+      const needsPrediction = upcoming.filter((m: any) => {
+        const pred = existingMap.get(m.id);
+        return !pred || !pred.ai_reasoning;
+      }).slice(0, 15);
 
-        const existingIds = new Set((existing ?? []).map((p: any) => p.match_id));
-        const missing = upcoming.filter((m: any) => !existingIds.has(m.id)).slice(0, 5);
-
-        for (const match of missing) {
-          const ok = await callPredict(match.id);
-          log.push(`phase-a: ${match.id} → ${ok ? "OK" : "FAIL"}`);
-          if (ok) totalProcessed++;
-          await new Promise((r) => setTimeout(r, 2000));
-        }
-      }
-    } else {
-      for (const match of unpredicted) {
+      for (const match of needsPrediction) {
         const ok = await callPredict(match.id);
         log.push(`phase-a: ${match.id} → ${ok ? "OK" : "FAIL"}`);
         if (ok) totalProcessed++;
