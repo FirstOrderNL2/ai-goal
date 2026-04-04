@@ -96,7 +96,7 @@ export function MatchCard({ match }: MatchCardProps) {
   const liveMinute = useLiveMinute(match.match_date, match.status, isLive);
   return (
     <div onClick={() => navigate(`/match/${match.id}`)} className="cursor-pointer">
-      <Card className="group border-border/50 bg-card transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
+      <Card className={`group border-border/50 bg-card transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5 ${isLive ? "ring-1 ring-green-500/30 shadow-green-500/10 shadow-md" : ""}`}>
         <CardContent className="p-4 space-y-3">
           {/* League & Date */}
           <div className="flex items-center justify-between">
