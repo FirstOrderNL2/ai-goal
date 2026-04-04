@@ -86,7 +86,7 @@ export function useLiveMatches(league?: string) {
 export function useCompletedMatches(league?: string) {
   return useQuery({
     queryKey: ["matches", "completed", league],
-    refetchInterval: 5 * 60 * 1000,
+    refetchInterval: (query) => query.state.error ? false : 5 * 60 * 1000,
     queryFn: async () => {
       let query = supabase
         .from("matches")
