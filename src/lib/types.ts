@@ -51,7 +51,7 @@ export interface Prediction {
   best_pick: string | null;
   best_pick_confidence: number | null;
   last_prediction_at: string | null;
-  prediction_intervals: Array<{ time: string; type?: string }> | null;
+  prediction_intervals: Array<{ at: string; minutesBefore?: number; label?: string }> | null;
   pre_match_snapshot: Record<string, unknown> | null;
 }
 
