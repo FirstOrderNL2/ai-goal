@@ -11,7 +11,6 @@ import { OverUnderCard } from "@/components/OverUnderCard";
 import { LineupsCard } from "@/components/LineupsCard";
 import { PredictionComparisonCard } from "@/components/PredictionComparisonCard";
 import { LiveMatchCard } from "@/components/LiveMatchCard";
-import { LiveMatchCard } from "@/components/LiveMatchCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
