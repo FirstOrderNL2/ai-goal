@@ -92,9 +92,16 @@ export default function MatchDetail() {
         <Card className="border-border/50">
           <CardContent className="p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <Badge variant="secondary" className="uppercase tracking-wider text-xs">
-                {match.league}
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="uppercase tracking-wider text-xs">
+                  {match.league}
+                </Badge>
+                {isMatchLive && (
+                  <Badge className="bg-green-500/20 text-green-500 text-[10px] animate-pulse font-bold">
+                    LIVE {liveElapsed != null ? `${liveElapsed}'` : liveStatusShort}
+                  </Badge>
+                )}
+              </div>
               <span className="text-sm text-muted-foreground">
                 {new Date(match.match_date).toLocaleString("en-GB", { timeZone: "Europe/Berlin", weekday: "long", month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })} CET
               </span>
