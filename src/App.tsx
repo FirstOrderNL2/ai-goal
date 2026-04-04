@@ -18,6 +18,8 @@ const queryClient = new QueryClient({
       retry: 1,
       retryDelay: 3000,
       refetchOnWindowFocus: false,
+      networkMode: "online",
+      staleTime: 30_000,
     },
   },
 });
