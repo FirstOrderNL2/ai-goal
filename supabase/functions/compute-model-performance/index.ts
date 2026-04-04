@@ -39,13 +39,25 @@ Deno.serve(async (req) => {
     }
 
     const matchIds = matches.map((m: any) => m.id);
-    const { data: predictions, error: pErr } = await supabase
-      .from("predictions")
-      .select("*")
-      .in("match_id", matchIds);
-
-    if (pErr) throw pErr;
-    if (!predictions || predictions.length === 0) {
+    
+    // Chunk matchIds to avoid URL-too-long errors
+    const chunkSize = 200;
+    const allPredictions: any[] = [];
+    for (let i = 0; i < matchIds.length; i += chunkSize) {
+      const chunk = matchIds.slice(i, i + chunkSize);
+      const { data: preds, error: pErr } = await supabase
+        .from("predictions")
+        .select("*")
+        .in("match_id", chunk);
+      if (pErr) {
+        console.error("Prediction chunk error:", JSON.stringify(pErr));
+        throw pErr;
+      }
+      if (preds) allPredictions.push(...preds);
+    }
+    
+    const predictions = allPredictions;
+    if (predictions.length === 0) {
       return new Response(JSON.stringify({ message: "No predictions found" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
