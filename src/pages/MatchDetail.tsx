@@ -145,6 +145,14 @@ export default function MatchDetail() {
           />
         )}
 
+        {/* 3b. Pre-Match vs HT Comparison */}
+        {prediction && (
+          <PredictionComparisonCard
+            prediction={prediction}
+            homeTeamName={home_team?.name || "Home"}
+            awayTeamName={away_team?.name || "Away"}
+          />
+
         {/* 4. Team Comparison */}
         {features && (
           <TeamComparisonCard features={features} homeTeam={home_team} awayTeam={away_team} />
