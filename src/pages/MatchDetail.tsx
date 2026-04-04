@@ -75,6 +75,19 @@ export default function MatchDetail() {
   const isLive = match?.status === "live" || match?.status === "1H" || match?.status === "2H" || match?.status === "HT" || match?.status === "ET";
   const { data: liveFixture } = useLiveFixture(match?.api_football_id, match?.status);
 
+  // Compute estimated elapsed minutes from kickoff time
+  const getEstimatedElapsed = () => {
+    if (!match?.match_date || !isLive) return null;
+    const kickoff = new Date(match.match_date).getTime();
+    const now = Date.now();
+    const diffMin = Math.floor((now - kickoff) / 60000);
+    if (match.status === "1H" || match.status === "live") return Math.min(Math.max(diffMin, 1), 45);
+    if (match.status === "2H") return Math.min(Math.max(diffMin - 15, 46), 90); // ~15 min break
+    return null;
+  };
+
+  const statusLabel: Record<string, string> = { "1H": "1st Half", "2H": "2nd Half", "HT": "Half Time", "ET": "Extra Time", "live": "Live" };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
