@@ -23,12 +23,9 @@ function entryLabel(index: number, total: number, type?: string): string {
 export function PredictionHistoryCard({ prediction }: { prediction: Prediction }) {
   const intervals = prediction.prediction_intervals;
 
-  if (!intervals || intervals.length === 0) {
-    return null;
-  }
+  const isEmpty = !intervals || intervals.length === 0;
 
-  // newest first
-  const sorted = [...intervals].reverse();
+  const sorted = isEmpty ? [] : [...intervals!].reverse();
 
   return (
     <Card className="border-border/50">
@@ -39,6 +36,9 @@ export function PredictionHistoryCard({ prediction }: { prediction: Prediction }
         </CardTitle>
       </CardHeader>
       <CardContent>
+        {isEmpty ? (
+          <p className="text-sm text-muted-foreground">Predictions will update automatically before kickoff</p>
+        ) : (
         <div className="relative pl-6 space-y-4">
           {/* vertical line */}
           <div className="absolute left-[9px] top-1 bottom-1 w-px bg-border" />
@@ -79,6 +79,7 @@ export function PredictionHistoryCard({ prediction }: { prediction: Prediction }
             );
           })}
         </div>
+        )}
       </CardContent>
     </Card>
   );
