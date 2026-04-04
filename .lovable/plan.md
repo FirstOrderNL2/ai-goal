@@ -1,110 +1,133 @@
 
-Goal: fix the missing Championship fixtures and upgrade predictions from a single Over/Under 2.5 output to full multi-goal-line probabilities.
 
-What the full check found
-- The frontend filter already includes `Championship`, and the sync function already includes API-Football league `40`.
-- The database currently has:
-  - a `Championship` league row
-  - 18 `Championship` teams
-  - but 0 `Championship` rows in `matches`, `predictions`, `match_features`, and `match_context`
-- There are also 7 legacy teams still stored under `Football League Championship`, including clubs from your screenshot. Some of those legacy rows still have missing API IDs.
-- So the problem is not the filter UI. The Championship fixture data is not making it into `matches`, and team naming is split across old and new records.
-- Separate dashboard issue: the homepage query limits upcoming matches too early, so smaller leagues can still disappear from “All Leagues” even after sync is fixed.
-- Note: the app currently uses `/match/:id`, not `/match/:slug`, so I’ll enhance that existing detail page path.
+# AI Self-Learning Loop + Performance Dashboard
 
-Implementation plan
+## What Already Exists
 
-1. Repair Championship syncing and data mapping
-- Extend the sync alias mapping for Championship naming variants such as:
-  - `Leicester` / `Leicester City`
-  - `Preston` / `Preston North End`
-  - `Derby` / `Derby County`
-  - `Coventry` / `Coventry City`
-- Update `sync-football-data` so team UUID mapping is built from all league fixture team API IDs, not only newly inserted teams.
-- Add per-league sync diagnostics for:
-  - fetched fixtures
-  - mapped teams
-  - skipped fixtures
-  - inserted/updated matches
-- Create a cleanup migration to merge legacy `Football League Championship` team rows into canonical `Championship` rows before re-running sync.
-- Backfill Championship fixtures after the mapping fix.
+- **Predictions table**: Already stores `match_id`, probabilities (1X2, O/U, BTTS), expected goals, goal lines, best pick — no schema changes needed
+- **Post-match reviews**: `generate-post-match-review` edge function already computes Brier scores (1X2, O/U, BTTS), exact score hits, outcome hits, and stores `ai_accuracy_score` + `ai_post_match_review` on the `matches` table
+- **Learning context**: `generate-ai-prediction` already fetches past reviews and injects "LEARNING FROM PAST PREDICTIONS" into prompts
+- **Accuracy page**: Basic page at `/accuracy` showing 1X2 and O/U 2.5 accuracy with a match-by-match list
+- **1,433 completed matches** with predictions available for evaluation; 518 already have post-match reviews
 
-2. Fix dashboard visibility
-- Update `useUpcomingMatches` so “All Leagues” does not cap results at 50 before filtering/deduping.
-- Keep exact filtering for a selected league, but fetch a larger result window or paginate so Championship fixtures are not crowded out by bigger leagues.
-- Preserve the existing covered-league dedupe rule so only canonical API-Football rows show for supported leagues.
+So the core pipeline (store → evaluate → feed back) already exists. What's missing:
 
-3. Add structured multi-goal-line prediction storage
-- Add a migration for new prediction fields, for example:
-  - `goal_lines jsonb`
-  - `goal_distribution jsonb`
-  - `best_pick text`
-  - `best_pick_confidence numeric`
-  - `best_value_pick text` when odds exist
-- Keep `over_under_25` for backward compatibility and derive it from the new goal-line payload.
-- Let generated backend types refresh automatically; do not manually edit generated integration files.
+1. **A `model_performance` table** to track metrics over time (not just per-match)
+2. **Multi-goal-line accuracy tracking** (currently only tracks O/U 2.5)
+3. **Calibration analysis** (does 70% predicted → ~70% actual?)
+4. **Feature weight adjustment** based on historical accuracy patterns
+5. **A proper performance dashboard** with trend graphs, calibration plots, and weak-area identification
+6. **Automated batch review** trigger for completed matches without reviews
 
-4. Upgrade the prediction engine math
-- Replace the current single-line goal logic with full Poisson total-goals probabilities using `lambda_home` and `lambda_away`.
-- Compute:
-  - Over/Under 0.5
-  - Over/Under 1.5
-  - Over/Under 2.5
-  - Over/Under 3.5
-  - Over/Under 4.5
-  - full 0–5+ total-goal distribution
-- Add validation rules so:
-  - each over/under pair sums correctly
-  - higher over lines decrease monotonically
-  - outputs stay realistic based on sane expected-goals inputs
+## Plan
 
-5. Update all prediction writers
-- Keep every producer consistent with the new schema:
-  - `supabase/functions/generate-ai-prediction/index.ts`
-  - `supabase/functions/batch-generate-predictions/index.ts`
-  - `supabase/functions/sync-football-data/index.ts`
-  - `supabase/functions/sync-sportradar-data/index.ts`
-- This avoids mixed rows where some predictions only have 2.5 and others have the full goal-line set.
+### 1. Create `model_performance` table
 
-6. Enhance AI reasoning and recommendations
-- Extend the AI tool output to include:
-  - `goal_lines`
-  - `best_pick`
-  - `confidence`
-  - value-oriented pick when odds are available
-- Update prompting so the AI explains:
-  - strongest goal-line probability
-  - safest line
-  - best value line if market odds disagree
-- Keep current 1X2, BTTS, expected scoreline, and confidence outputs intact.
+New migration:
 
-7. Upgrade the match detail page
-- Replace the current `OverUnderCard` with a multi-line goal-market card that shows all thresholds clearly.
-- Highlight:
-  - strongest prediction
-  - safe bet
-  - higher-risk line
-  - best value line if odds exist
-- Update `AIVerdictCard`, `MatchCard`, and `MatchDetail` so the UI no longer depends only on `O2.5/U2.5`.
-- Add fallback handling for older prediction rows that do not yet have `goal_lines`.
-- If the page opens and prediction data is missing or stale, regenerate/refetch so the detail page stays populated.
+```sql
+CREATE TABLE model_performance (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  period_start date NOT NULL,
+  period_end date NOT NULL,
+  total_matches integer DEFAULT 0,
+  outcome_accuracy numeric DEFAULT 0,
+  ou_25_accuracy numeric DEFAULT 0,
+  btts_accuracy numeric DEFAULT 0,
+  exact_score_hits integer DEFAULT 0,
+  avg_brier_1x2 numeric DEFAULT 0,
+  avg_brier_ou numeric DEFAULT 0,
+  avg_brier_btts numeric DEFAULT 0,
+  mae_goals numeric DEFAULT 0,
+  calibration_data jsonb DEFAULT '{}',
+  goal_line_accuracy jsonb DEFAULT '{}',
+  feature_weights jsonb DEFAULT '{}',
+  created_at timestamptz DEFAULT now()
+);
+```
 
-Files most likely to change
-- `supabase/functions/sync-football-data/index.ts`
-- `supabase/functions/generate-ai-prediction/index.ts`
-- `supabase/functions/batch-generate-predictions/index.ts`
-- `supabase/functions/sync-sportradar-data/index.ts`
-- `supabase/migrations/*`
-- `src/hooks/useMatches.ts`
-- `src/lib/types.ts`
-- `src/components/OverUnderCard.tsx`
-- `src/components/AIVerdictCard.tsx`
-- `src/components/MatchCard.tsx`
-- `src/pages/MatchDetail.tsx`
+With public SELECT RLS.
 
-Verification checklist
-- Championship filter shows fixtures for clubs like Middlesbrough, Millwall, Leicester, Preston, Oxford, and Hull.
-- “All Leagues” can surface Championship matches after the query fix.
-- Covered leagues still do not show duplicate matches.
-- Goal-line probabilities are mathematically valid and monotonic.
-- Match detail page shows all goal thresholds, strongest pick, and correct fallback behavior for older predictions.
+### 2. Create `compute-model-performance` edge function
+
+Runs weekly (via pg_cron) or on-demand. For all completed matches with predictions:
+
+- Compute aggregate accuracy: 1X2, O/U 2.5, BTTS, exact score rate
+- Compute Brier scores averaged over the period
+- Compute MAE for expected goals vs actual goals
+- Compute calibration buckets: group predictions by probability decile (0-10%, 10-20%, etc.), measure actual hit rate per bucket
+- Compute goal-line accuracy for all 5 thresholds (0.5, 1.5, 2.5, 3.5, 4.5)
+- Identify weak areas (e.g., "overestimates home advantage in away-strong leagues")
+- Suggest feature weight adjustments based on which data sources correlated with better predictions
+- Upsert into `model_performance`
+
+### 3. Upgrade `generate-post-match-review` to batch mode
+
+Add a new `batch-review` edge function (or extend existing) that:
+- Finds all completed matches missing `ai_accuracy_score`
+- Processes them in batches of 5 with delays to avoid rate limits
+- Stores Brier scores directly in a new `brier_scores` JSONB column on `predictions` for faster querying
+
+### 4. Enhance AI prediction prompt with performance-aware weighting
+
+Update `generate-ai-prediction` to:
+- Fetch the latest `model_performance` row
+- If calibration shows over-confidence in certain ranges, add a calibration warning to the prompt
+- If certain goal lines are consistently off, note that
+- Dynamically adjust the weight block based on historical accuracy (e.g., if H2H has low predictive power, reduce its weight)
+
+### 5. Overhaul the Accuracy page into a full Performance Dashboard
+
+Replace the basic `/accuracy` page with a comprehensive dashboard:
+
+**Summary Cards Row:**
+- Overall 1X2 accuracy %
+- O/U 2.5 accuracy %
+- BTTS accuracy %
+- Exact score hit rate
+- Average Brier score
+- MAE (goals)
+
+**Accuracy Trend Chart:**
+- Line chart showing weekly accuracy over time (from `model_performance`)
+
+**Calibration Chart:**
+- Scatter/line plot: predicted probability (x) vs actual frequency (y)
+- Perfect calibration = diagonal line
+- Shows where the model is over/under-confident
+
+**Goal Line Accuracy Breakdown:**
+- Bar chart for each goal threshold (0.5, 1.5, 2.5, 3.5, 4.5)
+- Shows accuracy per line
+
+**Weak Areas Panel:**
+- Text insights: "Model overestimates draws by 8%", "Under 0.5 predictions are 15% less accurate"
+
+**Match-by-Match Log** (existing, enhanced):
+- Add Brier score per match
+- Add goal line hit/miss indicators
+- Color-code by accuracy
+
+### 6. Schedule automated reviews
+
+Add a pg_cron job that triggers `compute-model-performance` weekly and `batch-review` for unreviewed completed matches daily.
+
+## Files to Change
+
+| File | Change |
+|---|---|
+| `supabase/migrations/new` | Create `model_performance` table |
+| `supabase/functions/compute-model-performance/index.ts` | **New** — aggregate metrics computation |
+| `supabase/functions/batch-review-matches/index.ts` | **New** — batch post-match reviews |
+| `supabase/functions/generate-ai-prediction/index.ts` | Add performance-aware weight adjustment |
+| `src/pages/Accuracy.tsx` | Full dashboard overhaul with trend charts, calibration plot, goal-line breakdown |
+| `src/hooks/useMatches.ts` | Add hook for `model_performance` data |
+
+## Priority Order
+
+1. `model_performance` table + `compute-model-performance` function (metrics foundation)
+2. `batch-review-matches` function (fill gaps in reviewed matches)
+3. Accuracy page dashboard overhaul (user-facing value)
+4. Performance-aware prompt enhancement (closes the learning loop)
+5. Scheduled automation via pg_cron
+
