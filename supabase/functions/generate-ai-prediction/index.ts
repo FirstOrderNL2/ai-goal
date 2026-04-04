@@ -465,7 +465,7 @@ Market margin: ${Math.round(statsAnchors.market_margin * 100)}%`;
       hts != null && ats != null
     );
 
-    // Learning context
+    // Learning context + performance-aware calibration
     let learningBlock = "";
     if (pastReviews && pastReviews.length > 0) {
       const avgScore = pastReviews.reduce((s: number, r: any) => s + (Number(r.ai_accuracy_score) || 0), 0) / pastReviews.length;
@@ -482,6 +482,45 @@ ${relevantReviews.length > 0
       }
 Apply the lessons above. Avoid repeating the same mistakes.`;
     }
+
+    // Fetch model_performance for calibration awareness
+    const { data: perfData } = await supabase
+      .from("model_performance")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    let performanceBlock = "";
+    if (perfData && perfData.length > 0) {
+      const mp = perfData[0] as any;
+      performanceBlock = `\n\nMODEL PERFORMANCE AWARENESS:
+Historical accuracy: 1X2 ${mp.outcome_accuracy}%, O/U 2.5 ${mp.ou_25_accuracy}%, BTTS ${mp.btts_accuracy}%
+Brier scores: 1X2 ${mp.avg_brier_1x2}, O/U ${mp.avg_brier_ou}, BTTS ${mp.avg_brier_btts}
+MAE goals: ${mp.mae_goals}`;
+
+      // Add calibration warnings
+      const cal = mp.calibration_data as Record<string, any> | null;
+      if (cal) {
+        const warnings: string[] = [];
+        for (const [key, val] of Object.entries(cal)) {
+          if (val.count >= 10) {
+            const gap = val.avg_predicted - val.actual_rate;
+            if (gap > 0.1) warnings.push(`You are OVERCONFIDENT in the ${key}% range (predicted ${Math.round(val.avg_predicted * 100)}%, actual ${Math.round(val.actual_rate * 100)}%) — reduce confidence`);
+            if (gap < -0.1) warnings.push(`You are UNDERCONFIDENT in the ${key}% range — you can be more decisive`);
+          }
+        }
+        if (warnings.length > 0) {
+          performanceBlock += `\nCALIBRATION WARNINGS:\n${warnings.map(w => `⚠️ ${w}`).join("\n")}`;
+        }
+      }
+
+      // Add weak area warnings
+      const weakAreas = mp.weak_areas as string[] | null;
+      if (weakAreas && weakAreas.length > 0) {
+        performanceBlock += `\nKNOWN WEAKNESSES:\n${weakAreas.slice(0, 5).map((w: string) => `• ${w}`).join("\n")}`;
+      }
+    }
+    learningBlock += performanceBlock;
 
     // Determine weight structure based on competition type
     const intl = isInternational(match.league);
