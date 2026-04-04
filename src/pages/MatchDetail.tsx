@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowLeft, TrendingUp, Target, BarChart3 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useLiveFixture } from "@/hooks/useFixtureData";
 
 export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
