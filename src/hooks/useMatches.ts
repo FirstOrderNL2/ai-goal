@@ -55,7 +55,7 @@ export function useUpcomingMatches(league?: string) {
 export function useLiveMatches(league?: string) {
   return useQuery({
     queryKey: ["matches", "live", league],
-    refetchInterval: 30 * 1000,
+    refetchInterval: (query) => query.state.error ? false : 30_000,
     queryFn: async () => {
       let query = supabase
         .from("matches")
