@@ -152,6 +152,7 @@ export default function MatchDetail() {
             homeTeamName={home_team?.name || "Home"}
             awayTeamName={away_team?.name || "Away"}
           />
+        )}
 
         {/* 4. Team Comparison */}
         {features && (
