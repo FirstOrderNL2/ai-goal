@@ -1,9 +1,36 @@
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProbabilityBar } from "./ProbabilityBar";
 import type { Match } from "@/lib/types";
 import { TrendingUp, ArrowRight } from "lucide-react";
+
+function useLiveMinute(matchDate: string, status: string, isLive: boolean): string {
+  const [minute, setMinute] = useState(() => computeMinute(matchDate, status));
+
+  useEffect(() => {
+    if (!isLive) return;
+    setMinute(computeMinute(matchDate, status));
+    const id = setInterval(() => setMinute(computeMinute(matchDate, status)), 30000);
+    return () => clearInterval(id);
+  }, [matchDate, status, isLive]);
+
+  return minute;
+}
+
+function computeMinute(matchDate: string, status: string): string {
+  if (status === "HT") return "HT";
+  if (status === "ET") return "ET";
+  const kickoff = new Date(matchDate).getTime();
+  const elapsed = Math.floor((Date.now() - kickoff) / 60000);
+  if (status === "1H") return `${Math.max(0, Math.min(elapsed, 45))}'`;
+  if (status === "2H") return `${Math.max(45, Math.min(elapsed - 15, 90))}'`;
+  // generic "live"
+  if (elapsed <= 45) return `${Math.max(0, elapsed)}'`;
+  if (elapsed <= 60) return "HT";
+  return `${Math.max(45, Math.min(elapsed - 15, 90))}'`;
+}
 
 function formatRound(round: string | null | undefined): string | null {
   if (!round) return null;
