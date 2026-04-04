@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProbabilityBar } from "./ProbabilityBar";
 import type { Match } from "@/lib/types";
-import { TrendingUp, ArrowRight } from "lucide-react";
+import { TrendingUp, ArrowRight, RefreshCw } from "lucide-react";
 
 function useLiveMinute(matchDate: string, status: string, isLive: boolean): string {
   const [minute, setMinute] = useState(() => computeMinute(matchDate, status));
