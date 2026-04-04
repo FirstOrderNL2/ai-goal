@@ -88,26 +88,64 @@ function computeGoalDistribution(lambdaHome: number, lambdaAway: number): Record
   return dist;
 }
 
-function findBestPick(goalLines: Record<string, number>): string {
-  const candidates = Object.entries(goalLines)
-    .filter(([k, v]) => k.startsWith("over_") && v >= 0.55 && v <= 0.85)
-    .sort((a, b) => b[1] - a[1]);
+function findBestPick(
+  goalLines: Record<string, number>,
+  poissonHomeWin: number, poissonDraw: number, poissonAwayWin: number,
+  impliedHome: number | null, impliedDraw: number | null, impliedAway: number | null,
+  poissonBtts: number | null
+): { pick: string; confidence: number; edge: number } {
+  const candidates: { pick: string; confidence: number; edge: number }[] = [];
+
+  // Goal line value picks
+  for (const [k, v] of Object.entries(goalLines)) {
+    if (v >= 0.55 && v <= 0.85) {
+      const label = k.startsWith("over_")
+        ? k.replace("over_", "Over ").replace("_", ".")
+        : k.replace("under_", "Under ").replace("_", ".");
+      candidates.push({ pick: label, confidence: v, edge: 0 });
+    }
+  }
+
+  // 1X2 value picks (compare AI/Poisson vs market)
+  if (impliedHome != null) {
+    const homeEdge = poissonHomeWin - impliedHome;
+    const drawEdge = poissonDraw - (impliedDraw || 0);
+    const awayEdge = poissonAwayWin - (impliedAway || 0);
+
+    if (homeEdge > 0.05 && poissonHomeWin >= 0.4) {
+      candidates.push({ pick: "Home Win", confidence: poissonHomeWin, edge: homeEdge });
+    }
+    if (drawEdge > 0.05 && poissonDraw >= 0.25) {
+      candidates.push({ pick: "Draw", confidence: poissonDraw, edge: drawEdge });
+    }
+    if (awayEdge > 0.05 && poissonAwayWin >= 0.3) {
+      candidates.push({ pick: "Away Win", confidence: poissonAwayWin, edge: awayEdge });
+    }
+  }
+
+  // BTTS value pick
+  if (poissonBtts != null && poissonBtts >= 0.55 && poissonBtts <= 0.85) {
+    candidates.push({ pick: "BTTS Yes", confidence: poissonBtts, edge: 0 });
+  }
+
+  // Sort by edge first, then confidence
+  candidates.sort((a, b) => (b.edge || 0) - (a.edge || 0) || b.confidence - a.confidence);
+
   if (candidates.length > 0) {
-    return candidates[0][0].replace("over_", "Over ").replace("_", ".");
+    return candidates[0];
   }
-  const underCandidates = Object.entries(goalLines)
-    .filter(([k, v]) => k.startsWith("under_") && v >= 0.55 && v <= 0.85)
-    .sort((a, b) => b[1] - a[1]);
-  if (underCandidates.length > 0) {
-    return underCandidates[0][0].replace("under_", "Under ").replace("_", ".");
-  }
-  return goalLines.over_2_5 > 0.5 ? "Over 2.5" : "Under 2.5";
+  return {
+    pick: goalLines.over_2_5 > 0.5 ? "Over 2.5" : "Under 2.5",
+    confidence: Math.max(goalLines.over_2_5, goalLines.under_2_5),
+    edge: 0,
+  };
 }
 
 function computeStatisticalAnchors(
   homeStats: { avgScored: string; avgConceded: string; cleanSheets: number; played: number; bttsRate: number } | null,
   awayStats: { avgScored: string; avgConceded: string; cleanSheets: number; played: number; bttsRate: number } | null,
-  odds: { home_win_odds: number; draw_odds: number; away_win_odds: number } | null
+  odds: { home_win_odds: number; draw_odds: number; away_win_odds: number } | null,
+  leagueHomeAvg: number, leagueAwayAvg: number
 ) {
   const result: any = {};
 
@@ -116,15 +154,16 @@ function computeStatisticalAnchors(
     const homeAvgConceded = parseFloat(homeStats.avgConceded);
     const awayAvgScored = parseFloat(awayStats.avgScored);
     const awayAvgConceded = parseFloat(awayStats.avgConceded);
-    const leagueAvg = 1.35;
+    const leagueAvg = (leagueHomeAvg + leagueAwayAvg) / 2;
 
     const homeAttackStrength = homeAvgScored / leagueAvg;
     const awayDefenseWeakness = awayAvgConceded / leagueAvg;
     const awayAttackStrength = awayAvgScored / leagueAvg;
     const homeDefenseWeakness = homeAvgConceded / leagueAvg;
 
-    result.poisson_xg_home = Math.round(homeAttackStrength * awayDefenseWeakness * leagueAvg * 100) / 100;
-    result.poisson_xg_away = Math.round(awayAttackStrength * homeDefenseWeakness * leagueAvg * 100) / 100;
+    // Home advantage: home team uses league home avg, away uses league away avg
+    result.poisson_xg_home = Math.round(homeAttackStrength * awayDefenseWeakness * leagueHomeAvg * 100) / 100;
+    result.poisson_xg_away = Math.round(awayAttackStrength * homeDefenseWeakness * leagueAwayAvg * 100) / 100;
 
     let poissonHomeWin = 0, poissonDraw = 0, poissonAwayWin = 0, poissonOver25 = 0;
     for (let h = 0; h <= 8; h++) {
@@ -163,16 +202,18 @@ function computeStatisticalAnchors(
 
 function computeDataQualityConfidence(
   formMatches: number, hasOdds: boolean, hasH2H: boolean,
-  hasInjuries: boolean, hasStats: boolean, hasPlayers: boolean, hasTeamStats: boolean
+  hasInjuries: boolean, hasStats: boolean, hasPlayers: boolean, hasTeamStats: boolean,
+  hasLineups: boolean
 ): number {
   return (
-    0.20 * Math.min(formMatches / 5, 1) +
-    0.15 * (hasOdds ? 1 : 0) +
-    0.15 * (hasH2H ? 1 : 0) +
+    0.18 * Math.min(formMatches / 5, 1) +
+    0.14 * (hasOdds ? 1 : 0) +
+    0.12 * (hasH2H ? 1 : 0) +
     0.10 * (hasInjuries ? 1 : 0) +
-    0.15 * (hasStats ? 1 : 0) +
-    0.10 * (hasPlayers ? 1 : 0) +
-    0.15 * (hasTeamStats ? 1 : 0)
+    0.14 * (hasStats ? 1 : 0) +
+    0.08 * (hasPlayers ? 1 : 0) +
+    0.12 * (hasTeamStats ? 1 : 0) +
+    0.12 * (hasLineups ? 1 : 0)
   );
 }
 
@@ -196,6 +237,119 @@ function validatePrediction(pred: any): string[] {
   return warnings;
 }
 
+// Detect match importance from round info
+function detectMatchImportance(round: string | null, league: string): { level: string; description: string } {
+  const r = (round || "").toLowerCase();
+  if (r.includes("final") && !r.includes("semi") && !r.includes("quarter")) {
+    return { level: "CRITICAL", description: "Cup/Tournament Final — highest stakes, expect tactical caution and low-scoring game" };
+  }
+  if (r.includes("semi-final") || r.includes("semi final")) {
+    return { level: "HIGH", description: "Semi-Final — high stakes, teams may prioritize defense" };
+  }
+  if (r.includes("quarter-final") || r.includes("quarter final")) {
+    return { level: "HIGH", description: "Quarter-Final — knockout pressure affects risk-taking" };
+  }
+  if (r.includes("leg 2") || r.includes("2nd leg")) {
+    return { level: "HIGH", description: "Second Leg — aggregate context affects tactics, may see more attacking or ultra-defensive approach depending on first leg result" };
+  }
+  // Late season detection
+  const roundNum = parseInt((r.match(/\d+/) || ["0"])[0]);
+  if (roundNum >= 34 || r.includes("matchday 3") && (league.includes("Champions") || league.includes("Europa"))) {
+    return { level: "MEDIUM", description: "Late season/crucial group stage — positioning at stake" };
+  }
+  return { level: "NORMAL", description: "" };
+}
+
+// Detect momentum and streaks
+function detectMomentum(formStr: string[]): { streak: string; momentum: string; details: string } {
+  if (!formStr || formStr.length === 0) return { streak: "unknown", momentum: "neutral", details: "" };
+
+  const results = formStr.map(f => f.charAt(0)); // W, D, or L
+  
+  // Detect streaks
+  let currentStreak = 1;
+  for (let i = 1; i < results.length; i++) {
+    if (results[i] === results[0]) currentStreak++;
+    else break;
+  }
+
+  const wins = results.filter(r => r === "W").length;
+  const losses = results.filter(r => r === "L").length;
+  const draws = results.filter(r => r === "D").length;
+
+  let streak = "";
+  let momentum = "neutral";
+  let details = "";
+
+  if (results[0] === "W" && currentStreak >= 3) {
+    streak = `${currentStreak}-match winning streak`;
+    momentum = "strong_positive";
+    details = `On a ${currentStreak}-match winning streak. ${wins}/5 wins in last 5 matches. High confidence momentum.`;
+  } else if (results[0] === "L" && currentStreak >= 3) {
+    streak = `${currentStreak}-match losing streak`;
+    momentum = "strong_negative";
+    details = `On a ${currentStreak}-match losing streak. ${losses}/5 losses in last 5 matches. Crisis mode.`;
+  } else if (wins >= 4) {
+    streak = "dominant form";
+    momentum = "positive";
+    details = `${wins}/5 wins in last 5 matches. Excellent form.`;
+  } else if (losses >= 4) {
+    streak = "poor form";
+    momentum = "negative";
+    details = `${losses}/5 losses in last 5 matches. Very poor form.`;
+  } else if (results.slice(0, 3).every(r => r !== "L")) {
+    streak = "unbeaten in 3";
+    momentum = "slight_positive";
+    details = `Unbeaten in last 3. ${wins}W ${draws}D ${losses}L in last 5.`;
+  } else if (draws >= 3) {
+    streak = "draw-heavy";
+    momentum = "neutral";
+    details = `${draws} draws in last 5 matches. Tendency to share points.`;
+  } else {
+    streak = "mixed";
+    momentum = "neutral";
+    details = `${wins}W ${draws}D ${losses}L in last 5. Inconsistent.`;
+  }
+
+  return { streak, momentum, details };
+}
+
+// Extract structured signals from news context
+function extractNewsSignals(liveContext: string, homeName: string, awayName: string): string {
+  if (!liveContext) return "";
+
+  const signals: string[] = [];
+  const lc = liveContext.toLowerCase();
+
+  // Key player injury signals
+  const injuryPatterns = [
+    { pattern: /injur(ed|y)|ruled out|doubtful|miss/gi, signal: "Injury concern" },
+    { pattern: /suspend(ed)?|red card|ban/gi, signal: "Suspension" },
+    { pattern: /return|fit again|back in squad|available/gi, signal: "Player return" },
+  ];
+
+  for (const { pattern, signal } of injuryPatterns) {
+    const matches = liveContext.match(pattern);
+    if (matches && matches.length > 0) {
+      signals.push(`${signal} detected in news (${matches.length} mention${matches.length > 1 ? "s" : ""})`);
+    }
+  }
+
+  // Manager/tactical signals
+  if (lc.includes("rotation") || lc.includes("rest") || lc.includes("squad rotation")) {
+    signals.push("Squad rotation likely — may weaken starting XI");
+  }
+  if (lc.includes("must win") || lc.includes("must-win") || lc.includes("crucial")) {
+    signals.push("High-stakes match — expect maximum effort from both sides");
+  }
+  if (lc.includes("derby") || lc.includes("rival")) {
+    signals.push("Derby/Rivalry match — expect intensity, possible cards, and tactical battles");
+  }
+
+  if (signals.length === 0) return "";
+  return `\nNEWS SIGNAL ANALYSIS:\n${signals.map(s => `📰 ${s}`).join("\n")}`;
+}
+
 // Determine if a league is international
 const INTERNATIONAL_LEAGUES = [
   "World Cup", "WC Qualifiers Europe", "WC Qualifiers South America", "WC Qualifiers CONCACAF",
@@ -204,6 +358,18 @@ const INTERNATIONAL_LEAGUES = [
 
 function isInternational(league: string): boolean {
   return INTERNATIONAL_LEAGUES.some(l => league.includes(l));
+}
+
+// Compute league-specific averages from completed matches
+function computeLeagueAvg(matches: any[], league: string): { homeAvg: number; awayAvg: number } {
+  const leagueMatches = (matches || []).filter((m: any) => m.league === league && m.goals_home != null);
+  if (leagueMatches.length < 10) return { homeAvg: 1.45, awayAvg: 1.15 };
+  let hg = 0, ag = 0;
+  for (const m of leagueMatches) { hg += m.goals_home ?? 0; ag += m.goals_away ?? 0; }
+  return {
+    homeAvg: Math.round((hg / leagueMatches.length) * 100) / 100,
+    awayAvg: Math.round((ag / leagueMatches.length) * 100) / 100,
+  };
 }
 
 Deno.serve(async (req) => {
@@ -238,7 +404,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch all data in parallel — including NEW team_statistics and players
+    // Fetch all data in parallel
     const [
       { data: prediction },
       { data: odds },
@@ -255,25 +421,26 @@ Deno.serve(async (req) => {
       { data: awayTeamStats },
       { data: homePlayers },
       { data: awayPlayers },
+      { data: leagueMatches },
     ] = await Promise.all([
       supabase.from("predictions").select("*").eq("match_id", match_id).single(),
       supabase.from("odds").select("*").eq("match_id", match_id).single(),
       supabase.from("matches")
         .select("goals_home, goals_away, team_home_id, team_away_id, status, xg_home, xg_away")
         .or(`team_home_id.eq.${match.team_home_id},team_away_id.eq.${match.team_home_id}`)
-        .eq("status", "completed").order("match_date", { ascending: false }).limit(5),
+        .eq("status", "completed").order("match_date", { ascending: false }).limit(10),
       supabase.from("matches")
         .select("goals_home, goals_away, team_home_id, team_away_id, status, xg_home, xg_away")
         .or(`team_home_id.eq.${match.team_away_id},team_away_id.eq.${match.team_away_id}`)
-        .eq("status", "completed").order("match_date", { ascending: false }).limit(5),
+        .eq("status", "completed").order("match_date", { ascending: false }).limit(10),
       supabase.from("matches")
         .select("goals_home, goals_away, team_home_id, team_away_id")
         .eq("team_home_id", match.team_home_id).eq("status", "completed")
-        .order("match_date", { ascending: false }).limit(5),
+        .order("match_date", { ascending: false }).limit(10),
       supabase.from("matches")
         .select("goals_home, goals_away, team_home_id, team_away_id")
         .eq("team_away_id", match.team_away_id).eq("status", "completed")
-        .order("match_date", { ascending: false }).limit(5),
+        .order("match_date", { ascending: false }).limit(10),
       supabase.from("matches")
         .select("goals_home, goals_away, match_date, team_home_id, team_away_id, home_team:teams!matches_team_home_id_fkey(name), away_team:teams!matches_team_away_id_fkey(name)")
         .or(`and(team_home_id.eq.${match.team_home_id},team_away_id.eq.${match.team_away_id}),and(team_home_id.eq.${match.team_away_id},team_away_id.eq.${match.team_home_id})`)
@@ -293,16 +460,22 @@ Deno.serve(async (req) => {
       supabase.from("match_context")
         .select("injuries_home, injuries_away, lineup_home, lineup_away, suspensions, weather, news_items")
         .eq("match_id", match_id).single(),
-      // NEW: team_statistics
       supabase.from("team_statistics").select("*").eq("team_id", match.team_home_id).order("season", { ascending: false }).limit(1),
       supabase.from("team_statistics").select("*").eq("team_id", match.team_away_id).order("season", { ascending: false }).limit(1),
-      // NEW: players
       supabase.from("players").select("name, position, age, nationality").eq("team_id", match.team_home_id).order("name").limit(30),
       supabase.from("players").select("name, position, age, nationality").eq("team_id", match.team_away_id).order("name").limit(30),
+      // League average goals for dynamic Poisson
+      supabase.from("matches")
+        .select("goals_home, goals_away, league")
+        .eq("league", match.league).eq("status", "completed")
+        .order("match_date", { ascending: false }).limit(200),
     ]);
 
     const homeName = match.home_team?.name ?? "Home";
     const awayName = match.away_team?.name ?? "Away";
+
+    // Compute league-specific averages
+    const leagueAvg = computeLeagueAvg(leagueMatches || [], match.league);
 
     // Fetch live web context
     const liveContext = await fetchMatchContext(
@@ -311,7 +484,7 @@ Deno.serve(async (req) => {
       match_id
     );
 
-    // Build form strings
+    // Build form strings (expanded to last 10 for trend detection)
     const homeFormStr = (homeFormAll || []).map((m: any) => {
       const isHome = m.team_home_id === match.team_home_id;
       const gf = isHome ? m.goals_home : m.goals_away;
@@ -331,6 +504,13 @@ Deno.serve(async (req) => {
     const homeHomeForm = buildFormString(homeFormHome || [], match.team_home_id, true);
     const awayAwayForm = buildFormString(awayFormAway || [], match.team_away_id, false);
 
+    // Momentum detection
+    const homeMomentum = detectMomentum(homeFormStr);
+    const awayMomentum = detectMomentum(awayFormStr);
+
+    // Match importance
+    const importance = detectMatchImportance(match.round, match.league);
+
     // H2H summary
     let h2hBlock = "";
     if (h2hMatches && h2hMatches.length > 0) {
@@ -339,25 +519,50 @@ Deno.serve(async (req) => {
         const aName = (m as any).away_team?.name ?? "?";
         return `${m.match_date?.slice(0, 10)}: ${hName} ${m.goals_home}-${m.goals_away} ${aName}`;
       });
-      h2hBlock = `\nHEAD-TO-HEAD (last ${h2hMatches.length} meetings):\n${h2hLines.join("\n")}`;
+
+      // H2H stats summary
+      let homeH2HWins = 0, awayH2HWins = 0, h2hDraws = 0, h2hTotalGoals = 0;
+      for (const m of h2hMatches) {
+        const homeIsHome = m.team_home_id === match.team_home_id;
+        const hg = homeIsHome ? m.goals_home : m.goals_away;
+        const ag = homeIsHome ? m.goals_away : m.goals_home;
+        h2hTotalGoals += (m.goals_home ?? 0) + (m.goals_away ?? 0);
+        if (hg! > ag!) homeH2HWins++;
+        else if (hg === ag) h2hDraws++;
+        else awayH2HWins++;
+      }
+      const h2hAvgGoals = (h2hTotalGoals / h2hMatches.length).toFixed(1);
+
+      h2hBlock = `\nHEAD-TO-HEAD (last ${h2hMatches.length} meetings):
+${h2hLines.join("\n")}
+H2H Summary: ${homeName} ${homeH2HWins}W, ${h2hDraws}D, ${awayH2HWins}W ${awayName} | Avg goals: ${h2hAvgGoals} per match`;
     }
 
-    // Goal-scoring stats from raw matches
+    // Goal-scoring stats from raw matches with exponential weighting
     function calcStats(matches: any[], teamId: string) {
       if (!matches || matches.length === 0) return null;
       let scored = 0, conceded = 0, cleanSheets = 0, bttsCount = 0;
-      for (const m of matches) {
+      let weightedScored = 0, weightedConceded = 0, totalWeight = 0;
+      for (let i = 0; i < matches.length; i++) {
+        const m = matches[i];
         const isHome = m.team_home_id === teamId;
         const gf = isHome ? (m.goals_home ?? 0) : (m.goals_away ?? 0);
         const ga = isHome ? (m.goals_away ?? 0) : (m.goals_home ?? 0);
         scored += gf; conceded += ga;
         if (ga === 0) cleanSheets++;
         if (gf > 0 && ga > 0) bttsCount++;
+        // Exponential decay: recent matches weighted more
+        const weight = Math.pow(0.85, i);
+        weightedScored += gf * weight;
+        weightedConceded += ga * weight;
+        totalWeight += weight;
       }
       return {
         played: matches.length,
         avgScored: (scored / matches.length).toFixed(1),
         avgConceded: (conceded / matches.length).toFixed(1),
+        weightedAvgScored: (weightedScored / totalWeight).toFixed(2),
+        weightedAvgConceded: (weightedConceded / totalWeight).toFixed(2),
         cleanSheets,
         bttsRate: Math.round((bttsCount / matches.length) * 100),
       };
@@ -368,13 +573,13 @@ Deno.serve(async (req) => {
 
     let statsBlock = "";
     if (homeStats) {
-      statsBlock += `\n${homeName} stats (last ${homeStats.played}): avg scored ${homeStats.avgScored}, avg conceded ${homeStats.avgConceded}, clean sheets ${homeStats.cleanSheets}, BTTS rate ${homeStats.bttsRate}%`;
+      statsBlock += `\n${homeName} stats (last ${homeStats.played}): avg scored ${homeStats.avgScored} (weighted recent: ${homeStats.weightedAvgScored}), avg conceded ${homeStats.avgConceded} (weighted: ${homeStats.weightedAvgConceded}), clean sheets ${homeStats.cleanSheets}, BTTS rate ${homeStats.bttsRate}%`;
     }
     if (awayStats) {
-      statsBlock += `\n${awayName} stats (last ${awayStats.played}): avg scored ${awayStats.avgScored}, avg conceded ${awayStats.avgConceded}, clean sheets ${awayStats.cleanSheets}, BTTS rate ${awayStats.bttsRate}%`;
+      statsBlock += `\n${awayName} stats (last ${awayStats.played}): avg scored ${awayStats.avgScored} (weighted recent: ${awayStats.weightedAvgScored}), avg conceded ${awayStats.avgConceded} (weighted: ${awayStats.weightedAvgConceded}), clean sheets ${awayStats.cleanSheets}, BTTS rate ${awayStats.bttsRate}%`;
     }
 
-    // NEW: team_statistics enrichment
+    // Team statistics enrichment
     let teamStatsBlock = "";
     const hts = homeTeamStats?.[0];
     const ats = awayTeamStats?.[0];
@@ -389,7 +594,7 @@ Deno.serve(async (req) => {
       if (ar?.wins != null) teamStatsBlock += `, AWAY: ${ar.wins}W ${ar.draws}D ${ar.losses}L`;
     }
 
-    // NEW: players block
+    // Players block
     let playersBlock = "";
     if (homePlayers && homePlayers.length > 0) {
       const byPos = (pos: string) => homePlayers.filter((p: any) => p.position === pos).map((p: any) => p.name);
@@ -400,12 +605,13 @@ Deno.serve(async (req) => {
       playersBlock += `\n${awayName} SQUAD (${awayPlayers.length} players): GK: ${byPos("Goalkeeper").join(", ") || "N/A"} | DEF: ${byPos("Defender").join(", ") || "N/A"} | MID: ${byPos("Midfielder").join(", ") || "N/A"} | FWD: ${byPos("Attacker").join(", ") || "N/A"}`;
     }
 
-    // Statistical pre-computation
-    const statsAnchors = computeStatisticalAnchors(homeStats, awayStats, odds);
+    // Statistical pre-computation with league-specific averages
+    const statsAnchors = computeStatisticalAnchors(homeStats, awayStats, odds, leagueAvg.homeAvg, leagueAvg.awayAvg);
 
     let statsAnchorsBlock = "";
     if (statsAnchors.poisson_xg_home != null) {
-      statsAnchorsBlock += `\nSTATISTICAL MODEL (Poisson):
+      statsAnchorsBlock += `\nSTATISTICAL MODEL (Poisson with home advantage):
+League avg goals: Home ${leagueAvg.homeAvg}, Away ${leagueAvg.awayAvg} (from ${(leagueMatches || []).length} matches)
 Poisson xG: ${homeName} ${statsAnchors.poisson_xg_home} - ${statsAnchors.poisson_xg_away} ${awayName}
 Poisson probabilities: Home ${Math.round(statsAnchors.poisson_home_win * 100)}%, Draw ${Math.round(statsAnchors.poisson_draw * 100)}%, Away ${Math.round(statsAnchors.poisson_away_win * 100)}%
 Poisson Over 2.5: ${Math.round(statsAnchors.poisson_over_25 * 100)}%
@@ -415,10 +621,23 @@ Poisson BTTS: ${Math.round(statsAnchors.poisson_btts * 100)}%`;
       statsAnchorsBlock += `\nMARKET IMPLIED PROBABILITIES (from odds):
 Home ${Math.round(statsAnchors.implied_home_win * 100)}%, Draw ${Math.round(statsAnchors.implied_draw * 100)}%, Away ${Math.round(statsAnchors.implied_away_win * 100)}%
 Market margin: ${Math.round(statsAnchors.market_margin * 100)}%`;
+
+      // Add Poisson vs Market delta analysis
+      if (statsAnchors.poisson_home_win != null) {
+        const homeDelta = Math.round((statsAnchors.poisson_home_win - statsAnchors.implied_home_win) * 100);
+        const drawDelta = Math.round((statsAnchors.poisson_draw - statsAnchors.implied_draw) * 100);
+        const awayDelta = Math.round((statsAnchors.poisson_away_win - statsAnchors.implied_away_win) * 100);
+        statsAnchorsBlock += `\nMODEL vs MARKET DELTA: Home ${homeDelta > 0 ? "+" : ""}${homeDelta}%, Draw ${drawDelta > 0 ? "+" : ""}${drawDelta}%, Away ${awayDelta > 0 ? "+" : ""}${awayDelta}%`;
+        const maxDelta = Math.max(Math.abs(homeDelta), Math.abs(drawDelta), Math.abs(awayDelta));
+        if (maxDelta > 10) {
+          statsAnchorsBlock += `\n⚠️ SIGNIFICANT DISAGREEMENT with market (${maxDelta}%). Investigate why.`;
+        }
+      }
     }
 
     // Match context structured data
     let contextBlock = "";
+    let hasConfirmedLineups = false;
     if (matchContext?.data) {
       const ctx = matchContext.data;
       if (ctx.injuries_home?.length > 0) {
@@ -437,6 +656,7 @@ Market margin: ${Math.round(statsAnchors.market_margin * 100)}%`;
       const homeLineup = ctx.lineup_home;
       const awayLineup = ctx.lineup_away;
       if (homeLineup && (Array.isArray(homeLineup) ? homeLineup.length > 0 : homeLineup.starters)) {
+        hasConfirmedLineups = true;
         const lu = Array.isArray(homeLineup) ? homeLineup[0] : homeLineup;
         if (lu?.starters) {
           contextBlock += `\n${homeName} CONFIRMED LINEUP (${lu.formation || "?"}): ${lu.starters.map((p: any) => `${p.name}${p.pos ? ` [${p.pos}]` : ""}`).join(", ")}`;
@@ -446,6 +666,7 @@ Market margin: ${Math.round(statsAnchors.market_margin * 100)}%`;
         }
       }
       if (awayLineup && (Array.isArray(awayLineup) ? awayLineup.length > 0 : awayLineup.starters)) {
+        hasConfirmedLineups = true;
         const lu = Array.isArray(awayLineup) ? awayLineup[0] : awayLineup;
         if (lu?.starters) {
           contextBlock += `\n${awayName} CONFIRMED LINEUP (${lu.formation || "?"}): ${lu.starters.map((p: any) => `${p.name}${p.pos ? ` [${p.pos}]` : ""}`).join(", ")}`;
@@ -456,13 +677,17 @@ Market margin: ${Math.round(statsAnchors.market_margin * 100)}%`;
       }
     }
 
-    // Data quality confidence — enhanced
+    // News signal extraction
+    const newsSignals = extractNewsSignals(liveContext, homeName, awayName);
+
+    // Data quality confidence — enhanced with lineup awareness
     const hasInjuryData = (matchContext?.data?.injuries_home?.length > 0 || matchContext?.data?.injuries_away?.length > 0);
     const dataQuality = computeDataQualityConfidence(
       homeFormStr.length, !!odds, h2hMatches != null && h2hMatches.length > 0,
       hasInjuryData, homeStats != null && awayStats != null,
       (homePlayers?.length ?? 0) > 0 && (awayPlayers?.length ?? 0) > 0,
-      hts != null && ats != null
+      hts != null && ats != null,
+      hasConfirmedLineups
     );
 
     // Learning context + performance-aware calibration
@@ -491,12 +716,15 @@ Apply the lessons above. Avoid repeating the same mistakes.`;
       .limit(1);
 
     let performanceBlock = "";
+    let featureWeights: any = null;
     if (perfData && perfData.length > 0) {
       const mp = perfData[0] as any;
+      featureWeights = mp.feature_weights;
       performanceBlock = `\n\nMODEL PERFORMANCE AWARENESS:
 Historical accuracy: 1X2 ${mp.outcome_accuracy}%, O/U 2.5 ${mp.ou_25_accuracy}%, BTTS ${mp.btts_accuracy}%
 Brier scores: 1X2 ${mp.avg_brier_1x2}, O/U ${mp.avg_brier_ou}, BTTS ${mp.avg_brier_btts}
-MAE goals: ${mp.mae_goals}`;
+MAE goals: ${mp.mae_goals}
+Exact score hits: ${mp.exact_score_hits}/${mp.total_matches}`;
 
       // Add calibration warnings
       const cal = mp.calibration_data as Record<string, any> | null;
@@ -505,8 +733,8 @@ MAE goals: ${mp.mae_goals}`;
         for (const [key, val] of Object.entries(cal)) {
           if (val.count >= 10) {
             const gap = val.avg_predicted - val.actual_rate;
-            if (gap > 0.1) warnings.push(`You are OVERCONFIDENT in the ${key}% range (predicted ${Math.round(val.avg_predicted * 100)}%, actual ${Math.round(val.actual_rate * 100)}%) — reduce confidence`);
-            if (gap < -0.1) warnings.push(`You are UNDERCONFIDENT in the ${key}% range — you can be more decisive`);
+            if (gap > 0.1) warnings.push(`OVERCONFIDENT in ${key}% range (predicted ${Math.round(val.avg_predicted * 100)}%, actual ${Math.round(val.actual_rate * 100)}%) — reduce probabilities in this range`);
+            if (gap < -0.1) warnings.push(`UNDERCONFIDENT in ${key}% range — be more decisive when your analysis points this way`);
           }
         }
         if (warnings.length > 0) {
@@ -518,6 +746,11 @@ MAE goals: ${mp.mae_goals}`;
       const weakAreas = mp.weak_areas as string[] | null;
       if (weakAreas && weakAreas.length > 0) {
         performanceBlock += `\nKNOWN WEAKNESSES:\n${weakAreas.slice(0, 5).map((w: string) => `• ${w}`).join("\n")}`;
+      }
+
+      // Dynamic feature weight suggestions
+      if (featureWeights && Object.keys(featureWeights).length > 0) {
+        performanceBlock += `\nDYNAMIC WEIGHT ADJUSTMENTS (from performance analysis):\n${Object.entries(featureWeights).map(([k, v]) => `• ${k}: ${v}`).join("\n")}`;
       }
     }
     learningBlock += performanceBlock;
@@ -532,21 +765,44 @@ MAE goals: ${mp.mae_goals}`;
 - Home Advantage: 15%
 - Market Odds: 10%`
       : `FEATURE WEIGHTS (Club match):
-- Recent Form (last 5): 35% (home/away split matters)
-- Offensive/Defensive Stats: 25% (avg goals, xG, clean sheets)
-- H2H History: 15% (last 5-10 meetings)
-- Home/Away Advantage: 15% (home-only vs away-only records)
-- Market Odds: 10% (implied probabilities as sanity check)`;
+- Recent Form (last 5-10): 30% (use WEIGHTED recent averages, home/away split matters)
+- Offensive/Defensive Stats: 25% (weighted avg goals > raw avg, xG if available, clean sheets)
+- H2H History: 15% (last 5-10 meetings, focus on recent trend)
+- Home/Away Advantage: 15% (league home avg: ${leagueAvg.homeAvg}, away avg: ${leagueAvg.awayAvg} — this measures real home advantage in ${match.league})
+- Market Odds: 10% (implied probabilities as reality check, flag value when model disagrees >5%)
+- Momentum/Context: 5% (streaks, match importance, injuries)`;
 
-    const systemPrompt = `You are a world-class football analyst and prediction engine. Your job is to analyze match data and produce ACCURATE, FACT-BASED predictions.
+    // Momentum block
+    let momentumBlock = "";
+    if (homeMomentum.details) {
+      momentumBlock += `\n${homeName} MOMENTUM: ${homeMomentum.details}`;
+    }
+    if (awayMomentum.details) {
+      momentumBlock += `\n${awayName} MOMENTUM: ${awayMomentum.details}`;
+    }
+
+    // Match importance block
+    let importanceBlock = "";
+    if (importance.level !== "NORMAL") {
+      importanceBlock = `\nMATCH IMPORTANCE: ${importance.level} — ${importance.description}`;
+    }
+
+    const systemPrompt = `You are a world-class football analyst and prediction engine with access to comprehensive statistical data. Your job is to analyze match data and produce ACCURATE, FACT-BASED predictions using multi-layer reasoning.
 
 ${weightBlock}
+
+REASONING LAYERS (apply in order):
+LAYER 1 — STATISTICAL MODEL: Start from the Poisson distribution probabilities as your mathematical anchor. Only deviate with clear justification.
+LAYER 2 — FEATURE ANALYSIS: Apply weighted form, stats, H2H, and positional data. Use WEIGHTED RECENT averages (exponential decay) to emphasize recent performance over older results.
+LAYER 3 — CONTEXTUAL: Adjust for injuries, suspensions, confirmed lineups (or lack thereof), weather, match importance, and momentum.
+LAYER 4 — MARKET INTELLIGENCE: Compare your model output with market implied probabilities. Note disagreements >5% and explain why you believe the market is wrong (or right).
+LAYER 5 — CONTRARIAN CHECK: Before finalizing, argue AGAINST your own prediction. List 1-2 reasons it could be wrong. If you can't find strong counter-arguments, that increases confidence.
 
 CRITICAL RULES:
 1. Every prediction MUST be justified with specific statistics from the data provided
 2. Use the STATISTICAL MODEL (Poisson) probabilities as your mathematical anchor — deviate only with clear justification
 3. Compare your prediction against MARKET IMPLIED PROBABILITIES — note where you agree and disagree
-4. Predicted scoreline must be derived from actual goal-scoring averages
+4. Predicted scoreline must be derived from actual goal-scoring averages (use WEIGHTED recent averages)
 5. BTTS must be justified by both teams' scoring/conceding rates
 6. Over/Under must reference combined goal averages and Poisson probability
 7. Winner prediction must cite form, H2H, home advantage, and key absences
@@ -554,10 +810,14 @@ CRITICAL RULES:
 9. When CONFIRMED LINEUPS are available, assess starting XI quality vs bench strength. Flag if key players are benched or missing.
 10. Be honest about uncertainty — lower confidence when data is sparse
 11. Your predicted score MUST be consistent with your BTTS and Over/Under verdicts
-12. Flag ANOMALIES: when your prediction significantly disagrees with market odds, or when data is insufficient for a confident prediction
+12. Flag ANOMALIES: when your prediction significantly disagrees with market odds, or when data is insufficient
 13. Consider SEASON STATISTICS (wins/draws/losses record, home/away split) when available
+14. AVOID defaulting to draws — draws should only be predicted when statistical evidence strongly supports it (tight H2H, similar form, defensive teams)
+15. Consider MOMENTUM: teams on winning/losing streaks behave differently than their averages suggest
+16. For HIGH-STAKES matches (finals, knockout rounds), expect more conservative, lower-scoring games
 
-DATA QUALITY NOTE: This prediction has a data quality score of ${Math.round(dataQuality * 100)}%. ${dataQuality < 0.5 ? "Data is limited — be more conservative and express higher uncertainty." : "Good data coverage — you can be more decisive."}
+DATA QUALITY NOTE: This prediction has a data quality score of ${Math.round(dataQuality * 100)}%. ${dataQuality < 0.5 ? "Data is limited — be more conservative and express higher uncertainty." : dataQuality < 0.7 ? "Moderate data coverage — reasonable confidence possible but flag gaps." : "Good data coverage — you can be more decisive."}
+${!hasConfirmedLineups ? "⚠️ NO CONFIRMED LINEUPS AVAILABLE — reduce confidence by 5-10% as lineup changes can significantly impact predictions." : "✅ Confirmed lineups available — factor starting XI quality into your analysis."}
 
 You must call the predict_match tool with your structured analysis.`;
 
@@ -565,9 +825,11 @@ You must call the predict_match tool with your structured analysis.`;
 
 Match: ${homeName} vs ${awayName}
 League: ${match.league}${intl ? " (INTERNATIONAL)" : ""}
+Round: ${match.round || "N/A"}
 Date: ${match.match_date}
 ${match.status === "completed" ? `Final Score: ${match.goals_home}-${match.goals_away}` : "Status: Upcoming"}
 ${match.xg_home != null ? `xG: ${match.xg_home}-${match.xg_away}` : ""}
+${importanceBlock}
 
 ${prediction ? `Existing Model: Home ${Math.round(prediction.home_win * 100)}%, Draw ${Math.round(prediction.draw * 100)}%, Away ${Math.round(prediction.away_win * 100)}%
 xG: ${prediction.expected_goals_home}-${prediction.expected_goals_away}, O/U 2.5: ${prediction.over_under_25}, Confidence: ${Math.round(prediction.model_confidence * 100)}%` : "No existing prediction."}
@@ -575,24 +837,28 @@ xG: ${prediction.expected_goals_home}-${prediction.expected_goals_away}, O/U 2.5
 ${odds ? `Odds: Home ${odds.home_win_odds}, Draw ${odds.draw_odds}, Away ${odds.away_win_odds}` : ""}
 ${statsAnchorsBlock}
 
-${homeFormStr.length ? `${homeName} overall form: ${homeFormStr.join(", ")}` : ""}
-${awayFormStr.length ? `${awayName} overall form: ${awayFormStr.join(", ")}` : ""}
+${homeFormStr.length ? `${homeName} form (last ${homeFormStr.length}): ${homeFormStr.join(", ")}` : ""}
+${awayFormStr.length ? `${awayName} form (last ${awayFormStr.length}): ${awayFormStr.join(", ")}` : ""}
 ${homeHomeForm.length ? `${homeName} HOME form: ${homeHomeForm.join(", ")}` : ""}
 ${awayAwayForm.length ? `${awayName} AWAY form: ${awayAwayForm.join(", ")}` : ""}
+${momentumBlock}
 ${teamStatsBlock}
 ${playersBlock}
 ${h2hBlock}
 ${statsBlock}
 ${contextBlock}
+${newsSignals}
 ${liveContext ? `\nLIVE CONTEXT (injuries, suspensions, lineups, news):\n${liveContext}` : ""}
 ${learningBlock}
 
 IMPORTANT: 
 1. Your reasoning must cite SPECIFIC numbers from the data above. Every claim must reference a stat.
-2. Apply the FEATURE WEIGHTS specified in your instructions.
+2. Apply the FEATURE WEIGHTS and REASONING LAYERS specified in your instructions.
 3. Note any disagreement with market odds and explain why.
 4. Ensure predicted score is CONSISTENT with BTTS and Over/Under verdicts.
-5. Flag any anomalies or data gaps in the anomalies field.`;
+5. Flag any anomalies or data gaps in the anomalies field.
+6. Before finalizing, do a CONTRARIAN CHECK: state 1-2 reasons your prediction could be wrong.
+7. Use WEIGHTED recent averages (not just raw averages) to capture current form trajectory.`;
 
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
     if (!lovableApiKey) throw new Error("LOVABLE_API_KEY not set");
@@ -610,12 +876,12 @@ IMPORTANT:
           { role: "user", content: userPrompt },
         ],
         reasoning: { effort: "high" },
-        max_tokens: 4000,
+        max_tokens: 5000,
         tools: [{
           type: "function",
           function: {
             name: "predict_match",
-            description: "Submit structured match prediction with fact-based reasoning",
+            description: "Submit structured match prediction with multi-layer fact-based reasoning",
             parameters: {
               type: "object",
               properties: {
@@ -629,16 +895,18 @@ IMPORTANT:
                 over_under_25: { type: "string", enum: ["over", "under"], description: "Over or under 2.5 total goals" },
                 btts: { type: "string", enum: ["yes", "no"], description: "Both teams to score" },
                 confidence: { type: "number", description: "Confidence 0-1 based on data quality and model agreement" },
-                winner_reasoning: { type: "string", description: "2-3 bullet points citing specific stats for why this team wins/draws. Each point MUST reference a number. Include Poisson vs market comparison." },
-                btts_reasoning: { type: "string", description: "1-2 bullet points with specific scoring/conceding rates justifying BTTS verdict. Reference Poisson BTTS probability." },
-                over_under_reasoning: { type: "string", description: "1-2 bullet points with combined goal averages and Poisson Over 2.5 probability justifying verdict." },
-                key_factors: { type: "string", description: "2-3 bullet points about injuries, suspensions, tactical factors, market value disagreements, or other match-specific context that influenced the prediction." },
-                anomalies: { type: "array", items: { type: "string" }, description: "List of anomalies: data gaps, prediction-vs-odds conflicts, or insufficient data warnings. Empty array if none." },
+                winner_reasoning: { type: "string", description: "3-4 bullet points citing specific stats for why this team wins/draws. Reference Poisson probabilities, form, H2H, and momentum. Include how weighted recent form differs from overall averages." },
+                btts_reasoning: { type: "string", description: "2 bullet points with specific scoring/conceding rates justifying BTTS verdict. Reference Poisson BTTS probability and clean sheet rates." },
+                over_under_reasoning: { type: "string", description: "2 bullet points with combined goal averages, Poisson Over 2.5 probability, and H2H goal averages justifying verdict." },
+                key_factors: { type: "string", description: "3-4 bullet points about injuries, suspensions, tactical factors, match importance, momentum, lineup quality, and market value disagreements." },
+                contrarian_check: { type: "string", description: "1-2 bullet points arguing AGAINST your prediction. What could go wrong? What are you potentially missing?" },
+                anomalies: { type: "array", items: { type: "string" }, description: "List of anomalies: data gaps, prediction-vs-odds conflicts >5%, momentum-vs-stats conflicts, or insufficient data warnings. Empty array if none." },
               },
               required: [
                 "home_win", "draw", "away_win", "expected_goals_home", "expected_goals_away",
                 "predicted_score_home", "predicted_score_away", "over_under_25", "btts",
-                "confidence", "winner_reasoning", "btts_reasoning", "over_under_reasoning", "key_factors", "anomalies"
+                "confidence", "winner_reasoning", "btts_reasoning", "over_under_reasoning",
+                "key_factors", "contrarian_check", "anomalies"
               ],
               additionalProperties: false,
             },
@@ -692,9 +960,13 @@ IMPORTANT:
     const dr = total > 0 ? pred.draw / total : 0.3;
     const aw = total > 0 ? pred.away_win / total : 0.3;
 
-    // Build structured reasoning text with anomalies
+    // Build structured reasoning text with contrarian check and anomalies
     const anomaliesStr = (pred.anomalies && pred.anomalies.length > 0)
       ? `\n\n⚠️ ANOMALIES & DATA NOTES:\n${pred.anomalies.map((a: string) => `• ${a}`).join("\n")}`
+      : "";
+
+    const contrarianStr = pred.contrarian_check
+      ? `\n\n🔄 CONTRARIAN CHECK:\n${pred.contrarian_check}`
       : "";
 
     const reasoning = [
@@ -709,18 +981,42 @@ IMPORTANT:
       ``,
       `🔑 KEY FACTORS:`,
       pred.key_factors || "",
+      contrarianStr,
       anomaliesStr,
     ].join("\n");
 
+    // Smarter confidence scoring
     const aiConfidence = pred.confidence || 0.5;
-    const blendedConfidence = Math.round(((aiConfidence * 0.6) + (dataQuality * 0.4)) * 1000) / 1000;
+    let modelMarketAgreement = 0.5;
+    if (statsAnchors.implied_home_win != null && statsAnchors.poisson_home_win != null) {
+      // If Poisson and market agree, boost confidence
+      const maxPoissonDelta = Math.max(
+        Math.abs(statsAnchors.poisson_home_win - statsAnchors.implied_home_win),
+        Math.abs(statsAnchors.poisson_draw - statsAnchors.implied_draw),
+        Math.abs(statsAnchors.poisson_away_win - statsAnchors.implied_away_win)
+      );
+      modelMarketAgreement = maxPoissonDelta < 0.05 ? 1.0 : maxPoissonDelta < 0.10 ? 0.8 : maxPoissonDelta < 0.15 ? 0.6 : 0.4;
+    }
+    const blendedConfidence = Math.round((
+      (aiConfidence * 0.45) +
+      (dataQuality * 0.30) +
+      (modelMarketAgreement * 0.15) +
+      (homeMomentum.momentum !== "neutral" || awayMomentum.momentum !== "neutral" ? 0.1 : 0.05)
+    ) * 1000) / 1000;
 
     // Compute multi-goal-line probabilities
     const lambdaH = pred.expected_goals_home || 1.2;
     const lambdaA = pred.expected_goals_away || 1.0;
     const goalLines = computeGoalLines(lambdaH, lambdaA);
     const goalDist = computeGoalDistribution(lambdaH, lambdaA);
-    const bestPick = findBestPick(goalLines);
+
+    // Enhanced best pick with value detection across all markets
+    const bestPickResult = findBestPick(
+      goalLines,
+      statsAnchors.poisson_home_win ?? hw, statsAnchors.poisson_draw ?? dr, statsAnchors.poisson_away_win ?? aw,
+      statsAnchors.implied_home_win ?? null, statsAnchors.implied_draw ?? null, statsAnchors.implied_away_win ?? null,
+      statsAnchors.poisson_btts ?? null
+    );
 
     await supabase.from("predictions").upsert({
       match_id: match_id,
@@ -737,8 +1033,8 @@ IMPORTANT:
       ai_reasoning: reasoning,
       goal_lines: goalLines,
       goal_distribution: goalDist,
-      best_pick: bestPick,
-      best_pick_confidence: Math.max(...Object.values(goalLines).filter(v => typeof v === 'number') as number[]),
+      best_pick: bestPickResult.pick,
+      best_pick_confidence: Math.round(bestPickResult.confidence * 1000) / 1000,
     }, { onConflict: "match_id" });
 
     await supabase.from("matches").update({ ai_insights: reasoning }).eq("id", match_id);
@@ -751,6 +1047,9 @@ IMPORTANT:
       data_quality: Math.round(dataQuality * 100),
       validation_warnings: warnings,
       anomalies: pred.anomalies || [],
+      momentum: { home: homeMomentum, away: awayMomentum },
+      match_importance: importance,
+      best_pick: bestPickResult,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

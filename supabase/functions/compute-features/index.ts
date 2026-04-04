@@ -12,6 +12,30 @@ function poissonPMF(lambda: number, k: number): number {
   return result;
 }
 
+// Compute league-specific average goals per game (home & away separately)
+function computeLeagueAverages(
+  completedMatches: any[],
+  league: string
+): { homeAvg: number; awayAvg: number; totalAvg: number } {
+  const leagueMatches = completedMatches.filter(m => m.league === league);
+  if (leagueMatches.length < 10) {
+    // Fallback to global average if insufficient league data
+    return { homeAvg: 1.45, awayAvg: 1.15, totalAvg: 1.30 };
+  }
+  let totalHomeGoals = 0, totalAwayGoals = 0;
+  for (const m of leagueMatches) {
+    totalHomeGoals += m.goals_home ?? 0;
+    totalAwayGoals += m.goals_away ?? 0;
+  }
+  const homeAvg = totalHomeGoals / leagueMatches.length;
+  const awayAvg = totalAwayGoals / leagueMatches.length;
+  return {
+    homeAvg: Math.round(homeAvg * 100) / 100,
+    awayAvg: Math.round(awayAvg * 100) / 100,
+    totalAvg: Math.round(((homeAvg + awayAvg) / 2) * 100) / 100,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -38,8 +62,9 @@ Deno.serve(async (req) => {
     }
 
     const teamIds = [...new Set(upcomingMatches.flatMap(m => [m.team_home_id, m.team_away_id]))];
+    const leagues = [...new Set(upcomingMatches.map(m => m.league))];
 
-    // Get completed matches for form + H2H computation
+    // Get completed matches for form + H2H + league averages
     const { data: completedMatches } = await supabase
       .from("matches")
       .select("team_home_id, team_away_id, goals_home, goals_away, match_date, league, home_team:teams!matches_team_home_id_fkey(name), away_team:teams!matches_team_away_id_fkey(name)")
@@ -56,15 +81,21 @@ Deno.serve(async (req) => {
     const statsMap = new Map<string, any>();
     teamStats?.forEach(s => statsMap.set(s.team_id, s));
 
-    const { data: leagues } = await supabase.from("leagues").select("name, standings_data");
+    const { data: leaguesData } = await supabase.from("leagues").select("name, standings_data");
     const { data: teamsData } = await supabase.from("teams").select("id, api_football_id, name").in("id", teamIds);
 
     const teamNameMap = new Map<string, string>();
     teamsData?.forEach(t => teamNameMap.set(t.id, t.name));
 
+    // Pre-compute league averages for all relevant leagues
+    const leagueAvgMap = new Map<string, { homeAvg: number; awayAvg: number; totalAvg: number }>();
+    for (const league of leagues) {
+      leagueAvgMap.set(league, computeLeagueAverages(completedMatches || [], league));
+    }
+
     // Parse standings to get positions
     const teamPositionMap = new Map<string, number>();
-    leagues?.forEach(league => {
+    leaguesData?.forEach(league => {
       const standings = league.standings_data as any[];
       if (!Array.isArray(standings)) return;
       for (const group of standings) {
@@ -94,19 +125,7 @@ Deno.serve(async (req) => {
       }).join("");
     }
 
-    // NEW: Compute home-only or away-only form
-    function computeVenueForm(teamId: string, asHome: boolean): string {
-      const matches = (completedMatches || [])
-        .filter(m => asHome ? m.team_home_id === teamId : m.team_away_id === teamId)
-        .slice(0, 5);
-      return matches.map(m => {
-        const gf = asHome ? (m.goals_home ?? 0) : (m.goals_away ?? 0);
-        const ga = asHome ? (m.goals_away ?? 0) : (m.goals_home ?? 0);
-        return gf > ga ? "W" : gf === ga ? "D" : "L";
-      }).join("");
-    }
-
-    // NEW: Compute H2H from completed matches
+    // Compute H2H from completed matches
     function computeH2H(homeId: string, awayId: string): any[] {
       return (completedMatches || [])
         .filter(m =>
@@ -147,6 +166,24 @@ Deno.serve(async (req) => {
       };
     }
 
+    // Compute venue-specific scoring rates for home advantage
+    function computeVenueStats(teamId: string, asHome: boolean) {
+      const matches = (completedMatches || [])
+        .filter(m => asHome ? m.team_home_id === teamId : m.team_away_id === teamId)
+        .slice(0, 10);
+      if (matches.length === 0) return null;
+      let scored = 0, conceded = 0;
+      for (const m of matches) {
+        scored += asHome ? (m.goals_home ?? 0) : (m.goals_away ?? 0);
+        conceded += asHome ? (m.goals_away ?? 0) : (m.goals_home ?? 0);
+      }
+      return {
+        avgScored: scored / matches.length,
+        avgConceded: conceded / matches.length,
+        played: matches.length,
+      };
+    }
+
     let computed = 0;
     const errors: string[] = [];
 
@@ -158,22 +195,34 @@ Deno.serve(async (req) => {
         const awayStats = statsMap.get(match.team_away_id);
         const homeMatchStats = computeMatchStats(match.team_home_id);
         const awayMatchStats = computeMatchStats(match.team_away_id);
-
-        // Compute H2H from DB
         const h2hResults = computeH2H(match.team_home_id, match.team_away_id);
+
+        // Venue-specific stats for more accurate Poisson
+        const homeVenueStats = computeVenueStats(match.team_home_id, true);
+        const awayVenueStats = computeVenueStats(match.team_away_id, false);
 
         const homeAvgScored = homeStats?.avg_goals_scored ?? homeMatchStats?.avgScored ?? 0;
         const homeAvgConceded = homeStats?.avg_goals_conceded ?? homeMatchStats?.avgConceded ?? 0;
         const awayAvgScored = awayStats?.avg_goals_scored ?? awayMatchStats?.avgScored ?? 0;
         const awayAvgConceded = awayStats?.avg_goals_conceded ?? awayMatchStats?.avgConceded ?? 0;
 
-        const leagueAvg = 1.35;
-        const hAtk = homeAvgScored > 0 ? homeAvgScored / leagueAvg : 1;
-        const aDefW = awayAvgConceded > 0 ? awayAvgConceded / leagueAvg : 1;
-        const aAtk = awayAvgScored > 0 ? awayAvgScored / leagueAvg : 1;
-        const hDefW = homeAvgConceded > 0 ? homeAvgConceded / leagueAvg : 1;
-        const poissonHome = Math.round(hAtk * aDefW * leagueAvg * 100) / 100;
-        const poissonAway = Math.round(aAtk * hDefW * leagueAvg * 100) / 100;
+        // Use league-specific averages instead of hardcoded 1.35
+        const leagueAvg = leagueAvgMap.get(match.league) || { homeAvg: 1.45, awayAvg: 1.15, totalAvg: 1.30 };
+
+        // Home advantage adjusted Poisson:
+        // Home team's lambda = (home attack strength) * (away defense weakness) * league home avg
+        // Away team's lambda = (away attack strength) * (home defense weakness) * league away avg
+        const homeAttackScoredAtHome = homeVenueStats?.avgScored ?? homeAvgScored;
+        const awayAttackScoredAway = awayVenueStats?.avgScored ?? awayAvgScored;
+
+        const hAtk = homeAttackScoredAtHome > 0 ? homeAttackScoredAtHome / leagueAvg.homeAvg : 1;
+        const aDefW = awayAvgConceded > 0 ? awayAvgConceded / leagueAvg.totalAvg : 1;
+        const aAtk = awayAttackScoredAway > 0 ? awayAttackScoredAway / leagueAvg.awayAvg : 1;
+        const hDefW = homeAvgConceded > 0 ? homeAvgConceded / leagueAvg.totalAvg : 1;
+
+        // Home team gets league home average, away team gets league away average
+        const poissonHome = Math.round(hAtk * aDefW * leagueAvg.homeAvg * 100) / 100;
+        const poissonAway = Math.round(aAtk * hDefW * leagueAvg.awayAvg * 100) / 100;
 
         const posHome = teamPositionMap.get(match.team_home_id) ?? null;
         const posAway = teamPositionMap.get(match.team_away_id) ?? null;
