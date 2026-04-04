@@ -30,7 +30,7 @@ interface LeagueFilterProps {
 
 export function LeagueFilter({ selected, onChange }: LeagueFilterProps) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
       {leagues.map((l) => (
         <Button
           key={l.value}
