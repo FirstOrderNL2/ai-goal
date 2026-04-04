@@ -57,6 +57,32 @@ function formatRound(round: string | null | undefined): string | null {
   return round.length > 20 ? round.substring(0, 18) + "…" : round;
 }
 
+function formatFreshness(prediction: Match["prediction"]): { label: string; isHT: boolean } | null {
+  if (!prediction) return null;
+  const intervals = prediction.prediction_intervals as Array<{ time: string; type?: string }> | null;
+  const hasHT = intervals?.some((i) => i.type === "HT");
+  if (hasHT) return { label: "HT prediction", isHT: true };
+
+  const lastAt = prediction.last_prediction_at;
+  if (!lastAt) return null;
+  const diffMin = Math.floor((Date.now() - new Date(lastAt).getTime()) / 60000);
+  if (diffMin < 1) return { label: "Updated just now", isHT: false };
+  if (diffMin < 60) return { label: `Updated ${diffMin}m ago`, isHT: false };
+  if (diffMin < 1440) return { label: `Updated ${Math.floor(diffMin / 60)}h ago`, isHT: false };
+  return { label: `Updated ${Math.floor(diffMin / 1440)}d ago`, isHT: false };
+}
+
+function PredictionFreshness({ prediction }: { prediction: Match["prediction"] }) {
+  const info = formatFreshness(prediction);
+  if (!info) return null;
+  return (
+    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+      <RefreshCw className="h-2.5 w-2.5" />
+      <span className={info.isHT ? "font-semibold text-primary" : ""}>{info.label}</span>
+    </div>
+  );
+}
+
 interface MatchCardProps {
   match: Match;
 }
