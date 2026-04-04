@@ -1,133 +1,70 @@
 
 
-# AI Self-Learning Loop + Performance Dashboard
+# Add Live Matches Section + Pre-Match Prediction Scheduling
 
-## What Already Exists
+## Problem
 
-- **Predictions table**: Already stores `match_id`, probabilities (1X2, O/U, BTTS), expected goals, goal lines, best pick — no schema changes needed
-- **Post-match reviews**: `generate-post-match-review` edge function already computes Brier scores (1X2, O/U, BTTS), exact score hits, outcome hits, and stores `ai_accuracy_score` + `ai_post_match_review` on the `matches` table
-- **Learning context**: `generate-ai-prediction` already fetches past reviews and injects "LEARNING FROM PAST PREDICTIONS" into prompts
-- **Accuracy page**: Basic page at `/accuracy` showing 1X2 and O/U 2.5 accuracy with a match-by-match list
-- **1,433 completed matches** with predictions available for evaluation; 518 already have post-match reviews
-
-So the core pipeline (store → evaluate → feed back) already exists. What's missing:
-
-1. **A `model_performance` table** to track metrics over time (not just per-match)
-2. **Multi-goal-line accuracy tracking** (currently only tracks O/U 2.5)
-3. **Calibration analysis** (does 70% predicted → ~70% actual?)
-4. **Feature weight adjustment** based on historical accuracy patterns
-5. **A proper performance dashboard** with trend graphs, calibration plots, and weak-area identification
-6. **Automated batch review** trigger for completed matches without reviews
+1. **No "Live" section on dashboard**: The Index page only queries `status = "upcoming"` and `status = "completed"`. There is 1 live match and 8 cancelled matches in the DB — live matches are invisible on the homepage.
+2. **Predictions are not auto-generated before kickoff**: Currently predictions are only generated during the `auto-sync` cron or manually. There is no mechanism to trigger predictions at specific intervals before a match starts (1h, 30m, 10m, 5m).
 
 ## Plan
 
-### 1. Create `model_performance` table
+### 1. Add `useLiveMatches` hook and Live section to Index page
 
-New migration:
+**`src/hooks/useMatches.ts`**:
+- Add a new `useLiveMatches(league?)` query that fetches matches with `status` in `('live', '1H', '2H', 'HT')`.
+- Use a 30-second `refetchInterval` for real-time updates.
+- Apply the same league filter and API-Football dedup logic as upcoming.
 
-```sql
-CREATE TABLE model_performance (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  period_start date NOT NULL,
-  period_end date NOT NULL,
-  total_matches integer DEFAULT 0,
-  outcome_accuracy numeric DEFAULT 0,
-  ou_25_accuracy numeric DEFAULT 0,
-  btts_accuracy numeric DEFAULT 0,
-  exact_score_hits integer DEFAULT 0,
-  avg_brier_1x2 numeric DEFAULT 0,
-  avg_brier_ou numeric DEFAULT 0,
-  avg_brier_btts numeric DEFAULT 0,
-  mae_goals numeric DEFAULT 0,
-  calibration_data jsonb DEFAULT '{}',
-  goal_line_accuracy jsonb DEFAULT '{}',
-  feature_weights jsonb DEFAULT '{}',
-  created_at timestamptz DEFAULT now()
-);
-```
+**`src/pages/Index.tsx`**:
+- Import `useLiveMatches`.
+- Add a new "Live Matches" section at the top (above Upcoming), with a pulsing green indicator icon.
+- Only render the section when there are live matches (hide when empty).
+- Show the live match cards with the existing `MatchCard` component (which already handles live badges).
 
-With public SELECT RLS.
+### 2. Create `pre-match-predictions` edge function
 
-### 2. Create `compute-model-performance` edge function
+**`supabase/functions/pre-match-predictions/index.ts`** (new):
+- Query upcoming matches where `match_date` is within the next 60 minutes.
+- For each match, check if a prediction already exists and when it was last generated.
+- Generate/regenerate predictions for matches at the 60m, 30m, 10m, and 5m windows before kickoff.
+- Use a `prediction_generated_intervals` tracking approach: store a JSONB field or check `predictions.created_at` to avoid duplicate generation at the same interval.
+- Call the existing `generate-ai-prediction` function for each match that needs a prediction refresh.
+- Include rate limiting (process max 5 matches per invocation with delays).
 
-Runs weekly (via pg_cron) or on-demand. For all completed matches with predictions:
+### 3. Update `auto-sync` to call `pre-match-predictions`
 
-- Compute aggregate accuracy: 1X2, O/U 2.5, BTTS, exact score rate
-- Compute Brier scores averaged over the period
-- Compute MAE for expected goals vs actual goals
-- Compute calibration buckets: group predictions by probability decile (0-10%, 10-20%, etc.), measure actual hit rate per bucket
-- Compute goal-line accuracy for all 5 thresholds (0.5, 1.5, 2.5, 3.5, 4.5)
-- Identify weak areas (e.g., "overestimates home advantage in away-strong leagues")
-- Suggest feature weight adjustments based on which data sources correlated with better predictions
-- Upsert into `model_performance`
+**`supabase/functions/auto-sync/index.ts`**:
+- Add a step after batch-generate-predictions to call `pre-match-predictions`.
+- This ensures every auto-sync run also checks for imminent matches needing fresh predictions.
 
-### 3. Upgrade `generate-post-match-review` to batch mode
+### 4. Add `last_prediction_at` column to predictions table
 
-Add a new `batch-review` edge function (or extend existing) that:
-- Finds all completed matches missing `ai_accuracy_score`
-- Processes them in batches of 5 with delays to avoid rate limits
-- Stores Brier scores directly in a new `brier_scores` JSONB column on `predictions` for faster querying
+**Database migration**:
+- Add `last_prediction_at timestamptz` to the `predictions` table to track when the prediction was last refreshed.
+- Add `prediction_intervals jsonb DEFAULT '[]'` to track which pre-match intervals have been processed (e.g., `["60m", "30m"]`).
 
-### 4. Enhance AI prediction prompt with performance-aware weighting
+### 5. Schedule frequent cron job for pre-match predictions
 
-Update `generate-ai-prediction` to:
-- Fetch the latest `model_performance` row
-- If calibration shows over-confidence in certain ranges, add a calibration warning to the prompt
-- If certain goal lines are consistently off, note that
-- Dynamically adjust the weight block based on historical accuracy (e.g., if H2H has low predictive power, reduce its weight)
+- Schedule `pre-match-predictions` to run every 10 minutes via pg_cron so it catches the 60m, 30m, 10m, and 5m windows reliably.
 
-### 5. Overhaul the Accuracy page into a full Performance Dashboard
+### 6. Also fix `auto-sync` stale match logic
 
-Replace the basic `/accuracy` page with a comprehensive dashboard:
-
-**Summary Cards Row:**
-- Overall 1X2 accuracy %
-- O/U 2.5 accuracy %
-- BTTS accuracy %
-- Exact score hit rate
-- Average Brier score
-- MAE (goals)
-
-**Accuracy Trend Chart:**
-- Line chart showing weekly accuracy over time (from `model_performance`)
-
-**Calibration Chart:**
-- Scatter/line plot: predicted probability (x) vs actual frequency (y)
-- Perfect calibration = diagonal line
-- Shows where the model is over/under-confident
-
-**Goal Line Accuracy Breakdown:**
-- Bar chart for each goal threshold (0.5, 1.5, 2.5, 3.5, 4.5)
-- Shows accuracy per line
-
-**Weak Areas Panel:**
-- Text insights: "Model overestimates draws by 8%", "Under 0.5 predictions are 15% less accurate"
-
-**Match-by-Match Log** (existing, enhanced):
-- Add Brier score per match
-- Add goal line hit/miss indicators
-- Color-code by accuracy
-
-### 6. Schedule automated reviews
-
-Add a pg_cron job that triggers `compute-model-performance` weekly and `batch-review` for unreviewed completed matches daily.
+The current `auto-sync` marks matches as `completed` after 2 hours but never sets them to `live`. The sync functions should be updating match status to `live` when API-Football reports an in-progress status. This is likely already handled in `sync-football-data` but needs verification — if not, add status mapping from API-Football fixture statuses (`1H`, `2H`, `HT`, `ET`, `P`) to `live`.
 
 ## Files to Change
 
 | File | Change |
 |---|---|
-| `supabase/migrations/new` | Create `model_performance` table |
-| `supabase/functions/compute-model-performance/index.ts` | **New** — aggregate metrics computation |
-| `supabase/functions/batch-review-matches/index.ts` | **New** — batch post-match reviews |
-| `supabase/functions/generate-ai-prediction/index.ts` | Add performance-aware weight adjustment |
-| `src/pages/Accuracy.tsx` | Full dashboard overhaul with trend charts, calibration plot, goal-line breakdown |
-| `src/hooks/useMatches.ts` | Add hook for `model_performance` data |
+| `src/hooks/useMatches.ts` | Add `useLiveMatches` hook |
+| `src/pages/Index.tsx` | Add Live Matches section above Upcoming |
+| `supabase/functions/pre-match-predictions/index.ts` | New — scheduled pre-match prediction generator |
+| `supabase/functions/auto-sync/index.ts` | Add call to pre-match-predictions |
+| `supabase/migrations/new` | Add `last_prediction_at` and `prediction_intervals` to predictions |
 
-## Priority Order
+## Priority
 
-1. `model_performance` table + `compute-model-performance` function (metrics foundation)
-2. `batch-review-matches` function (fill gaps in reviewed matches)
-3. Accuracy page dashboard overhaul (user-facing value)
-4. Performance-aware prompt enhancement (closes the learning loop)
-5. Scheduled automation via pg_cron
+1. Live matches section on dashboard (immediate user visibility)
+2. Pre-match prediction scheduling function + migration
+3. Cron job setup for 10-minute intervals
 
