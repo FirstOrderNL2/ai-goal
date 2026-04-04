@@ -36,6 +36,9 @@ export function PredictionHistoryCard({ prediction }: { prediction: Prediction }
         </CardTitle>
       </CardHeader>
       <CardContent>
+        {isEmpty ? (
+          <p className="text-sm text-muted-foreground">Predictions will update automatically before kickoff</p>
+        ) : (
         <div className="relative pl-6 space-y-4">
           {/* vertical line */}
           <div className="absolute left-[9px] top-1 bottom-1 w-px bg-border" />
