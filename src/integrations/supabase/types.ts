@@ -415,11 +415,13 @@ export type Database = {
           goal_lines: Json | null
           home_win: number
           id: string
+          last_prediction_at: string | null
           match_id: string
           model_confidence: number
           over_under_25: string
           predicted_score_away: number | null
           predicted_score_home: number | null
+          prediction_intervals: Json | null
         }
         Insert: {
           ai_reasoning?: string | null
@@ -435,11 +437,13 @@ export type Database = {
           goal_lines?: Json | null
           home_win: number
           id?: string
+          last_prediction_at?: string | null
           match_id: string
           model_confidence?: number
           over_under_25?: string
           predicted_score_away?: number | null
           predicted_score_home?: number | null
+          prediction_intervals?: Json | null
         }
         Update: {
           ai_reasoning?: string | null
@@ -455,11 +459,13 @@ export type Database = {
           goal_lines?: Json | null
           home_win?: number
           id?: string
+          last_prediction_at?: string | null
           match_id?: string
           model_confidence?: number
           over_under_25?: string
           predicted_score_away?: number | null
           predicted_score_home?: number | null
+          prediction_intervals?: Json | null
         }
         Relationships: [
           {
