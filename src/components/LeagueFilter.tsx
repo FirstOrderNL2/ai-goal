@@ -37,7 +37,7 @@ export function LeagueFilter({ selected, onChange }: LeagueFilterProps) {
           variant={selected === l.value ? "default" : "secondary"}
           size="sm"
           onClick={() => onChange(l.value)}
-          className="text-xs"
+          className="text-xs shrink-0"
         >
           {l.label}
         </Button>
