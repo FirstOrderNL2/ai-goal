@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
     console.log("Starting compute-model-performance...");
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    console.log("URL set:", !!supabaseUrl, "Key set:", !!serviceKey);
+    console.log("URL:", supabaseUrl?.slice(0, 30), "Key length:", serviceKey?.length);
     if (!supabaseUrl || !serviceKey) throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
     const supabase = createClient(supabaseUrl, serviceKey);
     console.log("Supabase client created");
