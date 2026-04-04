@@ -107,6 +107,8 @@ export function useCompletedMatches(league?: string) {
   });
 }
 
+const LIVE_STATUSES = ["live", "1H", "2H", "HT", "ET"];
+
 export function useMatch(id: string) {
   return useQuery({
     queryKey: ["match", id],
@@ -122,6 +124,10 @@ export function useMatch(id: string) {
       return enriched[0];
     },
     enabled: !!id,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status && LIVE_STATUSES.includes(status) ? 10_000 : false;
+    },
   });
 }
 

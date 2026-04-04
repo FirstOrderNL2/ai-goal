@@ -121,9 +121,14 @@ export default function MatchDetail() {
                 {isUpcoming ? (
                   <span className="text-lg font-bold text-primary px-4 py-1 rounded-lg bg-primary/10">VS</span>
                 ) : (
-                  <span className="text-3xl font-bold tabular-nums">
-                    {match.goals_home} - {match.goals_away}
-                  </span>
+                  <div className="flex flex-col items-center gap-1">
+                    <span className="text-3xl font-bold tabular-nums">
+                      {isMatchLive && liveGoalsHome != null ? liveGoalsHome : match.goals_home} - {isMatchLive && liveGoalsAway != null ? liveGoalsAway : match.goals_away}
+                    </span>
+                    {isMatchLive && liveElapsed != null && (
+                      <span className="text-xs text-green-500 font-mono animate-pulse">{liveElapsed}'</span>
+                    )}
+                  </div>
                 )}
               </div>
               <div className="text-center space-y-2 flex-1">
