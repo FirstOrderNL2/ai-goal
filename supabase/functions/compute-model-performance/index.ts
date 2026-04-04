@@ -24,7 +24,10 @@ Deno.serve(async (req) => {
       .order("match_date", { ascending: false })
       .limit(1000);
 
-    if (mErr) throw mErr;
+    if (mErr) {
+      console.error("Match query error:", JSON.stringify(mErr));
+      throw mErr;
+    }
     if (!matches || matches.length === 0) {
       return new Response(JSON.stringify({ message: "No completed matches" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
