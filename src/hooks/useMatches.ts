@@ -181,7 +181,7 @@ async function enrichMatches(matches: Match[]): Promise<Match[]> {
   ]);
 
   const teamsMap = new Map((teamsRes.data as Team[])?.map((t) => [t.id, t]));
-  const predsMap = new Map((predsRes.data as Prediction[])?.map((p) => [p.match_id, p]));
+  const predsMap = new Map((predsRes.data as unknown as Prediction[])?.map((p) => [p.match_id, p]));
   const oddsMap = new Map((oddsRes.data as Odds[])?.map((o) => [o.match_id, o]));
 
   return matches.map((m) => ({
