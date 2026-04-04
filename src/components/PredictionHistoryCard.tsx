@@ -25,8 +25,7 @@ export function PredictionHistoryCard({ prediction }: { prediction: Prediction }
 
   const isEmpty = !intervals || intervals.length === 0;
 
-  // newest first
-  const sorted = [...intervals].reverse();
+  const sorted = isEmpty ? [] : [...intervals!].reverse();
 
   return (
     <Card className="border-border/50">
