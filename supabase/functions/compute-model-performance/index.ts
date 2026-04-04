@@ -21,8 +21,6 @@ Deno.serve(async (req) => {
       .from("matches")
       .select("id, goals_home, goals_away, match_date, league")
       .eq("status", "completed")
-      .not("goals_home", "is", null)
-      .not("goals_away", "is", null)
       .order("match_date", { ascending: false })
       .limit(1000);
 
