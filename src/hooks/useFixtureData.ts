@@ -5,11 +5,6 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
 async function fetchFromProxy(endpoint: string, params: Record<string, string>) {
   const searchParams = new URLSearchParams({ endpoint, ...params });
-  const { data, error } = await supabase.functions.invoke("get-football-data", {
-    body: null,
-    headers: {},
-  });
-  // Use direct fetch to pass query params
   const url = `${SUPABASE_URL}/functions/v1/get-football-data?${searchParams.toString()}`;
   const res = await fetch(url, {
     headers: {
