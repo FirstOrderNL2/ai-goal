@@ -14,17 +14,16 @@ function relativeTime(date: Date): string {
   return `${days}d ago`;
 }
 
-function entryLabel(index: number, total: number, type?: string): string {
-  if (type === "HT") return "HT Prediction";
+function entryLabel(entry: { at: string; minutesBefore?: number; label?: string }, index: number, total: number): string {
+  if (entry.label === "HT") return "HT Prediction";
   if (index === total - 1) return "Initial";
+  if (entry.minutesBefore != null) return `Refresh (${entry.minutesBefore}m before KO)`;
   return "Refresh";
 }
 
 export function PredictionHistoryCard({ prediction }: { prediction: Prediction }) {
   const intervals = prediction.prediction_intervals;
-
   const isEmpty = !intervals || intervals.length === 0;
-
   const sorted = isEmpty ? [] : [...intervals!].reverse();
 
   return (
@@ -39,46 +38,42 @@ export function PredictionHistoryCard({ prediction }: { prediction: Prediction }
         {isEmpty ? (
           <p className="text-sm text-muted-foreground">Predictions will update automatically before kickoff</p>
         ) : (
-        <div className="relative pl-6 space-y-4">
-          {/* vertical line */}
-          <div className="absolute left-[9px] top-1 bottom-1 w-px bg-border" />
+          <div className="relative pl-6 space-y-4">
+            <div className="absolute left-[9px] top-1 bottom-1 w-px bg-border" />
+            {sorted.map((entry, i) => {
+              const date = new Date(entry.at);
+              const label = entryLabel(entry, i, sorted.length);
+              const isHT = entry.label === "HT";
 
-          {sorted.map((entry, i) => {
-            const date = new Date(entry.time);
-            const label = entryLabel(i, sorted.length, entry.type);
-            const isHT = entry.type === "HT";
-
-            return (
-              <div key={i} className="relative flex items-start gap-3">
-                <div
-                  className={`absolute -left-6 top-1 h-[10px] w-[10px] rounded-full border-2 ${
-                    isHT
-                      ? "bg-green-500 border-green-500"
-                      : "bg-primary border-primary"
-                  }`}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={`text-sm font-medium ${isHT ? "text-green-500" : "text-foreground"}`}>
-                      {label}
-                    </span>
-                    <span className="text-xs text-muted-foreground shrink-0">
-                      {relativeTime(date)}
-                    </span>
+              return (
+                <div key={i} className="relative flex items-start gap-3">
+                  <div
+                    className={`absolute -left-6 top-1 h-[10px] w-[10px] rounded-full border-2 ${
+                      isHT ? "bg-green-500 border-green-500" : "bg-primary border-primary"
+                    }`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`text-sm font-medium ${isHT ? "text-green-500" : "text-foreground"}`}>
+                        {label}
+                      </span>
+                      <span className="text-xs text-muted-foreground shrink-0">
+                        {relativeTime(date)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {date.toLocaleString("en-GB", {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    {date.toLocaleString("en-GB", {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </p>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
         )}
       </CardContent>
     </Card>
