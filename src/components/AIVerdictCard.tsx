@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Trophy, Target, BarChart3, Zap, ShieldCheck, TrendingUp } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Trophy, Target, BarChart3, Zap, ShieldCheck, TrendingUp, Loader2 } from "lucide-react";
 import type { Prediction } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -9,6 +10,33 @@ interface AIVerdictCardProps {
   homeTeamName: string;
   awayTeamName: string;
   odds?: { home_win_odds: number; draw_odds: number; away_win_odds: number } | null;
+}
+
+export function AIVerdictGenerating() {
+  return (
+    <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-background">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Trophy className="h-4 w-4 text-primary" />
+          AI Verdict
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-col items-center justify-center py-8 gap-3">
+          <Loader2 className="h-8 w-8 text-primary animate-spin" />
+          <p className="text-sm font-semibold text-foreground">Generating prediction…</p>
+          <p className="text-xs text-muted-foreground text-center max-w-xs">
+            Our AI is analyzing form, stats, H2H, and market data. This usually takes 20–30 seconds.
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <Skeleton className="h-20 rounded-lg" />
+          <Skeleton className="h-20 rounded-lg" />
+          <Skeleton className="h-20 rounded-lg" />
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 export function AIVerdictCard({ prediction, homeTeamName, awayTeamName, odds }: AIVerdictCardProps) {

@@ -1,9 +1,10 @@
 import { useParams, Link } from "react-router-dom";
+import { useEffect, useRef } from "react";
 import { Header } from "@/components/Header";
 import { useMatch, useMatchFeatures } from "@/hooks/useMatches";
 import { ProbabilityBar } from "@/components/ProbabilityBar";
 import { AIInsightsCard } from "@/components/AIInsightsCard";
-import { AIVerdictCard } from "@/components/AIVerdictCard";
+import { AIVerdictCard, AIVerdictGenerating } from "@/components/AIVerdictCard";
 import { MatchContextCard } from "@/components/MatchContextCard";
 import { TeamComparisonCard } from "@/components/TeamComparisonCard";
 import { H2HCard } from "@/components/H2HCard";
@@ -16,14 +17,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowLeft, TrendingUp, Target, BarChart3 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLiveFixture } from "@/hooks/useFixtureData";
 
 export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
+  const queryClient = useQueryClient();
   const { data: match, isLoading } = useMatch(id!);
   const { data: features } = useMatchFeatures(id);
+  const onDemandTriggered = useRef(false);
 
   // Fetch match_context for lineup fallback
   const { data: matchContext } = useQuery({
@@ -40,8 +43,34 @@ export default function MatchDetail() {
     enabled: !!id,
   });
 
+  // On-demand prediction generation mutation
+  const generatePrediction = useMutation({
+    mutationFn: async (matchId: string) => {
+      const { data, error } = await supabase.functions.invoke("generate-ai-prediction", {
+        body: { match_id: matchId },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["match", id] });
+    },
+  });
+
   const home_team = match?.home_team;
   const away_team = match?.away_team;
+  const prediction = match?.prediction;
+
+  // Auto-trigger prediction generation if prediction is missing or incomplete
+  useEffect(() => {
+    if (!match || !id || onDemandTriggered.current || generatePrediction.isPending) return;
+    
+    const isIncomplete = !prediction || !prediction.ai_reasoning || prediction.predicted_score_home == null;
+    if (isIncomplete) {
+      onDemandTriggered.current = true;
+      generatePrediction.mutate(id);
+    }
+  }, [match, id, prediction]);
 
   const isLive = match?.status === "live" || match?.status === "1H" || match?.status === "2H" || match?.status === "HT" || match?.status === "ET";
   const { data: liveFixture } = useLiveFixture(match?.api_football_id, match?.status);
@@ -69,7 +98,7 @@ export default function MatchDetail() {
     );
   }
 
-  const { prediction, odds } = match;
+  const { odds } = match;
   const isUpcoming = match.status === "upcoming";
   const isMatchLive = isLive;
   const h2hResults = features?.h2h_results as any[] | null;
@@ -78,6 +107,9 @@ export default function MatchDetail() {
   const liveGoalsAway = liveFixture?.goals?.away;
   const liveElapsed = liveFixture?.fixture?.status?.elapsed;
   const liveStatusShort = liveFixture?.fixture?.status?.short;
+
+  const isPredictionIncomplete = !prediction || !prediction.ai_reasoning || prediction.predicted_score_home == null;
+  const isGenerating = generatePrediction.isPending;
 
   return (
     <div className="min-h-screen bg-background">
@@ -159,17 +191,19 @@ export default function MatchDetail() {
         />
 
         {/* 3. AI Verdict */}
-        {prediction && (
+        {isGenerating && isPredictionIncomplete ? (
+          <AIVerdictGenerating />
+        ) : prediction && !isPredictionIncomplete ? (
           <AIVerdictCard
             prediction={prediction}
             homeTeamName={home_team?.name || "Home"}
             awayTeamName={away_team?.name || "Away"}
             odds={odds}
           />
-        )}
+        ) : null}
 
         {/* 3b. Pre-Match vs HT Comparison */}
-        {prediction && (
+        {prediction && !isPredictionIncomplete && (
           <PredictionComparisonCard
             prediction={prediction}
             homeTeamName={home_team?.name || "Home"}
@@ -178,7 +212,7 @@ export default function MatchDetail() {
         )}
 
         {/* 3c. Prediction History */}
-        {prediction && <PredictionHistoryCard prediction={prediction} />}
+        {prediction && !isPredictionIncomplete && <PredictionHistoryCard prediction={prediction} />}
 
         {/* 4. Team Comparison */}
         {features && (
@@ -195,7 +229,7 @@ export default function MatchDetail() {
         />
 
         {/* 6. Prediction Probabilities */}
-        {prediction && (
+        {prediction && !isPredictionIncomplete && (
           <Card className="border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base">
@@ -250,7 +284,7 @@ export default function MatchDetail() {
         )}
 
         {/* 7. Over/Under & BTTS */}
-        {prediction && (
+        {prediction && !isPredictionIncomplete && (
           <OverUnderCard prediction={prediction} features={features} />
         )}
 
