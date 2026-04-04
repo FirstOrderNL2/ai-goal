@@ -79,6 +79,7 @@ export function PredictionHistoryCard({ prediction }: { prediction: Prediction }
             );
           })}
         </div>
+        )}
       </CardContent>
     </Card>
   );
