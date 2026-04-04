@@ -1,67 +1,39 @@
 
-# AI Prediction System Enhancement
 
-## What's Already Working (No Changes Needed)
-- ✅ Poisson distribution for all goal lines (0.5–4.5)
-- ✅ 4-layer reasoning (Statistical → Features → Context → Market)
-- ✅ Web research integration (Firecrawl-based news/injuries)
-- ✅ Self-learning loop with calibration warnings
-- ✅ Prediction validation and consistency checks
+# Fix: Barcelona Match Not Showing in Live Section
 
-## Concrete Improvements
+## Problem
+The Atletico Madrid vs FC Barcelona match (19:00 UTC today) has `status: "completed"` in the database even though it just kicked off. This prevents it from appearing in the Live Matches section.
 
-### 1. Home Advantage in Poisson Model (`compute-features` + `generate-ai-prediction`)
-Current: Uses flat `leagueAvg = 1.35` for both teams.
-Fix: Apply ~10% home boost / away reduction to Poisson lambdas, which is the standard in football analytics.
+**Root cause**: The Sportradar sync function has a catch-all query (line 507-511) that blindly marks ALL matches with `match_date < now()` and `status = "upcoming"` as `"completed"`. When the sync runs after kickoff but before the API returns live status data for that match, it incorrectly marks it as finished.
 
-### 2. League-Specific Goal Averages (`compute-features`)
-Current: Hardcoded `leagueAvg = 1.35` for all leagues.
-Fix: Calculate actual league average goals from completed matches per league. Different leagues have very different scoring profiles (Eredivisie ~3.2 avg, Serie A ~2.6).
+## Fix
 
-### 3. Match Importance Detection (`generate-ai-prediction`)
-Current: No distinction between a group stage match and a cup final.
-Fix: Parse `match.round` to detect finals, semi-finals, relegation battles, title deciders. Add importance factor to prompt and confidence scoring.
+### File: `supabase/functions/sync-sportradar-data/index.ts`
+**Change the catch-all "fix stale upcoming" logic** to only mark matches as completed if they are significantly past their expected end time (e.g., 3+ hours after kickoff), not immediately after kickoff:
 
-### 4. Momentum/Streak Detection (`generate-ai-prediction`)
-Current: Form is shown as "W, W, D, L, W" but no streak analysis.
-Fix: Detect winning/losing streaks, unbeaten runs, and momentum shifts. Add to prompt as structured data.
+```
+// Before (broken):
+.update({ status: "completed" })
+.eq("status", "upcoming")
+.lt("match_date", new Date().toISOString());
 
-### 5. Better Value Pick Detection (`generate-ai-prediction`)
-Current: `findBestPick` only looks at goal lines 55-85%.
-Fix: Also evaluate 1X2 value (AI prob vs market implied) and BTTS value. Pick the market with the highest positive edge.
+// After (safe):
+.update({ status: "completed" })
+.eq("status", "upcoming")
+.lt("match_date", new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString());
+```
 
-### 6. Structured News Signal Extraction (`generate-ai-prediction`)
-Current: Live context is passed as raw text to AI.
-Fix: Pre-process news signals into structured impact factors (e.g., "key striker out → reduce home xG by 15%") before sending to AI, so the AI has clearer actionable data.
+This gives a 3-hour buffer so matches that just kicked off stay as "upcoming" until the proper sync sets them to "live", rather than being incorrectly marked "completed".
 
-### 7. Smarter Confidence Scoring (`generate-ai-prediction`)
-Current: `confidence = AI_confidence * 0.6 + data_quality * 0.4`
-Fix: Add Poisson-vs-market agreement factor. When statistical model agrees with market, confidence should be higher. When they disagree significantly, flag uncertainty.
+### File: `supabase/functions/sync-football-data/index.ts`
+Check if a similar catch-all exists and apply the same 3-hour buffer fix.
 
-### 8. Dynamic Feature Weight Feedback (`compute-model-performance`)
-Current: `feature_weights` is always stored as `{}`.
-Fix: After computing performance, analyze which prediction types are strongest/weakest and store recommended weight adjustments that feed back into the next prediction cycle.
+### Immediate data fix
+Run an update to set the Atletico vs Barcelona match status back to "live" so it appears immediately, plus set `goals_home`/`goals_away` to null since the match just started.
 
-### 9. Enhanced Prompt Engineering (`generate-ai-prediction`)
-- Add explicit instructions for close matches (avoid defaulting to draws)
-- Add tournament context awareness (knockout vs league)
-- Require the AI to explicitly state what changed since last prediction (for refreshed predictions)
-- Add "contrarian check" — force AI to argue against its own prediction before finalizing
+## Impact
+- One edge function change (1 line)
+- One database correction
+- Prevents future matches from being incorrectly marked as completed at kickoff
 
-### 10. Expanded Form Window (`generate-ai-prediction`)
-Current: Last 5 matches overall + 5 home/away.
-Fix: Also include last 10 for trend detection, and weight recent results higher (exponential decay).
-
----
-
-## Files Changed
-- `supabase/functions/generate-ai-prediction/index.ts` — Core prediction logic + prompt
-- `supabase/functions/compute-features/index.ts` — Feature computation
-- `supabase/functions/compute-model-performance/index.ts` — Performance feedback
-
-## Expected Impact
-- More accurate Poisson lambdas (league-specific + home advantage)
-- Better context awareness (match importance, momentum)
-- Smarter value detection across all markets
-- More honest confidence scoring
-- Self-improving weight system
