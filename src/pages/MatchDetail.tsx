@@ -43,6 +43,9 @@ export default function MatchDetail() {
   const home_team = match?.home_team;
   const away_team = match?.away_team;
 
+  const isLive = match?.status === "live" || match?.status === "1H" || match?.status === "2H" || match?.status === "HT" || match?.status === "ET";
+  const { data: liveFixture } = useLiveFixture(match?.api_football_id, match?.status);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
