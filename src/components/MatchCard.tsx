@@ -65,9 +65,9 @@ export function MatchCard({ match }: MatchCardProps) {
   const navigate = useNavigate();
   const { home_team, away_team, prediction, odds } = match;
   const isUpcoming = match.status === "upcoming";
-  const isLive = match.status === "live" || match.status === "1H" || match.status === "2H" || match.status === "HT";
+  const isLive = match.status === "live" || match.status === "1H" || match.status === "2H" || match.status === "HT" || match.status === "ET";
   const roundLabel = formatRound(match.round);
-
+  const liveMinute = useLiveMinute(match.match_date, match.status, isLive);
   return (
     <div onClick={() => navigate(`/match/${match.id}`)} className="cursor-pointer">
       <Card className="group border-border/50 bg-card transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
