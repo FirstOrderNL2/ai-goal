@@ -155,6 +155,9 @@ export default function MatchDetail() {
           />
         )}
 
+        {/* 3c. Prediction History */}
+        {prediction && <PredictionHistoryCard prediction={prediction} />}
+
         {/* 4. Team Comparison */}
         {features && (
           <TeamComparisonCard features={features} homeTeam={home_team} awayTeam={away_team} />
