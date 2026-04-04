@@ -1,0 +1,1 @@
+ALTER TABLE public.predictions ADD COLUMN pre_match_snapshot jsonb DEFAULT NULL;

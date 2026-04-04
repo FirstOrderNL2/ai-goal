@@ -419,6 +419,7 @@ export type Database = {
           match_id: string
           model_confidence: number
           over_under_25: string
+          pre_match_snapshot: Json | null
           predicted_score_away: number | null
           predicted_score_home: number | null
           prediction_intervals: Json | null
@@ -441,6 +442,7 @@ export type Database = {
           match_id: string
           model_confidence?: number
           over_under_25?: string
+          pre_match_snapshot?: Json | null
           predicted_score_away?: number | null
           predicted_score_home?: number | null
           prediction_intervals?: Json | null
@@ -463,6 +465,7 @@ export type Database = {
           match_id?: string
           model_confidence?: number
           over_under_25?: string
+          pre_match_snapshot?: Json | null
           predicted_score_away?: number | null
           predicted_score_home?: number | null
           prediction_intervals?: Json | null
