@@ -59,8 +59,8 @@ function formatRound(round: string | null | undefined): string | null {
 
 function formatFreshness(prediction: Match["prediction"]): { label: string; isHT: boolean } | null {
   if (!prediction) return null;
-  const intervals = prediction.prediction_intervals as Array<{ time: string; type?: string }> | null;
-  const hasHT = intervals?.some((i) => i.type === "HT");
+  const intervals = prediction.prediction_intervals;
+  const hasHT = intervals?.some((i) => i.label === "HT");
   if (hasHT) return { label: "HT prediction", isHT: true };
 
   const lastAt = prediction.last_prediction_at;
