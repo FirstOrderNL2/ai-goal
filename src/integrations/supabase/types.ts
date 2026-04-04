@@ -258,6 +258,66 @@ export type Database = {
           },
         ]
       }
+      model_performance: {
+        Row: {
+          avg_brier_1x2: number | null
+          avg_brier_btts: number | null
+          avg_brier_ou: number | null
+          btts_accuracy: number | null
+          calibration_data: Json | null
+          created_at: string | null
+          exact_score_hits: number | null
+          feature_weights: Json | null
+          goal_line_accuracy: Json | null
+          id: string
+          mae_goals: number | null
+          ou_25_accuracy: number | null
+          outcome_accuracy: number | null
+          period_end: string
+          period_start: string
+          total_matches: number | null
+          weak_areas: Json | null
+        }
+        Insert: {
+          avg_brier_1x2?: number | null
+          avg_brier_btts?: number | null
+          avg_brier_ou?: number | null
+          btts_accuracy?: number | null
+          calibration_data?: Json | null
+          created_at?: string | null
+          exact_score_hits?: number | null
+          feature_weights?: Json | null
+          goal_line_accuracy?: Json | null
+          id?: string
+          mae_goals?: number | null
+          ou_25_accuracy?: number | null
+          outcome_accuracy?: number | null
+          period_end: string
+          period_start: string
+          total_matches?: number | null
+          weak_areas?: Json | null
+        }
+        Update: {
+          avg_brier_1x2?: number | null
+          avg_brier_btts?: number | null
+          avg_brier_ou?: number | null
+          btts_accuracy?: number | null
+          calibration_data?: Json | null
+          created_at?: string | null
+          exact_score_hits?: number | null
+          feature_weights?: Json | null
+          goal_line_accuracy?: Json | null
+          id?: string
+          mae_goals?: number | null
+          ou_25_accuracy?: number | null
+          outcome_accuracy?: number | null
+          period_end?: string
+          period_start?: string
+          total_matches?: number | null
+          weak_areas?: Json | null
+        }
+        Relationships: []
+      }
       odds: {
         Row: {
           away_win_odds: number
