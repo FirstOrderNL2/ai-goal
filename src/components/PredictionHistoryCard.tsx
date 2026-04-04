@@ -23,9 +23,7 @@ function entryLabel(index: number, total: number, type?: string): string {
 export function PredictionHistoryCard({ prediction }: { prediction: Prediction }) {
   const intervals = prediction.prediction_intervals;
 
-  if (!intervals || intervals.length === 0) {
-    return null;
-  }
+  const isEmpty = !intervals || intervals.length === 0;
 
   // newest first
   const sorted = [...intervals].reverse();
