@@ -143,7 +143,7 @@ export default function MatchDetail() {
                 </Badge>
                 {isMatchLive && (
                   <Badge className="bg-green-500/20 text-green-500 text-[10px] animate-pulse font-bold">
-                    LIVE {liveElapsed != null ? `${liveElapsed}'` : liveStatusShort}
+                    LIVE {liveElapsed != null ? `${liveElapsed}'` : liveStatusShort || (getEstimatedElapsed() ? `~${getEstimatedElapsed()}'` : statusLabel[match.status] || "")}
                   </Badge>
                 )}
               </div>
