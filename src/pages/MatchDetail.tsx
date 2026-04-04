@@ -170,8 +170,10 @@ export default function MatchDetail() {
                     <span className="text-3xl font-bold tabular-nums">
                       {isMatchLive && liveGoalsHome != null ? liveGoalsHome : match.goals_home} - {isMatchLive && liveGoalsAway != null ? liveGoalsAway : match.goals_away}
                     </span>
-                    {isMatchLive && liveElapsed != null && (
-                      <span className="text-xs text-green-500 font-mono animate-pulse">{liveElapsed}'</span>
+                    {isMatchLive && (
+                      <span className="text-xs text-green-500 font-mono animate-pulse">
+                        {liveElapsed != null ? `${liveElapsed}'` : getEstimatedElapsed() ? `~${getEstimatedElapsed()}'` : statusLabel[match.status] || ""}
+                      </span>
                     )}
                   </div>
                 )}
