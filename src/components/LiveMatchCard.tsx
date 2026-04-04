@@ -1,3 +1,4 @@
+import { useRef, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -47,7 +48,20 @@ export function LiveMatchCard({ apiFootballId, matchStatus, homeTeamName, awayTe
   const isLive = matchStatus === "live" || matchStatus === "1H" || matchStatus === "2H" || matchStatus === "HT";
   const isCompleted = matchStatus === "completed" || matchStatus === "FT";
 
-  // Only show for live or completed matches with events
+  // Flash animation on goal change
+  const [flash, setFlash] = useState(false);
+  const prevScoreRef = useRef<string | null>(null);
+  const currentScore = fixture ? `${fixture.goals?.home ?? 0}-${fixture.goals?.away ?? 0}` : null;
+
+  useEffect(() => {
+    if (currentScore && prevScoreRef.current !== null && prevScoreRef.current !== currentScore) {
+      setFlash(true);
+      const t = setTimeout(() => setFlash(false), 1500);
+      return () => clearTimeout(t);
+    }
+    if (currentScore) prevScoreRef.current = currentScore;
+  }, [currentScore]);
+
   if (!isLive && !isCompleted) return null;
   if (fixtureLoading || eventsLoading) return <Skeleton className="h-24" />;
   if (!fixture && events.length === 0) return null;
@@ -56,13 +70,12 @@ export function LiveMatchCard({ apiFootballId, matchStatus, homeTeamName, awayTe
   const elapsed = status?.elapsed ?? 0;
   const statusShort = status?.short ?? matchStatus;
 
-  // Filter significant events
   const significantEvents = events.filter((e: MatchEvent) =>
     e.type === "Goal" || e.type === "Card" || e.type === "subst"
   );
 
   return (
-    <Card className={`border-border/50 ${isLive ? "ring-1 ring-green-500/30" : ""}`}>
+    <Card className={`border-border/50 transition-all duration-500 ${isLive ? "ring-1 ring-green-500/30" : ""} ${flash ? "ring-2 ring-green-400 bg-green-500/5" : ""}`}>
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Zap className={`h-4 w-4 ${isLive ? "text-green-500" : "text-primary"}`} />
@@ -75,9 +88,8 @@ export function LiveMatchCard({ apiFootballId, matchStatus, homeTeamName, awayTe
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Live Score */}
         {isLive && fixture && (
-          <div className="flex items-center justify-center gap-4 py-2">
+          <div className={`flex items-center justify-center gap-4 py-2 transition-all duration-500 ${flash ? "scale-110" : ""}`}>
             <span className="text-sm font-bold">{homeTeamName}</span>
             <span className="text-2xl font-bold tabular-nums px-3 py-1 rounded-lg bg-muted">
               {fixture.goals?.home ?? 0} - {fixture.goals?.away ?? 0}
@@ -86,7 +98,6 @@ export function LiveMatchCard({ apiFootballId, matchStatus, homeTeamName, awayTe
           </div>
         )}
 
-        {/* Events Timeline */}
         {significantEvents.length > 0 && (
           <div className="divide-y divide-border/30 max-h-60 overflow-y-auto">
             {significantEvents.map((event: MatchEvent, i: number) => (

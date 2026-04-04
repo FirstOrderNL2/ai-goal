@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowLeft, TrendingUp, Target, BarChart3 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useLiveFixture } from "@/hooks/useFixtureData";
 
 export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
@@ -41,6 +42,9 @@ export default function MatchDetail() {
 
   const home_team = match?.home_team;
   const away_team = match?.away_team;
+
+  const isLive = match?.status === "live" || match?.status === "1H" || match?.status === "2H" || match?.status === "HT" || match?.status === "ET";
+  const { data: liveFixture } = useLiveFixture(match?.api_football_id, match?.status);
 
   if (isLoading) {
     return (
@@ -67,7 +71,13 @@ export default function MatchDetail() {
 
   const { prediction, odds } = match;
   const isUpcoming = match.status === "upcoming";
+  const isMatchLive = isLive;
   const h2hResults = features?.h2h_results as any[] | null;
+
+  const liveGoalsHome = liveFixture?.goals?.home;
+  const liveGoalsAway = liveFixture?.goals?.away;
+  const liveElapsed = liveFixture?.fixture?.status?.elapsed;
+  const liveStatusShort = liveFixture?.fixture?.status?.short;
 
   return (
     <div className="min-h-screen bg-background">
@@ -82,9 +92,16 @@ export default function MatchDetail() {
         <Card className="border-border/50">
           <CardContent className="p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <Badge variant="secondary" className="uppercase tracking-wider text-xs">
-                {match.league}
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="uppercase tracking-wider text-xs">
+                  {match.league}
+                </Badge>
+                {isMatchLive && (
+                  <Badge className="bg-green-500/20 text-green-500 text-[10px] animate-pulse font-bold">
+                    LIVE {liveElapsed != null ? `${liveElapsed}'` : liveStatusShort}
+                  </Badge>
+                )}
+              </div>
               <span className="text-sm text-muted-foreground">
                 {new Date(match.match_date).toLocaleString("en-GB", { timeZone: "Europe/Berlin", weekday: "long", month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })} CET
               </span>
@@ -104,9 +121,14 @@ export default function MatchDetail() {
                 {isUpcoming ? (
                   <span className="text-lg font-bold text-primary px-4 py-1 rounded-lg bg-primary/10">VS</span>
                 ) : (
-                  <span className="text-3xl font-bold tabular-nums">
-                    {match.goals_home} - {match.goals_away}
-                  </span>
+                  <div className="flex flex-col items-center gap-1">
+                    <span className="text-3xl font-bold tabular-nums">
+                      {isMatchLive && liveGoalsHome != null ? liveGoalsHome : match.goals_home} - {isMatchLive && liveGoalsAway != null ? liveGoalsAway : match.goals_away}
+                    </span>
+                    {isMatchLive && liveElapsed != null && (
+                      <span className="text-xs text-green-500 font-mono animate-pulse">{liveElapsed}'</span>
+                    )}
+                  </div>
                 )}
               </div>
               <div className="text-center space-y-2 flex-1">
