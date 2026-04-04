@@ -1,9 +1,36 @@
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProbabilityBar } from "./ProbabilityBar";
 import type { Match } from "@/lib/types";
 import { TrendingUp, ArrowRight } from "lucide-react";
+
+function useLiveMinute(matchDate: string, status: string, isLive: boolean): string {
+  const [minute, setMinute] = useState(() => computeMinute(matchDate, status));
+
+  useEffect(() => {
+    if (!isLive) return;
+    setMinute(computeMinute(matchDate, status));
+    const id = setInterval(() => setMinute(computeMinute(matchDate, status)), 30000);
+    return () => clearInterval(id);
+  }, [matchDate, status, isLive]);
+
+  return minute;
+}
+
+function computeMinute(matchDate: string, status: string): string {
+  if (status === "HT") return "HT";
+  if (status === "ET") return "ET";
+  const kickoff = new Date(matchDate).getTime();
+  const elapsed = Math.floor((Date.now() - kickoff) / 60000);
+  if (status === "1H") return `${Math.max(0, Math.min(elapsed, 45))}'`;
+  if (status === "2H") return `${Math.max(45, Math.min(elapsed - 15, 90))}'`;
+  // generic "live"
+  if (elapsed <= 45) return `${Math.max(0, elapsed)}'`;
+  if (elapsed <= 60) return "HT";
+  return `${Math.max(45, Math.min(elapsed - 15, 90))}'`;
+}
 
 function formatRound(round: string | null | undefined): string | null {
   if (!round) return null;
@@ -38,9 +65,9 @@ export function MatchCard({ match }: MatchCardProps) {
   const navigate = useNavigate();
   const { home_team, away_team, prediction, odds } = match;
   const isUpcoming = match.status === "upcoming";
-  const isLive = match.status === "live" || match.status === "1H" || match.status === "2H" || match.status === "HT";
+  const isLive = match.status === "live" || match.status === "1H" || match.status === "2H" || match.status === "HT" || match.status === "ET";
   const roundLabel = formatRound(match.round);
-
+  const liveMinute = useLiveMinute(match.match_date, match.status, isLive);
   return (
     <div onClick={() => navigate(`/match/${match.id}`)} className="cursor-pointer">
       <Card className="group border-border/50 bg-card transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
@@ -80,15 +107,21 @@ export function MatchCard({ match }: MatchCardProps) {
               )}
               <p className="text-sm font-semibold truncate">{home_team?.name ?? "TBD"}</p>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-col items-center gap-0.5 shrink-0">
               {isUpcoming ? (
                 <span className="text-xs font-bold text-primary px-2 py-0.5 rounded bg-primary/10">VS</span>
               ) : match.goals_home != null && match.goals_away != null ? (
-                <span className="text-lg font-bold tabular-nums">
+                <span className={`text-lg font-bold tabular-nums ${isLive ? "text-emerald-400" : ""}`}>
                   {match.goals_home} - {match.goals_away}
                 </span>
               ) : (
                 <span className="text-xs font-bold text-muted-foreground px-2 py-0.5 rounded bg-muted">FT</span>
+              )}
+              {isLive && (
+                <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-400 tabular-nums">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  {liveMinute}
+                </span>
               )}
             </div>
             <div className="flex-1 flex items-center gap-2">
