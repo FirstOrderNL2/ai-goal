@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceKey);
     console.log("Supabase client created");
 
-    // Fetch all completed matches with predictions
+    console.log("Querying matches...");
     const { data: matches, error: mErr } = await supabase
       .from("matches")
       .select("id, goals_home, goals_away, match_date, league")
@@ -28,9 +28,9 @@ Deno.serve(async (req) => {
       .order("match_date", { ascending: false })
       .limit(1000);
 
+    console.log("Matches query result:", mErr ? JSON.stringify(mErr) : `${matches?.length} matches`);
     if (mErr) {
-      console.error("Match query error:", JSON.stringify(mErr));
-      throw mErr;
+      throw new Error(`Match query failed: ${JSON.stringify(mErr)}`);
     }
     if (!matches || matches.length === 0) {
       return new Response(JSON.stringify({ message: "No completed matches" }), {
