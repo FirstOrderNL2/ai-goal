@@ -2,19 +2,20 @@ import { useState, useEffect } from "react";
 import { Header } from "@/components/Header";
 import { MatchCard } from "@/components/MatchCard";
 import { LeagueFilter } from "@/components/LeagueFilter";
-import { useUpcomingMatches, useCompletedMatches } from "@/hooks/useMatches";
+import { useUpcomingMatches, useCompletedMatches, useLiveMatches } from "@/hooks/useMatches";
 import { useSyncFootballData } from "@/hooks/useSync";
 import { useSyncSportradarData } from "@/hooks/useSportradar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { Activity, Clock, RefreshCw } from "lucide-react";
+import { Activity, Clock, Radio, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
-const SYNC_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
+const SYNC_COOLDOWN_MS = 30 * 60 * 1000;
 const SYNC_KEY = "last_auto_sync";
 
 const Index = () => {
   const [league, setLeague] = useState("all");
+  const { data: live, isLoading: loadingLive } = useLiveMatches(league);
   const { data: upcoming, isLoading: loadingUp } = useUpcomingMatches(league);
   const { data: completed, isLoading: loadingDone } = useCompletedMatches(league);
   const sync = useSyncFootballData();
@@ -34,13 +35,11 @@ const Index = () => {
     });
   };
 
-  // Auto-sync on load with 30-min cooldown
   useEffect(() => {
     const lastSync = parseInt(localStorage.getItem(SYNC_KEY) || "0", 10);
     const now = Date.now();
     if (now - lastSync > SYNC_COOLDOWN_MS) {
       localStorage.setItem(SYNC_KEY, String(now));
-      // Small delay to let the page render first
       const t = setTimeout(() => runSync(), 1000);
       return () => clearTimeout(t);
     }
@@ -79,6 +78,35 @@ const Index = () => {
         </div>
 
         <LeagueFilter selected={league} onChange={setLeague} />
+
+        {/* Live Matches */}
+        {(loadingLive || (live && live.length > 0)) && (
+          <section className="space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
+              </span>
+              <h2 className="text-lg font-semibold">Live Matches</h2>
+              {live && (
+                <span className="text-xs text-muted-foreground">({live.length})</span>
+              )}
+            </div>
+            {loadingLive ? (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-56 rounded-lg" />
+                ))}
+              </div>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {live!.map((m) => (
+                  <MatchCard key={m.id} match={m} />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Upcoming */}
         <section className="space-y-4">

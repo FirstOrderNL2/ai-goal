@@ -52,6 +52,37 @@ export function useUpcomingMatches(league?: string) {
   });
 }
 
+export function useLiveMatches(league?: string) {
+  return useQuery({
+    queryKey: ["matches", "live", league],
+    refetchInterval: 30 * 1000,
+    queryFn: async () => {
+      let query = supabase
+        .from("matches")
+        .select("*")
+        .in("status", ["live", "1H", "2H", "HT", "ET"])
+        .order("match_date", { ascending: true })
+        .limit(50);
+
+      if (league && league !== "all") {
+        query = query.eq("league", league);
+      }
+
+      const { data: matches, error } = await query;
+      if (error) throw error;
+
+      let filtered = matches as Match[];
+      if (!league || league === "all") {
+        filtered = filtered.filter(m =>
+          !API_FOOTBALL_LEAGUES.includes(m.league) || m.api_football_id != null
+        );
+      }
+
+      return enrichMatches(filtered);
+    },
+  });
+}
+
 export function useCompletedMatches(league?: string) {
   return useQuery({
     queryKey: ["matches", "completed", league],

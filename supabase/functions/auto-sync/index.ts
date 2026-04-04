@@ -76,6 +76,9 @@ Deno.serve(async (req) => {
   // Step 7: Generate predictions for new matches
   await callFunction("batch-generate-predictions");
 
+  // Step 8: Pre-match predictions for imminent matches (60m, 30m, 10m, 5m)
+  await callFunction("pre-match-predictions");
+
   return new Response(
     JSON.stringify({
       success: errors.length === 0,
