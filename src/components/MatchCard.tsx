@@ -107,15 +107,21 @@ export function MatchCard({ match }: MatchCardProps) {
               )}
               <p className="text-sm font-semibold truncate">{home_team?.name ?? "TBD"}</p>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-col items-center gap-0.5 shrink-0">
               {isUpcoming ? (
                 <span className="text-xs font-bold text-primary px-2 py-0.5 rounded bg-primary/10">VS</span>
               ) : match.goals_home != null && match.goals_away != null ? (
-                <span className="text-lg font-bold tabular-nums">
+                <span className={`text-lg font-bold tabular-nums ${isLive ? "text-emerald-400" : ""}`}>
                   {match.goals_home} - {match.goals_away}
                 </span>
               ) : (
                 <span className="text-xs font-bold text-muted-foreground px-2 py-0.5 rounded bg-muted">FT</span>
+              )}
+              {isLive && (
+                <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-400 tabular-nums">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  {liveMinute}
+                </span>
               )}
             </div>
             <div className="flex-1 flex items-center gap-2">
