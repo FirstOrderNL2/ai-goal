@@ -9,6 +9,7 @@ import { TeamComparisonCard } from "@/components/TeamComparisonCard";
 import { H2HCard } from "@/components/H2HCard";
 import { OverUnderCard } from "@/components/OverUnderCard";
 import { LineupsCard } from "@/components/LineupsCard";
+import { PredictionComparisonCard } from "@/components/PredictionComparisonCard";
 import { LiveMatchCard } from "@/components/LiveMatchCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -141,6 +142,15 @@ export default function MatchDetail() {
             homeTeamName={home_team?.name || "Home"}
             awayTeamName={away_team?.name || "Away"}
             odds={odds}
+          />
+        )}
+
+        {/* 3b. Pre-Match vs HT Comparison */}
+        {prediction && (
+          <PredictionComparisonCard
+            prediction={prediction}
+            homeTeamName={home_team?.name || "Home"}
+            awayTeamName={away_team?.name || "Away"}
           />
         )}
 
