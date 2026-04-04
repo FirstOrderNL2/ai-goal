@@ -222,7 +222,7 @@ Deno.serve(async (req) => {
     // Reset call counter per request
     apiCallCount = 0;
 
-    const summary = { teams: 0, matches: 0, predictions: 0, odds: 0, logosUpdated: 0, standings: 0, teamStats: 0, h2h: 0, lineups: 0, players: 0 };
+    const summary = { teams: 0, matches: 0, predictions: 0, odds: 0, logosUpdated: 0, standings: 0, teamStats: 0, h2h: 0, lineups: 0, players: 0, liveUpdated: 0 };
 
     // Load ALL existing teams from DB for cross-matching
     const { data: existingTeams } = await supabase.from("teams").select("id, name, api_football_id, logo_url, sportradar_id");
@@ -233,9 +233,72 @@ Deno.serve(async (req) => {
       if (t.api_football_id) teamsByApiId.set(t.api_football_id, t);
     });
 
+    // ── STEP 0: Fetch ALL currently live fixtures first (most important for score updates) ──
+    try {
+      const liveFixtures = await apiFetch(`/fixtures?live=all`, apiKey);
+      await delay(300);
+      if (liveFixtures.length > 0) {
+        console.log(`Found ${liveFixtures.length} live fixtures globally`);
+        for (const f of liveFixtures) {
+          const homeApiId = f.teams.home.id;
+          const awayApiId = f.teams.away.id;
+          // Find team UUIDs
+          const homeTeam = teamsByApiId.get(homeApiId);
+          const awayTeam = teamsByApiId.get(awayApiId);
+          if (!homeTeam || !awayTeam) continue;
+
+          const status = mapStatus(f.fixture.status.short);
+          const elapsed = f.fixture.status.elapsed ?? null;
+          // Update this match directly by api_football_id
+          const { data: updated, error } = await supabase.from("matches")
+            .update({
+              goals_home: f.goals.home ?? 0,
+              goals_away: f.goals.away ?? 0,
+              status: status === "live" ? status : (FINISHED_STATUSES.has(f.fixture.status.short) ? "completed" : status),
+            })
+            .eq("api_football_id", f.fixture.id)
+            .select("id");
+          if (error) {
+            console.error(`Live update error for fixture ${f.fixture.id}:`, error);
+          } else if (updated && updated.length > 0) {
+            summary.liveUpdated++;
+            console.log(`Live updated: ${f.teams.home.name} ${f.goals.home}-${f.goals.away} ${f.teams.away.name} (${f.fixture.status.short} ${elapsed}')`);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Error fetching live fixtures:", e);
+    }
+
+    // ── Also fetch today's fixtures to catch recently completed matches ──
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      const todayFixtures = await apiFetch(`/fixtures?date=${today}`, apiKey);
+      await delay(300);
+      if (todayFixtures.length > 0) {
+        console.log(`Found ${todayFixtures.length} fixtures for today`);
+        for (const f of todayFixtures) {
+          const status = mapStatus(f.fixture.status.short);
+          if (status === "upcoming") continue; // Skip upcoming, handled by main sync
+          const { data: updated, error } = await supabase.from("matches")
+            .update({
+              goals_home: f.goals.home,
+              goals_away: f.goals.away,
+              status,
+            })
+            .eq("api_football_id", f.fixture.id)
+            .select("id");
+          if (!error && updated && updated.length > 0) {
+            summary.liveUpdated++;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Error fetching today's fixtures:", e);
+    }
+
     const seasonStart = `${SEASON}-08-01`;
     const seasonEnd = `${SEASON + 1}-07-31`;
-    const today = new Date().toISOString().slice(0, 10);
     const dateRanges = [
       { from: seasonStart, to: today, type: "completed" },
       { from: today, to: seasonEnd, type: "upcoming" },
