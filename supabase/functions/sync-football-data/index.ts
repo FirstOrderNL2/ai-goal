@@ -328,7 +328,9 @@ Deno.serve(async (req) => {
           team_away_id: teamUuidMap.get(f.teams.away.id),
           goals_home: isFinished ? f.goals.home : null,
           goals_away: isFinished ? f.goals.away : null,
-          status: status === "live" ? "upcoming" : status,
+          status,
+          goals_home: (status === "live" || isFinished) ? f.goals.home : null,
+          goals_away: (status === "live" || isFinished) ? f.goals.away : null,
           league: league.name,
           round: f.league.round ?? null,
         };
