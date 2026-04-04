@@ -16,7 +16,6 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    console.log("Querying matches...");
     const { data: matches, error: mErr } = await supabase
       .from("matches")
       .select("id, goals_home, goals_away, match_date, league")
