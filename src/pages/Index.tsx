@@ -40,11 +40,16 @@ const Index = () => {
     const now = Date.now();
     if (now - lastSync > SYNC_COOLDOWN_MS) {
       localStorage.setItem(SYNC_KEY, String(now));
-      const t = setTimeout(() => runSync(), 1000);
+      const t = setTimeout(() => {
+        // Only sync if we can reach the database (at least one query succeeded)
+        if (upcoming || live || completed) {
+          runSync();
+        }
+      }, 10000);
       return () => clearTimeout(t);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [upcoming, live, completed]);
 
   const handleSync = () => {
     localStorage.setItem(SYNC_KEY, String(Date.now()));
