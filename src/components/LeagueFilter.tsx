@@ -30,14 +30,14 @@ interface LeagueFilterProps {
 
 export function LeagueFilter({ selected, onChange }: LeagueFilterProps) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
       {leagues.map((l) => (
         <Button
           key={l.value}
           variant={selected === l.value ? "default" : "secondary"}
           size="sm"
           onClick={() => onChange(l.value)}
-          className="text-xs"
+          className="text-xs shrink-0"
         >
           {l.label}
         </Button>
