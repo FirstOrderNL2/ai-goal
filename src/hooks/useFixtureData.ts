@@ -95,7 +95,7 @@ export function useLiveFixture(apiFootballId: number | null | undefined, matchSt
       return response[0] ?? null;
     },
     enabled: !!apiFootballId,
-    refetchInterval: isLive ? 5_000 : false,
+    refetchInterval: (query) => query.state.error ? false : (isLive ? 5_000 : false),
     staleTime: isLive ? 3_000 : 5 * 60 * 1000,
   });
 }
@@ -110,7 +110,7 @@ export function useFixtureEvents(apiFootballId: number | null | undefined, match
       return data.response ?? [];
     },
     enabled: !!apiFootballId,
-    refetchInterval: isLive ? 5_000 : false,
+    refetchInterval: (query) => query.state.error ? false : (isLive ? 5_000 : false),
     staleTime: isLive ? 3_000 : 5 * 60 * 1000,
   });
 }
