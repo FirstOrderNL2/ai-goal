@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
   await callFunction("scrape-news");
 
   // Step 5: Mark stale "upcoming" matches as completed
-  const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
   const { data: stale, error: staleErr } = await supabase
     .from("matches")
     .update({ status: "completed" })
