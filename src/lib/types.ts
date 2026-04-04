@@ -50,6 +50,9 @@ export interface Prediction {
   goal_distribution: Record<string, number> | null;
   best_pick: string | null;
   best_pick_confidence: number | null;
+  last_prediction_at: string | null;
+  prediction_intervals: Array<{ time: string; type?: string }> | null;
+  pre_match_snapshot: Record<string, unknown> | null;
 }
 
 export interface Odds {
