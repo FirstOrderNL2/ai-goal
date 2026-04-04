@@ -163,6 +163,9 @@ export function MatchCard({ match }: MatchCardProps) {
                   <span className="text-[10px]">conf</span>
                 </div>
               </div>
+
+              {/* Prediction freshness */}
+              <PredictionFreshness prediction={prediction} />
             </>
           )}
 
