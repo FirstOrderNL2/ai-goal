@@ -71,7 +71,13 @@ export default function MatchDetail() {
 
   const { prediction, odds } = match;
   const isUpcoming = match.status === "upcoming";
+  const isMatchLive = isLive;
   const h2hResults = features?.h2h_results as any[] | null;
+
+  const liveGoalsHome = liveFixture?.goals?.home;
+  const liveGoalsAway = liveFixture?.goals?.away;
+  const liveElapsed = liveFixture?.fixture?.status?.elapsed;
+  const liveStatusShort = liveFixture?.fixture?.status?.short;
 
   return (
     <div className="min-h-screen bg-background">
