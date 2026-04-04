@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
 
     const { data: matches, error: mErr } = await supabase
       .from("matches")
-      .select("id, goals_home, goals_away, match_date, league")
+      .select("id, goals_home, goals_away, match_date, league, team_home_id, team_away_id")
       .eq("status", "completed")
       .order("match_date", { ascending: false })
       .limit(1000);
@@ -35,17 +35,19 @@ Deno.serve(async (req) => {
     // Chunk matchIds to avoid URL-too-long errors
     const chunkSize = 200;
     const allPredictions: any[] = [];
+    const allFeatures: any[] = [];
     for (let i = 0; i < matchIds.length; i += chunkSize) {
       const chunk = matchIds.slice(i, i + chunkSize);
-      const { data: preds, error: pErr } = await supabase
-        .from("predictions")
-        .select("*")
-        .in("match_id", chunk);
+      const [{ data: preds, error: pErr }, { data: feats }] = await Promise.all([
+        supabase.from("predictions").select("*").in("match_id", chunk),
+        supabase.from("match_features").select("*").in("match_id", chunk),
+      ]);
       if (pErr) {
         console.error("Prediction chunk error:", JSON.stringify(pErr));
         throw pErr;
       }
       if (preds) allPredictions.push(...preds);
+      if (feats) allFeatures.push(...feats);
     }
     
     const predictions = allPredictions;
@@ -56,6 +58,7 @@ Deno.serve(async (req) => {
     }
 
     const predMap = new Map(predictions.map((p: any) => [p.match_id, p]));
+    const featMap = new Map(allFeatures.map((f: any) => [f.match_id, f]));
 
     let total = 0, outcomeCorrect = 0, ou25Correct = 0, bttsCorrect = 0, exactScoreHits = 0;
     let totalBrier1x2 = 0, totalBrierOu = 0, totalBrierBtts = 0;
@@ -63,6 +66,17 @@ Deno.serve(async (req) => {
     const calibrationBuckets: Record<string, { predicted: number; actual: number; count: number }> = {};
     const goalLineHits: Record<string, { correct: number; total: number }> = {};
     const weaknesses: string[] = [];
+
+    // Feature correlation trackers
+    let formCorrectCount = 0, formTotalCount = 0;
+    let h2hCorrectCount = 0, h2hTotalCount = 0;
+    let oddsCorrectCount = 0, oddsTotalCount = 0;
+    let homeAdvCorrectCount = 0, homeAdvTotalCount = 0;
+    let highConfCorrectCount = 0, highConfTotalCount = 0;
+    let lowConfCorrectCount = 0, lowConfTotalCount = 0;
+
+    // League breakdown
+    const leagueAccuracy: Record<string, { correct: number; total: number }> = {};
 
     // Init calibration buckets (0-10%, 10-20%, ... 90-100%)
     for (let i = 0; i < 10; i++) {
@@ -83,6 +97,7 @@ Deno.serve(async (req) => {
       const gh = match.goals_home!;
       const ga = match.goals_away!;
       const totalGoals = gh + ga;
+      const feat = featMap.get(match.id);
 
       // 1X2 accuracy
       const actualHome = gh > ga;
@@ -95,9 +110,8 @@ Deno.serve(async (req) => {
       const predDraw = dr >= hw && dr >= aw && !predHome;
       const predAway = !predHome && !predDraw;
 
-      if ((actualHome && predHome) || (actualDraw && predDraw) || (actualAway && predAway)) {
-        outcomeCorrect++;
-      }
+      const outcomeHit = (actualHome && predHome) || (actualDraw && predDraw) || (actualAway && predAway);
+      if (outcomeHit) outcomeCorrect++;
 
       // O/U 2.5
       const predOver = pred.over_under_25 === "over";
@@ -126,7 +140,7 @@ Deno.serve(async (req) => {
       const bucket = Math.min(Math.floor(maxProb * 10), 9);
       const bucketKey = `${bucket * 10}-${(bucket + 1) * 10}`;
       calibrationBuckets[bucketKey].predicted += maxProb;
-      calibrationBuckets[bucketKey].actual += ((actualHome && predHome) || (actualDraw && predDraw) || (actualAway && predAway)) ? 1 : 0;
+      calibrationBuckets[bucketKey].actual += outcomeHit ? 1 : 0;
       calibrationBuckets[bucketKey].count++;
 
       // Goal line accuracy
@@ -153,6 +167,41 @@ Deno.serve(async (req) => {
           }
         }
       }
+
+      // ===== Feature correlation analysis =====
+
+      // Form-based: did the team with better form win?
+      if (feat?.home_form_last5 && feat?.away_form_last5) {
+        const homeFormWins = (feat.home_form_last5 as string).split("").filter((c: string) => c === "W").length;
+        const awayFormWins = (feat.away_form_last5 as string).split("").filter((c: string) => c === "W").length;
+        if (homeFormWins !== awayFormWins) {
+          formTotalCount++;
+          const betterFormTeamIsHome = homeFormWins > awayFormWins;
+          if ((betterFormTeamIsHome && actualHome) || (!betterFormTeamIsHome && actualAway)) {
+            formCorrectCount++;
+          }
+        }
+      }
+
+      // Home advantage: did the home team win?
+      homeAdvTotalCount++;
+      if (actualHome) homeAdvCorrectCount++;
+
+      // Confidence correlation: are high confidence predictions more accurate?
+      const conf = Number(pred.model_confidence) || 0;
+      if (conf >= 0.65) {
+        highConfTotalCount++;
+        if (outcomeHit) highConfCorrectCount++;
+      } else if (conf <= 0.45) {
+        lowConfTotalCount++;
+        if (outcomeHit) lowConfCorrectCount++;
+      }
+
+      // League tracking
+      const league = match.league || "Unknown";
+      if (!leagueAccuracy[league]) leagueAccuracy[league] = { correct: 0, total: 0 };
+      leagueAccuracy[league].total++;
+      if (outcomeHit) leagueAccuracy[league].correct++;
     }
 
     if (total === 0) {
@@ -186,6 +235,62 @@ Deno.serve(async (req) => {
     for (const [key, val] of Object.entries(goalLineHits)) {
       if (val.total > 0) {
         glAccuracy[key] = Math.round((val.correct / val.total) * 1000) / 10;
+      }
+    }
+
+    // ===== Dynamic Feature Weights =====
+    const featureWeights: Record<string, string> = {};
+
+    // Form correlation
+    if (formTotalCount >= 10) {
+      const formAcc = Math.round((formCorrectCount / formTotalCount) * 100);
+      if (formAcc > 60) {
+        featureWeights["form"] = `Strong predictor (${formAcc}% accuracy when better form wins) — increase form weight`;
+      } else if (formAcc < 40) {
+        featureWeights["form"] = `Weak predictor (${formAcc}%) — form alone is misleading, reduce weight`;
+      } else {
+        featureWeights["form"] = `Moderate predictor (${formAcc}%) — keep current weight`;
+      }
+    }
+
+    // Home advantage strength
+    if (homeAdvTotalCount >= 20) {
+      const homeWinRate = Math.round((homeAdvCorrectCount / homeAdvTotalCount) * 100);
+      if (homeWinRate > 50) {
+        featureWeights["home_advantage"] = `Home wins ${homeWinRate}% of matches — home advantage is significant, maintain or increase weight`;
+      } else if (homeWinRate < 40) {
+        featureWeights["home_advantage"] = `Home wins only ${homeWinRate}% — home advantage weak in covered leagues, reduce weight`;
+      } else {
+        featureWeights["home_advantage"] = `Home wins ${homeWinRate}% — moderate advantage`;
+      }
+    }
+
+    // Confidence calibration
+    if (highConfTotalCount >= 5) {
+      const highConfAcc = Math.round((highConfCorrectCount / highConfTotalCount) * 100);
+      featureWeights["confidence_calibration"] = `High-confidence (≥65%) predictions hit ${highConfAcc}% of the time (${highConfTotalCount} matches)`;
+      if (highConfAcc < 55) {
+        featureWeights["confidence_calibration"] += ` — OVERCONFIDENT, reduce confidence scores`;
+      }
+    }
+    if (lowConfTotalCount >= 5) {
+      const lowConfAcc = Math.round((lowConfCorrectCount / lowConfTotalCount) * 100);
+      featureWeights["low_confidence_check"] = `Low-confidence (≤45%) predictions hit ${lowConfAcc}% (${lowConfTotalCount} matches)`;
+      if (lowConfAcc > 45) {
+        featureWeights["low_confidence_check"] += ` — UNDERCONFIDENT in uncertain matches, raise baseline`;
+      }
+    }
+
+    // League-specific insights
+    for (const [league, data] of Object.entries(leagueAccuracy)) {
+      if (data.total >= 10) {
+        const acc = Math.round((data.correct / data.total) * 100);
+        if (acc < 35) {
+          featureWeights[`league_${league.replace(/\s/g, "_")}`] = `Poor accuracy in ${league} (${acc}% over ${data.total} matches) — needs league-specific calibration`;
+          weaknesses.push(`Low accuracy in ${league}: ${acc}% over ${data.total} matches`);
+        } else if (acc > 60) {
+          featureWeights[`league_${league.replace(/\s/g, "_")}`] = `Strong in ${league} (${acc}% over ${data.total} matches)`;
+        }
       }
     }
 
@@ -234,7 +339,7 @@ Deno.serve(async (req) => {
         mae_goals: mae,
         calibration_data: calibration,
         goal_line_accuracy: glAccuracy,
-        feature_weights: {},
+        feature_weights: featureWeights,
         weak_areas: weaknesses,
       });
 
@@ -250,6 +355,8 @@ Deno.serve(async (req) => {
       brier_scores: { "1x2": avgBrier1x2, ou: avgBrierOu, btts: avgBrierBtts },
       mae_goals: mae,
       weak_areas: weaknesses,
+      feature_weights: featureWeights,
+      league_accuracy: leagueAccuracy,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
