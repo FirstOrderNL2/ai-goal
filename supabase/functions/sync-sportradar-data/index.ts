@@ -508,7 +508,7 @@ Deno.serve(async (req) => {
       .from("matches")
       .update({ status: "completed" })
       .eq("status", "upcoming")
-      .lt("match_date", new Date().toISOString());
+      .lt("match_date", new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString());
 
     if (fixError) {
       summary.errors.push(`Fix stale matches error: ${fixError.message}`);
