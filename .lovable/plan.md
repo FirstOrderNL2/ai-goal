@@ -1,32 +1,39 @@
 
 
-# Live Data on Match Detail Page
+# Fix: Matches Not Loading Due to Request Storm
 
-## Problem
-Currently, the match detail page has no auto-refresh for the main match data (`useMatch` has no `refetchInterval`). The `LiveMatchCard` polls the external API every 30 seconds, which is too slow for real-time feel. The match header always shows the static DB score, not the live API score.
+## Root Cause
 
-## Changes
+The database has plenty of data (945 upcoming, 8 live, 6264 completed matches). The problem is **every network request is failing with "Failed to fetch"** — a connectivity-level failure, not a server error.
 
-### 1. Update `src/hooks/useMatches.ts` — Add live polling to `useMatch`
-- Accept an optional `status` parameter (or return it and let the caller decide)
-- When the match status is live (`live`, `1H`, `2H`, `HT`, `ET`), set `refetchInterval: 10_000` (10s) so the DB score/status updates flow through
-- This ensures the match header, predictions, and all dependent components stay fresh
+This is caused by a **retry storm**: when initial requests fail (e.g., due to a brief connectivity blip), React Query's default retry behavior (3 retries) multiplies the request count exponentially. Combined with aggressive polling intervals (5s, 10s, 30s) and the `enrichMatches` function adding 3 more parallel sub-queries per batch, the browser's connection pool gets saturated and all requests fail indefinitely.
 
-### 2. Update `src/hooks/useFixtureData.ts` — Reduce polling to ~5 seconds for live matches
-- Change `useLiveFixture` refetchInterval from `30_000` to `5_000` (5s) and staleTime from `15_000` to `3_000`
-- Change `useFixtureEvents` refetchInterval from `30_000` to `5_000` (5s) and staleTime from `15_000` to `3_000`
-- This makes goals and events appear within ~5 seconds (3s would be too aggressive for the upstream API rate limits)
+## Plan
 
-### 3. Update `src/pages/MatchDetail.tsx` — Show live score in match header
-- Pass match status to `useMatch` so it can enable polling
-- When the match is live and `LiveMatchCard`'s fixture data has a live score, update the match header's center section to show the live score from the API (instead of the static DB `goals_home`/`goals_away`) with a pulsing green indicator and elapsed minute
-- Add a live status badge (e.g., "LIVE 67'") next to the league badge
+### 1. Add React Query global defaults to limit retries
+**File: `src/App.tsx` (or wherever QueryClient is configured)**
+- Set `retry: 1` (instead of default 3) globally
+- Set `retryDelay: 3000` to space out retries
+- Add `refetchOnWindowFocus: false` to prevent burst refetches when tabbing back
 
-### 4. Update `src/components/LiveMatchCard.tsx` — Flash animation on new goals
-- Add a brief flash/highlight animation when the score changes (using a `useRef` to track previous score and a CSS transition)
+### 2. Guard polling intervals to pause on error
+**File: `src/hooks/useMatches.ts`**
+- For `useLiveMatches` and `useUpcomingMatches`, only enable `refetchInterval` when the query is NOT in an error state (React Query supports `refetchInterval: (query) => query.state.error ? false : interval`)
+- This prevents failed polls from stacking up endlessly
 
-## Technical Notes
-- 5-second polling is a practical minimum given API-Football rate limits (the proxy edge function makes upstream calls). Going to 3s risks hitting rate limits.
-- The `useMatch` hook polling at 10s covers DB-side updates (status transitions, prediction refreshes) without excessive Supabase queries.
-- No database changes required.
+### 3. Guard fixture polling similarly
+**File: `src/hooks/useFixtureData.ts`**
+- Same pattern: disable `refetchInterval` when in error state for `useLiveFixture` and `useFixtureEvents`
+
+### 4. Increase homepage polling intervals slightly
+**File: `src/hooks/useMatches.ts`**
+- `useLiveMatches`: keep at 30s (homepage level is fine)
+- `useUpcomingMatches` / `useCompletedMatches`: keep at 5 min
+- These are already reasonable; the main fix is stopping retry storms
+
+## Technical Details
+
+The key insight is that "Failed to fetch" means the browser itself is rejecting/dropping requests (connection pool exhaustion or CORS preflight failures under load), not that the server is returning errors. Once the storm starts, it's self-reinforcing because every poll interval triggers new requests that also fail and trigger retries.
+
+The fix is defensive: limit retries, pause polling on errors, and let the system recover naturally.
 
