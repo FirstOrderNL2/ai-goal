@@ -2,22 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Match, Team, Prediction, Odds, MatchFeatures, Player } from "@/lib/types";
 
-const API_FOOTBALL_LEAGUES = [
-  "Premier League", "Championship", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
-  "Eredivisie", "Keuken Kampioen Divisie",
-  "Champions League", "Europa League", "Conference League", "Women's Champions League",
-  "World Cup", "WC Qualifiers Europe", "WC Qualifiers South America", "WC Qualifiers CONCACAF",
-  "Nations League", "Euro Championship", "Copa America", "Friendlies",
-];
-
 export function useUpcomingMatches(league?: string) {
   return useQuery({
     queryKey: ["matches", "upcoming", league],
     refetchInterval: (query) => query.state.error ? false : 5 * 60 * 1000,
     queryFn: async () => {
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-      const isCovered = league && league !== "all" && API_FOOTBALL_LEAGUES.includes(league);
-      const isUncovered = league && league !== "all" && !API_FOOTBALL_LEAGUES.includes(league);
 
       let query = supabase
         .from("matches")
@@ -31,23 +21,10 @@ export function useUpcomingMatches(league?: string) {
         query = query.eq("league", league);
       }
 
-      // For covered leagues, only show API-Football sourced matches (no duplicates)
-      if (isCovered) {
-        query = query.not("api_football_id", "is", null);
-      }
-
       const { data: matches, error } = await query;
       if (error) throw error;
 
-      // For "all" leagues, filter out Sportradar duplicates for covered leagues
-      let filtered = matches as Match[];
-      if (!league || league === "all") {
-        filtered = filtered.filter(m =>
-          !API_FOOTBALL_LEAGUES.includes(m.league) || m.api_football_id != null
-        );
-      }
-
-      return enrichMatches(filtered);
+      return enrichMatches(matches as Match[]);
     },
   });
 }
