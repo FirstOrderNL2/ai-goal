@@ -1,70 +1,96 @@
 
 
-# Fix Live Match Sync and Data Issues
+# Optimize API-Football Request Usage
 
-## Problems Found
+## Problem
+The `sync-football-data` function makes **too many API calls per sync**, hitting the daily quota limit. Current worst case: ~500+ calls per sync cycle across 20 leagues.
 
-1. **Scores not updating for live matches**: The `sync-football-data` function returns `matches: 0` — it syncs but the upsert doesn't update existing rows because the sync fetches fixtures by date range and the upsert may not be picking up in-progress changes. The API call returns data, but with `"apiCalls": 40` and `"matches": 0`, it appears the fixture data isn't changing or the upsert is a no-op.
+### Current Call Breakdown (per sync)
+- **2 calls** for live + today's fixtures
+- **40 calls** for fixtures (20 leagues × 2 date ranges: full season completed + upcoming)
+- **20 calls** for standings (every league, every sync)
+- **200 calls** for team statistics (20 leagues × 10 teams each)
+- **100 calls** for predictions (20 leagues × 5 fixtures)
+- **60 calls** for H2H (20 leagues × 3 fixtures)
+- **60 calls** for lineups (20 leagues × 3 fixtures)
+- **20 calls** for players (20 leagues × 1 page)
 
-2. **Duplicate matches showing in Live section**: Sportradar-only duplicates appear alongside API-Football matches. Examples:
-   - "Real Betis Seville vs Espanyol Barcelona" (Sportradar) duplicates "Real Betis vs Espanyol" (API-Football)
-   - "Strasbourg Alsace vs OGC Nice" (Sportradar, still "live") duplicates "Strasbourg vs OGC Nice" (API-Football, already "completed")
+**Total: ~502 calls** per sync, exceeding the 400 limit regularly.
 
-3. **Completed matches stuck as "live"**: The Strasbourg vs Nice match (15:00 UTC, 4+ hours ago) is still showing as "live" for the Sportradar duplicate. Same pattern for Verona vs Fiorentina (16:00 UTC, 3.5h ago).
+## Key API Documentation Insights
 
-4. **Barcelona match has null scores**: The Atletico vs Barcelona match (19:00 UTC) shows `goals_home: null, goals_away: null` despite being live for 30 minutes.
+1. **`ids` parameter** (v3.9.2+): Fetch up to **20 fixtures in one call** with events, lineups, statistics, and players included. Massive saver.
+2. **`live` parameter accepts league filters**: `live=39-61-140` instead of `live=all` to get only our tracked leagues.
+3. **`next` / `last` parameters**: Fetch only the next N or last N fixtures per league/team — no need for full-season date range queries.
+4. **Recommended call frequencies** from docs:
+   - Standings: 1/hour when live, 1/day otherwise
+   - Fixtures: 1/minute when live, 1/day otherwise
+   - Team stats: updated every hour
 
-5. **Auto-sync uses 2h buffer but sportradar uses 3h buffer**: Inconsistency in stale match cleanup timing between `auto-sync/index.ts` (2h) and `sync-sportradar-data/index.ts` (3h).
+## Optimization Plan
 
-## Fix Plan
+### 1. Replace full-season fixture fetch with `next` + `last` per league
+**Current**: 2 calls per league (from/to date ranges covering entire season) = 40 calls
+**New**: 1 call per league using `next=15` for upcoming = 20 calls
+Skip refetching completed fixtures — they don't change. Only fetch `last=5` for leagues with recent matches (to update final scores).
+**Savings: ~20 calls**
 
-### 1. Fix `useLiveMatches` to filter duplicates properly
-**File: `src/hooks/useMatches.ts`**
+### 2. Use `ids` batching for lineups, H2H, and predictions
+**Current**: Individual calls per fixture (up to 60+100+60 = 220 calls)
+**New**: Group fixture IDs and fetch up to 20 per call using `ids=id1-id2-id3...` — this returns events, lineups, stats, and players in one response. For the ~15 upcoming fixtures needing lineups, that's 1 call instead of 15.
+**Savings: ~150+ calls**
 
-The live query already filters Sportradar duplicates for covered leagues (lines 75-78), but the Sportradar-only matches that are duplicates of API-Football matches slip through because both have entries. The issue is that Sportradar-only entries (no `api_football_id`) for covered leagues like La Liga and Ligue 1 should never show in the live section. The existing filter on line 76-78 should already handle this — but the Strasbourg Alsace match has `league: "Ligue 1"` which IS in `API_FOOTBALL_LEAGUES`, and `api_football_id` IS null, so it should be filtered out.
+### 3. Use league-filtered `live` parameter
+**Current**: `live=all` fetches every live fixture globally
+**New**: `live=39-140-135-78-61-88-89-40-2-3-848-748-1-32-34-33-5-4-9-10` fetches only tracked leagues
+**Savings**: Minimal call savings (still 1 call) but reduces data processing
 
-Wait — let me re-check. The filter says: keep if league is NOT in API_FOOTBALL_LEAGUES, OR api_football_id is not null. "Ligue 1" is in the list, and api_football_id is null for the Sportradar entry → it should be filtered out. So the client-side filter is working. The issue must be that these duplicates show up in the network response but get filtered client-side.
+### 4. Throttle standings and team stats to daily
+**Current**: Standings and team stats fetched every sync for all leagues (~220 calls)
+**New**: 
+- Check `leagues.updated_at` — skip if updated within last 6 hours
+- Team stats: only fetch for leagues where matches were played today, max 5 teams per league
+- Store a `last_stats_sync` timestamp and skip if < 24h old
+**Savings: ~180 calls on most syncs**
 
-Actually, looking at the network response, 9 matches come back, including the Sportradar duplicates. The client filter should remove them. But the Strasbourg Alsace one still appears in the live count... Let me re-examine — the filter checks `API_FOOTBALL_LEAGUES.includes(m.league)`. The Sportradar entry has `league: "Ligue 1"` which is in the list, AND `api_football_id` is null → so `!true || false` = `false` → filtered OUT. Good, the client filter works.
+### 5. Skip players fetch during regular syncs
+**Current**: 20 calls for player data every sync
+**New**: Only fetch players once daily (check last sync timestamp)
+**Savings: ~20 calls on most syncs**
 
-So the real issues are:
+### 6. Add per-minute rate limiting
+The API has a **per-minute** rate limit (not just daily). Add a check of `X-RateLimit-Remaining` header and throttle with longer delays when running low. Current 300ms delay is too aggressive when hitting limits.
 
-### 2. Fix auto-sync stale buffer to 3h (consistency)
-**File: `supabase/functions/auto-sync/index.ts`**
-- Change the 2-hour buffer on line 59 to 3 hours to match the sportradar sync fix
+### 7. Prioritize calls with a budget system
+Split the sync into priority tiers:
+- **P0** (always): Live fixtures, today's fixtures (~2-3 calls)
+- **P1** (every sync): Upcoming fixtures for each league using `next=10` (~20 calls)
+- **P2** (every 6h): Standings (~20 calls)
+- **P3** (daily): Team stats, players, full H2H (~200 calls)
+- **P4** (on-demand): Predictions from API (replaced by our own AI predictions anyway)
 
-### 3. Fix sync-football-data to actually update live scores
-**File: `supabase/functions/sync-football-data/index.ts`**
-The sync returns `matches: 0` which means it's not finding/updating fixtures. The function likely fetches fixtures by date range — need to ensure it includes today's live matches and that the upsert actually updates `goals_home`, `goals_away`, and `status` fields. Investigate the fixture fetch date range logic to ensure live matches are included.
+## File Changes
 
-### 4. Add a "sync live scores" dedicated path
-**File: `supabase/functions/sync-football-data/index.ts`**
-Add a specific API call to fetch live fixtures (`/fixtures?live=all` or `/fixtures?date=today`) that focuses on updating scores for in-progress matches, separate from the general fixture sync.
+### `supabase/functions/sync-football-data/index.ts`
+Complete rewrite of the sync logic:
+- Replace full-season date range queries with `next=10` / `last=5` per league
+- Use `live=39-140-135-...` with league IDs instead of `live=all`
+- Add timestamp-based skipping for standings (6h), team stats (24h), players (24h)
+- Use `ids` batching: collect all upcoming fixture IDs, then fetch in batches of 20
+- Add per-minute rate limit awareness from `X-RateLimit-Remaining` header
+- Lower `API_CALL_LIMIT` from 400 to 100 for regular syncs (budget system)
+- Add a `mode` parameter: `"full"` (daily comprehensive) vs `"quick"` (frequent live updates)
 
-### 5. Clean up stale Sportradar-only duplicates
-Run a database update to mark Sportradar-only entries for covered leagues that are past their expected end time as "completed", preventing them from lingering in the live section.
+### `supabase/functions/auto-sync/index.ts`
+- Pass `mode: "quick"` for regular cron syncs
+- Add a separate daily schedule that passes `mode: "full"` for comprehensive data refresh
 
-## Technical Details
+## Expected Results
 
-### File changes:
-
-**`supabase/functions/auto-sync/index.ts`** (line 59):
-```typescript
-// Change 2h to 3h buffer
-const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-```
-
-**`supabase/functions/sync-football-data/index.ts`**:
-- Add a live fixtures fetch at the start of each league sync: `/fixtures?league={id}&season={SEASON}&date={today}` to ensure today's matches (including live ones) get their scores updated
-- The current date range logic may be missing today's fixtures if they fall outside the sync window
-
-**Database cleanup** (one-time):
-- Mark Sportradar-only duplicates for covered leagues as "completed" if they're past kickoff + 3 hours
-- Update the Barcelona match scores from the API
-
-## Impact
-- 2 edge function changes
-- 1 database correction
-- Ensures live scores update properly during matches
-- Prevents stale Sportradar duplicates from appearing in live section
+| Metric | Before | After (quick) | After (full) |
+|--------|--------|---------------|--------------|
+| API calls per sync | ~500 | ~25-50 | ~200 |
+| Daily call budget (10 syncs/day) | ~5000 | ~250-500 | +200 |
+| Rate limit hits | Frequent | Rare | Rare |
+| Live score updates | Working | Working | Working |
 
