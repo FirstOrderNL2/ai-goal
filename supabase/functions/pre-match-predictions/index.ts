@@ -19,7 +19,25 @@ Deno.serve(async (req) => {
   const log: string[] = [];
   let totalProcessed = 0;
 
-  async function callPredict(matchId: string): Promise<boolean> {
+  // Call statistical prediction (AI-free, fast)
+  async function callStatisticalPredict(matchId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${supabaseUrl}/functions/v1/generate-statistical-prediction`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({ match_id: matchId }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  // Call full AI prediction (expensive, for enrichment)
+  async function callAIPredict(matchId: string): Promise<boolean> {
     try {
       const res = await fetch(`${supabaseUrl}/functions/v1/generate-ai-prediction`, {
         method: "POST",
