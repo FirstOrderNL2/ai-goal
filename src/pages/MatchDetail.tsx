@@ -116,7 +116,7 @@ export default function MatchDetail() {
   }
 
   const { odds } = match;
-  const isUpcoming = match.status === "upcoming";
+  const isUpcoming = matchPhase === "upcoming";
   const isMatchLive = isLive;
   const h2hResults = features?.h2h_results as any[] | null;
 
