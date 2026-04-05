@@ -545,42 +545,40 @@ Deno.serve(async (req) => {
     // P2: H2H for upcoming matches — skip in idle mode
     // Only 3 per league in live/pre_match, 5 in full
     // ════════════════════════════════════════════
-    if (mode === "idle") {
-      console.log("idle mode: skipping H2H fetch");
-    }
-    const h2hLimit = mode === "full" ? 5 : 3;
-    const upcomingForH2H = allUpcomingFixtures
-      .filter((f: any) => mapStatus(f.fixture.status.short) === "upcoming")
-      .slice(0, h2hLimit * 3); // across all leagues, cap total
+    if (mode !== "idle") {
+      const h2hLimit = mode === "full" ? 5 : 3;
+      const upcomingForH2H = allUpcomingFixtures
+        .filter((f: any) => mapStatus(f.fixture.status.short) === "upcoming")
+        .slice(0, h2hLimit * 3);
 
-    // Only fetch H2H for matches that don't already have it
-    const h2hMatchIds = upcomingForH2H.map(f => matchUuidMap.get(f.fixture.id)).filter(Boolean) as string[];
-    const { data: existingH2H } = await supabase.from("match_features")
-      .select("match_id").in("match_id", h2hMatchIds.slice(0, 50))
-      .not("h2h_results", "is", null);
-    const existingH2HSet = new Set((existingH2H ?? []).map(r => r.match_id));
+      const h2hMatchIds = upcomingForH2H.map(f => matchUuidMap.get(f.fixture.id)).filter(Boolean) as string[];
+      const { data: existingH2H } = await supabase.from("match_features")
+        .select("match_id").in("match_id", h2hMatchIds.slice(0, 50))
+        .not("h2h_results", "is", null);
+      const existingH2HSet = new Set((existingH2H ?? []).map(r => r.match_id));
 
-    let h2hFetched = 0;
-    for (const f of upcomingForH2H) {
-      if (apiCallCount >= callBudget || h2hFetched >= (mode === "full" ? 10 : 5)) break;
-      const matchId = matchUuidMap.get(f.fixture.id);
-      if (!matchId || existingH2HSet.has(matchId)) continue;
-      try {
-        const h2hData = await apiFetch(`/fixtures/headtohead?h2h=${f.teams.home.id}-${f.teams.away.id}&last=5`, apiKey);
-        await delay(400);
-        if (h2hData.length > 0) {
-          const h2hResults = h2hData.map((h: any) => ({
-            date: h.fixture.date, home: h.teams.home.name, away: h.teams.away.name,
-            score_home: h.goals.home, score_away: h.goals.away,
-          }));
-          await supabase.from("match_features").upsert({
-            match_id: matchId, h2h_results: h2hResults, computed_at: new Date().toISOString(),
-          }, { onConflict: "match_id" });
-          summary.h2h++;
-          h2hFetched++;
+      let h2hFetched = 0;
+      for (const f of upcomingForH2H) {
+        if (apiCallCount >= callBudget || h2hFetched >= (mode === "full" ? 10 : 5)) break;
+        const matchId = matchUuidMap.get(f.fixture.id);
+        if (!matchId || existingH2HSet.has(matchId)) continue;
+        try {
+          const h2hData = await apiFetch(`/fixtures/headtohead?h2h=${f.teams.home.id}-${f.teams.away.id}&last=5`, apiKey);
+          await delay(400);
+          if (h2hData.length > 0) {
+            const h2hResults = h2hData.map((h: any) => ({
+              date: h.fixture.date, home: h.teams.home.name, away: h.teams.away.name,
+              score_home: h.goals.home, score_away: h.goals.away,
+            }));
+            await supabase.from("match_features").upsert({
+              match_id: matchId, h2h_results: h2hResults, computed_at: new Date().toISOString(),
+            }, { onConflict: "match_id" });
+            summary.h2h++;
+            h2hFetched++;
+          }
+        } catch (e) {
+          console.error(`H2H error for fixture ${f.fixture.id}:`, e);
         }
-      } catch (e) {
-        console.error(`H2H error for fixture ${f.fixture.id}:`, e);
       }
     }
 
