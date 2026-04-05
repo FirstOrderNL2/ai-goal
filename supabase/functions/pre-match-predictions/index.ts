@@ -218,7 +218,8 @@ Deno.serve(async (req) => {
             .eq("match_id", match.id);
         }
 
-        const ok = await callPredict(match.id);
+        // HT predictions use AI for full analysis since it's a key moment
+        const ok = await callAIPredict(match.id);
         if (ok) {
           intervals.push({ label: "HT", at: now.toISOString() });
           await supabase
