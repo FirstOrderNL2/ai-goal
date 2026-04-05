@@ -15,15 +15,65 @@ Deno.serve(async (req) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // Determine mode: "full" for comprehensive daily sync, "quick" for frequent updates
-  let mode = "quick";
+  // Allow explicit mode override from request body
+  let explicitMode: string | null = null;
   try {
     const body = await req.json();
-    mode = body.mode ?? "quick";
-  } catch { /* default quick */ }
+    explicitMode = body.mode ?? null;
+  } catch { /* no body */ }
 
   const log: string[] = [];
   const errors: string[] = [];
+
+  // ── Smart mode detection ──
+  let effectiveMode = "idle";
+
+  if (explicitMode === "full") {
+    effectiveMode = "full";
+  } else if (explicitMode && ["idle", "pre_match", "live"].includes(explicitMode)) {
+    effectiveMode = explicitMode;
+  } else {
+    // Auto-detect based on DB state
+    const nowIso = new Date().toISOString();
+    const oneHourFromNow = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    // Check for live matches
+    const { data: liveMatches, error: liveErr } = await supabase
+      .from("matches")
+      .select("id")
+      .eq("status", "live")
+      .limit(1);
+
+    if (liveErr) errors.push(`live-check: ${liveErr.message}`);
+
+    // Check for matches starting within 1 hour
+    const { data: imminentMatches, error: immErr } = await supabase
+      .from("matches")
+      .select("id")
+      .eq("status", "upcoming")
+      .gte("match_date", nowIso)
+      .lte("match_date", oneHourFromNow)
+      .limit(1);
+
+    if (immErr) errors.push(`imminent-check: ${immErr.message}`);
+
+    if (liveMatches && liveMatches.length > 0) {
+      effectiveMode = "live";
+    } else if (imminentMatches && imminentMatches.length > 0) {
+      effectiveMode = "pre_match";
+    } else {
+      effectiveMode = "idle";
+    }
+
+    // Daily full sync override at 06:00 UTC (between 06:00 and 06:09)
+    const utcHour = new Date().getUTCHours();
+    const utcMinute = new Date().getUTCMinutes();
+    if (utcHour === 6 && utcMinute < 10) {
+      effectiveMode = "full";
+    }
+  }
+
+  log.push(`detected mode: ${effectiveMode}`);
 
   async function callFunction(name: string, body: Record<string, unknown> = {}) {
     const start = Date.now();
@@ -50,64 +100,55 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Step 1: Sync API-Football data with mode parameter
-  await callFunction("sync-football-data", { mode });
+  // Step 1: Sync API-Football data with detected mode
+  await callFunction("sync-football-data", { mode: effectiveMode });
 
-  // Step 2: Sync Sportradar data (secondary — live scores, odds)
-  await callFunction("sync-sportradar-data");
+  // Step 2: Sportradar — skip in idle mode to save resources
+  if (effectiveMode !== "idle") {
+    await callFunction("sync-sportradar-data");
+  }
 
-  // Step 3: Scrape matches (quick mode skips this)
-  if (mode === "full") {
+  // Step 3: Scraping — full mode only
+  if (effectiveMode === "full") {
     await callFunction("scrape-matches");
     await callFunction("scrape-news");
   }
 
   // Step 4: Mark stale "upcoming" and "live" matches as completed (3h buffer)
   const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+
   const { data: staleUpcoming, error: staleUpErr } = await supabase
     .from("matches")
     .update({ status: "completed" })
-    .eq("status", "upcoming")
+    .in("status", ["upcoming", "live"])
     .lt("match_date", cutoff)
     .select("id");
 
   if (staleUpErr) {
-    errors.push(`cleanup-upcoming: ${staleUpErr.message}`);
+    errors.push(`cleanup: ${staleUpErr.message}`);
   } else if (staleUpcoming?.length) {
-    log.push(`cleanup: marked ${staleUpcoming.length} stale upcoming as completed`);
+    log.push(`cleanup: marked ${staleUpcoming.length} stale matches as completed`);
   }
 
-  // Also mark stale "live" matches — any match live for 3h+ is definitely finished
-  const { data: staleLive, error: staleLiveErr } = await supabase
-    .from("matches")
-    .update({ status: "completed" })
-    .eq("status", "live")
-    .lt("match_date", cutoff)
-    .select("id");
-
-  if (staleLiveErr) {
-    errors.push(`cleanup-live: ${staleLiveErr.message}`);
-  } else if (staleLive?.length) {
-    log.push(`cleanup: marked ${staleLive.length} stale live matches as completed`);
-  }
-
-  // Step 5: Compute AI-ready features (full mode only)
-  if (mode === "full") {
+  // Step 5: Compute features — full mode only
+  if (effectiveMode === "full") {
     await callFunction("compute-features");
   }
 
-  // Step 6: Generate predictions for new matches (full mode only)
-  if (mode === "full") {
+  // Step 6: Batch predictions — full mode only
+  if (effectiveMode === "full") {
     await callFunction("batch-generate-predictions");
   }
 
-  // Step 7: Pre-match predictions for imminent matches
-  await callFunction("pre-match-predictions");
+  // Step 7: Pre-match predictions — skip in idle mode
+  if (effectiveMode !== "idle") {
+    await callFunction("pre-match-predictions");
+  }
 
   return new Response(
     JSON.stringify({
       success: errors.length === 0,
-      mode,
+      mode: effectiveMode,
       timestamp: new Date().toISOString(),
       log,
       errors,
