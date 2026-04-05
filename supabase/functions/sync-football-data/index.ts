@@ -542,9 +542,12 @@ Deno.serve(async (req) => {
     }
 
     // ════════════════════════════════════════════
-    // P2: H2H for upcoming matches — use batch approach
-    // Only 3 per league in quick, 5 in full
+    // P2: H2H for upcoming matches — skip in idle mode
+    // Only 3 per league in live/pre_match, 5 in full
     // ════════════════════════════════════════════
+    if (mode === "idle") {
+      console.log("idle mode: skipping H2H fetch");
+    }
     const h2hLimit = mode === "full" ? 5 : 3;
     const upcomingForH2H = allUpcomingFixtures
       .filter((f: any) => mapStatus(f.fixture.status.short) === "upcoming")
