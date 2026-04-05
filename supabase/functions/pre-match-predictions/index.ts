@@ -72,14 +72,29 @@ Deno.serve(async (req) => {
       const existingMap = new Map((existing ?? []).map((p: any) => [p.match_id, p]));
       
       // Find matches with no prediction OR incomplete prediction (no ai_reasoning)
-      const needsPrediction = upcoming.filter((m: any) => {
+      const needsInitialPrediction = upcoming.filter((m: any) => {
         const pred = existingMap.get(m.id);
-        return !pred || !pred.ai_reasoning;
+        return !pred; // no prediction at all
       }).slice(0, 15);
 
-      for (const match of needsPrediction) {
-        const ok = await callPredict(match.id);
-        log.push(`phase-a: ${match.id} → ${ok ? "OK" : "FAIL"}`);
+      // Matches that have stats but no AI reasoning — enrich with AI
+      const needsAIEnrichment = upcoming.filter((m: any) => {
+        const pred = existingMap.get(m.id);
+        return pred && !pred.ai_reasoning;
+      }).slice(0, 5);
+
+      // Phase A1: Generate statistical predictions (fast, no AI cost)
+      for (const match of needsInitialPrediction) {
+        const ok = await callStatisticalPredict(match.id);
+        log.push(`phase-a-stats: ${match.id} → ${ok ? "OK" : "FAIL"}`);
+        if (ok) totalProcessed++;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+
+      // Phase A2: Enrich with AI reasoning (only for matches missing it)
+      for (const match of needsAIEnrichment) {
+        const ok = await callAIPredict(match.id);
+        log.push(`phase-a-ai: ${match.id} → ${ok ? "OK" : "FAIL"}`);
         if (ok) totalProcessed++;
         await new Promise((r) => setTimeout(r, 2000));
       }
