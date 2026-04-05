@@ -286,26 +286,32 @@ Deno.serve(async (req) => {
     }
 
     // ════════════════════════════════════════════
-    // P0: Today's fixtures — catch recently completed (1 call)
+    // P0: Today + yesterday's fixtures — catch recently completed (2 calls)
     // ════════════════════════════════════════════
     const today = new Date().toISOString().slice(0, 10);
-    try {
-      const todayFixtures = await apiFetch(`/fixtures?date=${today}`, apiKey);
-      await delay(500);
-      if (todayFixtures.length > 0) {
-        console.log(`Found ${todayFixtures.length} fixtures for today`);
-        for (const f of todayFixtures) {
-          const status = mapStatus(f.fixture.status.short);
-          if (status === "upcoming") continue;
-          const { data: updated, error } = await supabase.from("matches")
-            .update({ goals_home: f.goals.home, goals_away: f.goals.away, status })
-            .eq("api_football_id", f.fixture.id)
-            .select("id");
-          if (!error && updated?.length) summary.liveUpdated++;
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const datesToSync = [today];
+    if (yesterday !== today) datesToSync.push(yesterday);
+
+    for (const dateStr of datesToSync) {
+      try {
+        const fixtures = await apiFetch(`/fixtures?date=${dateStr}`, apiKey);
+        await delay(500);
+        if (fixtures.length > 0) {
+          console.log(`Found ${fixtures.length} fixtures for ${dateStr}`);
+          for (const f of fixtures) {
+            const status = mapStatus(f.fixture.status.short);
+            if (status === "upcoming") continue;
+            const { data: updated, error } = await supabase.from("matches")
+              .update({ goals_home: f.goals.home, goals_away: f.goals.away, status })
+              .eq("api_football_id", f.fixture.id)
+              .select("id");
+            if (!error && updated?.length) summary.liveUpdated++;
+          }
         }
+      } catch (e) {
+        console.error(`Error fetching fixtures for ${dateStr}:`, e);
       }
-    } catch (e) {
-      console.error("Error fetching today's fixtures:", e);
     }
 
     // ════════════════════════════════════════════
