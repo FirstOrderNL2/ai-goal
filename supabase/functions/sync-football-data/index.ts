@@ -257,36 +257,40 @@ Deno.serve(async (req) => {
     });
 
     // ════════════════════════════════════════════
-    // P0: Live fixtures (ALWAYS — 1 call with league filter)
+    // P0: Live fixtures — skip in idle mode (1 call with league filter)
     // ════════════════════════════════════════════
-    try {
-      const liveFixtures = await apiFetch(`/fixtures?live=${LEAGUE_IDS_STRING}`, apiKey);
-      await delay(500);
-      if (liveFixtures.length > 0) {
-        console.log(`Found ${liveFixtures.length} live fixtures in tracked leagues`);
-        for (const f of liveFixtures) {
-          const homeTeam = teamsByApiId.get(f.teams.home.id);
-          const awayTeam = teamsByApiId.get(f.teams.away.id);
-          if (!homeTeam || !awayTeam) continue;
+    if (mode !== "idle") {
+      try {
+        const liveFixtures = await apiFetch(`/fixtures?live=${LEAGUE_IDS_STRING}`, apiKey);
+        await delay(500);
+        if (liveFixtures.length > 0) {
+          console.log(`Found ${liveFixtures.length} live fixtures in tracked leagues`);
+          for (const f of liveFixtures) {
+            const homeTeam = teamsByApiId.get(f.teams.home.id);
+            const awayTeam = teamsByApiId.get(f.teams.away.id);
+            if (!homeTeam || !awayTeam) continue;
 
-          const status = mapStatus(f.fixture.status.short);
-          const elapsed = f.fixture.status.elapsed ?? null;
-          const { data: updated, error } = await supabase.from("matches")
-            .update({
-              goals_home: f.goals.home ?? 0,
-              goals_away: f.goals.away ?? 0,
-              status: status === "live" ? status : (FINISHED_STATUSES.has(f.fixture.status.short) ? "completed" : status),
-            })
-            .eq("api_football_id", f.fixture.id)
-            .select("id");
-          if (!error && updated?.length) {
-            summary.liveUpdated++;
-            console.log(`Live: ${f.teams.home.name} ${f.goals.home}-${f.goals.away} ${f.teams.away.name} (${f.fixture.status.short} ${elapsed}')`);
+            const status = mapStatus(f.fixture.status.short);
+            const elapsed = f.fixture.status.elapsed ?? null;
+            const { data: updated, error } = await supabase.from("matches")
+              .update({
+                goals_home: f.goals.home ?? 0,
+                goals_away: f.goals.away ?? 0,
+                status: status === "live" ? status : (FINISHED_STATUSES.has(f.fixture.status.short) ? "completed" : status),
+              })
+              .eq("api_football_id", f.fixture.id)
+              .select("id");
+            if (!error && updated?.length) {
+              summary.liveUpdated++;
+              console.log(`Live: ${f.teams.home.name} ${f.goals.home}-${f.goals.away} ${f.teams.away.name} (${f.fixture.status.short} ${elapsed}')`);
+            }
           }
         }
+      } catch (e) {
+        console.error("Error fetching live fixtures:", e);
       }
-    } catch (e) {
-      console.error("Error fetching live fixtures:", e);
+    } else {
+      console.log("idle mode: skipping live fixtures fetch");
     }
 
     // ════════════════════════════════════════════
