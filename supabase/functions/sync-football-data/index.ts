@@ -9,7 +9,6 @@ const corsHeaders = {
 const API_BASE = "https://v3.football.api-sports.io";
 
 const LEAGUES = [
-  // Domestic leagues
   { id: 39, name: "Premier League", country: "England", type: "league" },
   { id: 40, name: "Championship", country: "England", type: "league" },
   { id: 140, name: "La Liga", country: "Spain", type: "league" },
@@ -18,12 +17,10 @@ const LEAGUES = [
   { id: 61, name: "Ligue 1", country: "France", type: "league" },
   { id: 88, name: "Eredivisie", country: "Netherlands", type: "league" },
   { id: 89, name: "Keuken Kampioen Divisie", country: "Netherlands", type: "league" },
-  // European cups
   { id: 2, name: "Champions League", country: "World", type: "cup" },
   { id: 3, name: "Europa League", country: "World", type: "cup" },
   { id: 848, name: "Conference League", country: "World", type: "cup" },
   { id: 748, name: "Women's Champions League", country: "World", type: "cup" },
-  // International
   { id: 1, name: "World Cup", country: "World", type: "cup" },
   { id: 32, name: "WC Qualifiers Europe", country: "World", type: "cup" },
   { id: 34, name: "WC Qualifiers South America", country: "World", type: "cup" },
@@ -33,6 +30,8 @@ const LEAGUES = [
   { id: 9, name: "Copa America", country: "World", type: "cup" },
   { id: 10, name: "Friendlies", country: "World", type: "cup" },
 ];
+
+const LEAGUE_IDS_STRING = LEAGUES.map(l => l.id).join("-");
 
 const now = new Date();
 const SEASON = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
@@ -51,7 +50,6 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   "everton fc": "everton", "fulham fc": "fulham",
   "bournemouth": "afc bournemouth", "ipswich town fc": "ipswich", "ipswich town": "ipswich",
   "southampton fc": "southampton", "brentford fc": "brentford",
-  // Championship aliases
   "coventry city": "coventry", "derby county": "derby", "preston north end": "preston",
   "hull city": "hull city", "middlesbrough fc": "middlesbrough",
   "millwall fc": "millwall", "oxford united": "oxford united",
@@ -62,7 +60,6 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   "queens park rangers": "qpr", "sheffield united": "sheffield utd",
   "wrexham afc": "wrexham", "watford fc": "watford",
   "charlton athletic": "charlton", "sheffield wednesday fc": "sheffield wednesday",
-  // Spain
   "real madrid cf": "real madrid", "fc barcelona": "barcelona", "rcd espanyol": "espanyol",
   "real sociedad de fútbol": "real sociedad", "real betis balompié": "real betis",
   "villarreal cf": "villarreal", "sevilla fc": "sevilla", "valencia cf": "valencia",
@@ -106,7 +103,6 @@ function resolveTeamName(name: string): string {
   return TEAM_NAME_ALIASES[lower] ?? lower;
 }
 
-// Poisson helpers for multi-goal-line predictions
 function poissonPMF(lambda: number, k: number): number {
   let result = Math.exp(-lambda);
   for (let i = 1; i <= k; i++) result *= lambda / i;
@@ -146,14 +142,12 @@ function computeGoalDistribution(lambdaHome: number, lambdaAway: number): Record
 }
 
 function findBestPick(goalLines: Record<string, number>): string {
-  // Find the "over" line with highest confidence that's still meaningful (55-85% range)
   const candidates = Object.entries(goalLines)
     .filter(([k, v]) => k.startsWith("over_") && v >= 0.55 && v <= 0.85)
     .sort((a, b) => b[1] - a[1]);
   if (candidates.length > 0) {
     return candidates[0][0].replace("over_", "Over ").replace("_", ".");
   }
-  // Fallback: find under line in sweet spot
   const underCandidates = Object.entries(goalLines)
     .filter(([k, v]) => k.startsWith("under_") && v >= 0.55 && v <= 0.85)
     .sort((a, b) => b[1] - a[1]);
@@ -163,7 +157,6 @@ function findBestPick(goalLines: Record<string, number>): string {
   return goalLines.over_2_5 > 0.5 ? "Over 2.5" : "Under 2.5";
 }
 
-// Completed match statuses
 const FINISHED_STATUSES = new Set(["FT", "AET", "PEN"]);
 const LIVE_STATUSES = new Set(["1H", "2H", "HT", "ET", "BT", "P"]);
 const CANCELLED_STATUSES = new Set(["PST", "CANC", "ABD", "AWD", "WO"]);
@@ -172,16 +165,21 @@ function mapStatus(apiStatus: string): string {
   if (FINISHED_STATUSES.has(apiStatus)) return "completed";
   if (LIVE_STATUSES.has(apiStatus)) return "live";
   if (CANCELLED_STATUSES.has(apiStatus)) return "cancelled";
-  return "upcoming"; // NS, TBD, etc.
+  return "upcoming";
 }
 
-// Rate limit tracker
+// ─── Rate-limit–aware API fetcher ───
 let apiCallCount = 0;
-const API_CALL_LIMIT = 400; // Raised for expanded league coverage
+let apiRemainingDaily = Infinity;
+let callBudget = 100; // overridden per mode
 
 async function apiFetch(path: string, apiKey: string) {
-  if (apiCallCount >= API_CALL_LIMIT) {
-    console.warn(`Rate limit reached (${apiCallCount} calls), skipping: ${path}`);
+  if (apiCallCount >= callBudget) {
+    console.warn(`Budget exhausted (${apiCallCount}/${callBudget}), skipping: ${path}`);
+    return [];
+  }
+  if (apiRemainingDaily <= 5) {
+    console.warn(`Daily API limit nearly exhausted (${apiRemainingDaily} left), skipping: ${path}`);
     return [];
   }
   const url = `${API_BASE}${path}`;
@@ -190,13 +188,23 @@ async function apiFetch(path: string, apiKey: string) {
     headers: { "x-apisports-key": apiKey },
   });
   if (!res.ok) throw new Error(`API-Football error: ${res.status} ${await res.text()}`);
+
+  // Track rate limits from headers
+  const remaining = res.headers.get("x-ratelimit-requests-remaining");
+  if (remaining) {
+    apiRemainingDaily = parseInt(remaining, 10);
+    console.log(`API calls remaining today: ${apiRemainingDaily}`);
+  }
+  const perMinRemaining = res.headers.get("x-ratelimit-requests-remaining-minute") ?? res.headers.get("X-RateLimit-Remaining");
+  if (perMinRemaining && parseInt(perMinRemaining, 10) <= 2) {
+    console.log("Per-minute rate limit low, waiting 10s...");
+    await delay(10000);
+  }
+
   const json = await res.json();
   if (json.errors && Object.keys(json.errors).length > 0) {
     console.error("API errors:", JSON.stringify(json.errors));
   }
-  // Rate limit info from headers
-  const remaining = res.headers.get("x-ratelimit-requests-remaining");
-  if (remaining) console.log(`API calls remaining today: ${remaining}`);
   console.log(`Results for ${path}: ${json.results}`);
   return json.response ?? [];
 }
@@ -219,12 +227,23 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Reset call counter per request
+    // Parse mode from request body
+    let mode = "quick";
+    try {
+      const body = await req.json();
+      mode = body.mode ?? "quick";
+    } catch { /* no body = quick */ }
+
+    // Reset counters
     apiCallCount = 0;
+    apiRemainingDaily = Infinity;
+    callBudget = mode === "full" ? 250 : 80;
 
-    const summary = { teams: 0, matches: 0, predictions: 0, odds: 0, logosUpdated: 0, standings: 0, teamStats: 0, h2h: 0, lineups: 0, players: 0, liveUpdated: 0 };
+    console.log(`=== sync-football-data mode=${mode} budget=${callBudget} ===`);
 
-    // Load ALL existing teams from DB for cross-matching
+    const summary = { teams: 0, matches: 0, predictions: 0, standings: 0, teamStats: 0, h2h: 0, lineups: 0, players: 0, liveUpdated: 0, logosUpdated: 0 };
+
+    // Load ALL existing teams from DB
     const { data: existingTeams } = await supabase.from("teams").select("id, name, api_football_id, logo_url, sportradar_id");
     const teamsByResolvedName = new Map<string, any>();
     const teamsByApiId = new Map<number, any>();
@@ -233,23 +252,21 @@ Deno.serve(async (req) => {
       if (t.api_football_id) teamsByApiId.set(t.api_football_id, t);
     });
 
-    // ── STEP 0: Fetch ALL currently live fixtures first (most important for score updates) ──
+    // ════════════════════════════════════════════
+    // P0: Live fixtures (ALWAYS — 1 call with league filter)
+    // ════════════════════════════════════════════
     try {
-      const liveFixtures = await apiFetch(`/fixtures?live=all`, apiKey);
-      await delay(300);
+      const liveFixtures = await apiFetch(`/fixtures?live=${LEAGUE_IDS_STRING}`, apiKey);
+      await delay(500);
       if (liveFixtures.length > 0) {
-        console.log(`Found ${liveFixtures.length} live fixtures globally`);
+        console.log(`Found ${liveFixtures.length} live fixtures in tracked leagues`);
         for (const f of liveFixtures) {
-          const homeApiId = f.teams.home.id;
-          const awayApiId = f.teams.away.id;
-          // Find team UUIDs
-          const homeTeam = teamsByApiId.get(homeApiId);
-          const awayTeam = teamsByApiId.get(awayApiId);
+          const homeTeam = teamsByApiId.get(f.teams.home.id);
+          const awayTeam = teamsByApiId.get(f.teams.away.id);
           if (!homeTeam || !awayTeam) continue;
 
           const status = mapStatus(f.fixture.status.short);
           const elapsed = f.fixture.status.elapsed ?? null;
-          // Update this match directly by api_football_id
           const { data: updated, error } = await supabase.from("matches")
             .update({
               goals_home: f.goals.home ?? 0,
@@ -258,11 +275,9 @@ Deno.serve(async (req) => {
             })
             .eq("api_football_id", f.fixture.id)
             .select("id");
-          if (error) {
-            console.error(`Live update error for fixture ${f.fixture.id}:`, error);
-          } else if (updated && updated.length > 0) {
+          if (!error && updated?.length) {
             summary.liveUpdated++;
-            console.log(`Live updated: ${f.teams.home.name} ${f.goals.home}-${f.goals.away} ${f.teams.away.name} (${f.fixture.status.short} ${elapsed}')`);
+            console.log(`Live: ${f.teams.home.name} ${f.goals.home}-${f.goals.away} ${f.teams.away.name} (${f.fixture.status.short} ${elapsed}')`);
           }
         }
       }
@@ -270,151 +285,202 @@ Deno.serve(async (req) => {
       console.error("Error fetching live fixtures:", e);
     }
 
-    // ── Also fetch today's fixtures to catch recently completed matches ──
+    // ════════════════════════════════════════════
+    // P0: Today's fixtures — catch recently completed (1 call)
+    // ════════════════════════════════════════════
     const today = new Date().toISOString().slice(0, 10);
     try {
       const todayFixtures = await apiFetch(`/fixtures?date=${today}`, apiKey);
-      await delay(300);
+      await delay(500);
       if (todayFixtures.length > 0) {
         console.log(`Found ${todayFixtures.length} fixtures for today`);
         for (const f of todayFixtures) {
           const status = mapStatus(f.fixture.status.short);
-          if (status === "upcoming") continue; // Skip upcoming, handled by main sync
+          if (status === "upcoming") continue;
           const { data: updated, error } = await supabase.from("matches")
-            .update({
-              goals_home: f.goals.home,
-              goals_away: f.goals.away,
-              status,
-            })
+            .update({ goals_home: f.goals.home, goals_away: f.goals.away, status })
             .eq("api_football_id", f.fixture.id)
             .select("id");
-          if (!error && updated && updated.length > 0) {
-            summary.liveUpdated++;
-          }
+          if (!error && updated?.length) summary.liveUpdated++;
         }
       }
     } catch (e) {
       console.error("Error fetching today's fixtures:", e);
     }
 
-    const seasonStart = `${SEASON}-08-01`;
-    const seasonEnd = `${SEASON + 1}-07-31`;
-    const dateRanges = [
-      { from: seasonStart, to: today, type: "completed" },
-      { from: today, to: seasonEnd, type: "upcoming" },
-    ];
+    // ════════════════════════════════════════════
+    // P1: Upcoming fixtures per league (next=15) — ~20 calls
+    // Also fetch last=5 to update recent final scores
+    // ════════════════════════════════════════════
+    // Collect all upcoming fixture API IDs for batch operations later
+    const allUpcomingFixtures: any[] = [];
+    const allRecentFixtures: any[] = [];
+    const globalTeamUuidMap = new Map<number, string>();
+    // Pre-populate from existing teams
+    teamsByApiId.forEach((t, apiId) => globalTeamUuidMap.set(apiId, t.id));
 
     for (const league of LEAGUES) {
-      if (apiCallCount >= API_CALL_LIMIT) break;
+      if (apiCallCount >= callBudget) break;
 
-      // ── 1. Fetch fixtures ──
-      const allFixtures: any[] = [];
-      for (const range of dateRanges) {
-        try {
-          const fixtures = await apiFetch(
-            `/fixtures?league=${league.id}&season=${SEASON}&from=${range.from}&to=${range.to}`,
-            apiKey
-          );
-          for (const f of fixtures) f._rangeType = range.type;
-          allFixtures.push(...fixtures);
-          await delay(300);
-        } catch (e) {
-          console.error(`Error fetching ${league.name} ${range.type}:`, e);
-        }
-      }
+      // Fetch upcoming fixtures (1 call per league)
+      try {
+        const upcoming = await apiFetch(`/fixtures?league=${league.id}&season=${SEASON}&next=15`, apiKey);
+        await delay(400);
 
-      if (allFixtures.length === 0) continue;
+        // Process teams from upcoming fixtures
+        const teamsToUpsert = new Map<number, any>();
+        const teamsToUpdateLogo: { id: string; api_football_id: number; logo_url: string }[] = [];
 
-      // ── 2. Process teams ──
-      const teamsToUpsert = new Map<number, any>();
-      const teamsToUpdateLogo: { id: string; api_football_id: number; logo_url: string }[] = [];
-
-      for (const f of allFixtures) {
-        for (const side of ["home", "away"] as const) {
-          const t = f.teams[side];
-          if (teamsToUpsert.has(t.id) || teamsByApiId.has(t.id)) continue;
-          const resolved = resolveTeamName(t.name);
-          const existingByName = teamsByResolvedName.get(resolved);
-          if (existingByName) {
-            if (!existingByName.api_football_id || !existingByName.logo_url) {
-              teamsToUpdateLogo.push({ id: existingByName.id, api_football_id: t.id, logo_url: t.logo });
-              existingByName.api_football_id = t.id;
-              existingByName.logo_url = t.logo;
-              teamsByApiId.set(t.id, existingByName);
+        for (const f of upcoming) {
+          f._league = league; // attach league info
+          for (const side of ["home", "away"] as const) {
+            const t = f.teams[side];
+            if (teamsToUpsert.has(t.id) || teamsByApiId.has(t.id)) continue;
+            const resolved = resolveTeamName(t.name);
+            const existingByName = teamsByResolvedName.get(resolved);
+            if (existingByName) {
+              if (!existingByName.api_football_id || !existingByName.logo_url) {
+                teamsToUpdateLogo.push({ id: existingByName.id, api_football_id: t.id, logo_url: t.logo });
+                existingByName.api_football_id = t.id;
+                existingByName.logo_url = t.logo;
+                teamsByApiId.set(t.id, existingByName);
+              }
+            } else {
+              teamsToUpsert.set(t.id, {
+                api_football_id: t.id, name: t.name, logo_url: t.logo,
+                league: league.name, country: league.country,
+              });
             }
-          } else {
-            teamsToUpsert.set(t.id, {
-              api_football_id: t.id, name: t.name, logo_url: t.logo,
-              league: league.name, country: league.country,
-            });
           }
         }
+
+        // Upsert new teams
+        for (const upd of teamsToUpdateLogo) {
+          const { error } = await supabase.from("teams")
+            .update({ api_football_id: upd.api_football_id, logo_url: upd.logo_url })
+            .eq("id", upd.id);
+          if (!error) summary.logosUpdated++;
+        }
+        if (teamsToUpsert.size > 0) {
+          const { error } = await supabase.from("teams")
+            .upsert(Array.from(teamsToUpsert.values()), { onConflict: "api_football_id", ignoreDuplicates: false });
+          if (!error) summary.teams += teamsToUpsert.size;
+        }
+
+        // Refresh UUID map for new teams
+        if (teamsToUpsert.size > 0) {
+          const newApiIds = Array.from(teamsToUpsert.keys());
+          const { data: newDbTeams } = await supabase.from("teams").select("id, api_football_id").in("api_football_id", newApiIds);
+          for (const t of newDbTeams ?? []) if (t.api_football_id) globalTeamUuidMap.set(t.api_football_id, t.id);
+        }
+
+        allUpcomingFixtures.push(...upcoming);
+      } catch (e) {
+        console.error(`Error fetching upcoming for ${league.name}:`, e);
       }
 
-      for (const upd of teamsToUpdateLogo) {
-        const { error } = await supabase.from("teams")
-          .update({ api_football_id: upd.api_football_id, logo_url: upd.logo_url })
-          .eq("id", upd.id);
-        if (!error) summary.logosUpdated++;
+      // In full mode also fetch last=5 for recent results (1 call per league)
+      if (mode === "full" && apiCallCount < callBudget) {
+        try {
+          const recent = await apiFetch(`/fixtures?league=${league.id}&season=${SEASON}&last=5`, apiKey);
+          await delay(400);
+          for (const f of recent) f._league = league;
+          allRecentFixtures.push(...recent);
+        } catch (e) {
+          console.error(`Error fetching recent for ${league.name}:`, e);
+        }
       }
+    }
 
-      if (teamsToUpsert.size > 0) {
-        const { error: te } = await supabase.from("teams")
-          .upsert(Array.from(teamsToUpsert.values()), { onConflict: "api_football_id", ignoreDuplicates: false });
-        if (te) console.error("teams upsert error:", te);
-        else summary.teams += teamsToUpsert.size;
-      }
+    // Upsert all upcoming matches
+    const upcomingMatchRows = allUpcomingFixtures.map((f: any) => {
+      const status = mapStatus(f.fixture.status.short);
+      const isFinished = status === "completed";
+      const homeUuid = globalTeamUuidMap.get(f.teams.home.id);
+      const awayUuid = globalTeamUuidMap.get(f.teams.away.id);
+      if (!homeUuid || !awayUuid) return null;
+      return {
+        api_football_id: f.fixture.id,
+        match_date: f.fixture.date,
+        team_home_id: homeUuid,
+        team_away_id: awayUuid,
+        goals_home: (status === "live" || isFinished) ? f.goals.home : null,
+        goals_away: (status === "live" || isFinished) ? f.goals.away : null,
+        status,
+        league: f._league.name,
+        round: f.league.round ?? null,
+      };
+    }).filter(Boolean);
 
-      // Refresh team uuid mapping — include ALL teams with api_football_id for this league
-      const allLeagueApiIds = [...new Set(allFixtures.flatMap((f: any) => [f.teams.home.id, f.teams.away.id]))];
-      const { data: dbTeams } = await supabase.from("teams").select("id, api_football_id").in("api_football_id", allLeagueApiIds);
-      const teamUuidMap = new Map<number, string>();
-      for (const t of dbTeams ?? []) if (t.api_football_id) teamUuidMap.set(t.api_football_id, t.id);
-      teamsByApiId.forEach((t, apiId) => { if (!teamUuidMap.has(apiId)) teamUuidMap.set(apiId, t.id); });
+    if (upcomingMatchRows.length > 0) {
+      const { error } = await supabase.from("matches")
+        .upsert(upcomingMatchRows, { onConflict: "api_football_id", ignoreDuplicates: false });
+      if (error) console.error("upcoming matches upsert error:", error);
+      else summary.matches += upcomingMatchRows.length;
+    }
 
-      // ── 3. Upsert matches with proper status mapping ──
-      // Deduplicate fixtures by api_football_id (boundary date can appear in both ranges)
-      const seenFixtureIds = new Set<number>();
-      const dedupedFixtures = allFixtures.filter((f: any) => {
-        if (seenFixtureIds.has(f.fixture.id)) return false;
-        seenFixtureIds.add(f.fixture.id);
-        return true;
-      });
-
-      const matchRows = dedupedFixtures.map((f: any) => {
+    // Upsert recent matches (full mode)
+    if (allRecentFixtures.length > 0) {
+      const recentRows = allRecentFixtures.map((f: any) => {
         const status = mapStatus(f.fixture.status.short);
-        const isFinished = status === "completed";
+        const homeUuid = globalTeamUuidMap.get(f.teams.home.id);
+        const awayUuid = globalTeamUuidMap.get(f.teams.away.id);
+        if (!homeUuid || !awayUuid) return null;
         return {
           api_football_id: f.fixture.id,
           match_date: f.fixture.date,
-          team_home_id: teamUuidMap.get(f.teams.home.id),
-          team_away_id: teamUuidMap.get(f.teams.away.id),
-          goals_home: (status === "live" || isFinished) ? f.goals.home : null,
-          goals_away: (status === "live" || isFinished) ? f.goals.away : null,
+          team_home_id: homeUuid,
+          team_away_id: awayUuid,
+          goals_home: f.goals.home,
+          goals_away: f.goals.away,
           status,
-          league: league.name,
+          league: f._league.name,
           round: f.league.round ?? null,
         };
-      }).filter((m: any) => m.team_home_id && m.team_away_id);
-
-      if (matchRows.length > 0) {
-        const { error: me } = await supabase.from("matches")
-          .upsert(matchRows, { onConflict: "api_football_id", ignoreDuplicates: false });
-        if (me) console.error("matches upsert error:", me);
-        else summary.matches += matchRows.length;
+      }).filter(Boolean);
+      if (recentRows.length > 0) {
+        const { error } = await supabase.from("matches")
+          .upsert(recentRows, { onConflict: "api_football_id", ignoreDuplicates: false });
+        if (error) console.error("recent matches upsert error:", error);
+        else summary.matches += recentRows.length;
       }
+    }
 
-      const fixtureIds = allFixtures.map((f: any) => f.fixture.id);
-      const { data: dbMatches } = await supabase.from("matches")
-        .select("id, api_football_id").in("api_football_id", fixtureIds);
-      const matchUuidMap = new Map<number, string>();
-      for (const m of dbMatches ?? []) matchUuidMap.set(m.api_football_id!, m.id);
+    // Build match UUID map for upcoming fixtures
+    const allFixtureApiIds = [...allUpcomingFixtures, ...allRecentFixtures].map((f: any) => f.fixture.id);
+    const matchUuidMap = new Map<number, string>();
+    if (allFixtureApiIds.length > 0) {
+      // Batch in chunks of 100 for the IN query
+      for (let i = 0; i < allFixtureApiIds.length; i += 100) {
+        const chunk = allFixtureApiIds.slice(i, i + 100);
+        const { data: dbMatches } = await supabase.from("matches")
+          .select("id, api_football_id").in("api_football_id", chunk);
+        for (const m of dbMatches ?? []) if (m.api_football_id) matchUuidMap.set(m.api_football_id, m.id);
+      }
+    }
 
-      // ── 4. Fetch standings ──
-      if (apiCallCount < API_CALL_LIMIT) {
+    // ════════════════════════════════════════════
+    // P2: Standings — only in full mode or if stale (>6h)
+    // ════════════════════════════════════════════
+    if (mode === "full") {
+      // Check which leagues need standings refresh
+      const { data: leagueRows } = await supabase.from("leagues")
+        .select("api_football_id, updated_at");
+      const leagueLastUpdate = new Map<number, string>();
+      for (const l of leagueRows ?? []) leagueLastUpdate.set(l.api_football_id, l.updated_at);
+
+      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+
+      for (const league of LEAGUES) {
+        if (apiCallCount >= callBudget) break;
+        const lastUpdate = leagueLastUpdate.get(league.id);
+        if (lastUpdate && lastUpdate > sixHoursAgo) {
+          console.log(`Standings for ${league.name} still fresh (updated ${lastUpdate}), skipping`);
+          continue;
+        }
         try {
           const standingsData = await apiFetch(`/standings?league=${league.id}&season=${SEASON}`, apiKey);
-          await delay(300);
+          await delay(400);
           if (standingsData.length > 0) {
             const leagueData = standingsData[0]?.league;
             if (leagueData) {
@@ -428,64 +494,130 @@ Deno.serve(async (req) => {
                 type: league.type,
                 updated_at: new Date().toISOString(),
               }, { onConflict: "api_football_id" });
-              if (error) console.error("leagues upsert error:", error);
-              else summary.standings++;
+              if (!error) summary.standings++;
             }
           }
         } catch (e) {
           console.error(`Standings error for ${league.name}:`, e);
         }
       }
+    }
 
-      // ── 5. Fetch team statistics (top 5 teams per league to save API calls) ──
-      // Get league UUID for FK
-      const { data: leagueRow } = await supabase.from("leagues")
-        .select("id").eq("api_football_id", league.id).single();
+    // ════════════════════════════════════════════
+    // P2: H2H for upcoming matches — use batch approach
+    // Only 3 per league in quick, 5 in full
+    // ════════════════════════════════════════════
+    const h2hLimit = mode === "full" ? 5 : 3;
+    const upcomingForH2H = allUpcomingFixtures
+      .filter((f: any) => mapStatus(f.fixture.status.short) === "upcoming")
+      .slice(0, h2hLimit * 3); // across all leagues, cap total
 
-      if (leagueRow && apiCallCount < API_CALL_LIMIT) {
-        // Get unique team API IDs from this league's fixtures (limit to save calls)
-        const teamApiIds = [...new Set(allFixtures.flatMap((f: any) => [f.teams.home.id, f.teams.away.id]))].slice(0, 10);
+    // Only fetch H2H for matches that don't already have it
+    const h2hMatchIds = upcomingForH2H.map(f => matchUuidMap.get(f.fixture.id)).filter(Boolean) as string[];
+    const { data: existingH2H } = await supabase.from("match_features")
+      .select("match_id").in("match_id", h2hMatchIds.slice(0, 50))
+      .not("h2h_results", "is", null);
+    const existingH2HSet = new Set((existingH2H ?? []).map(r => r.match_id));
+
+    let h2hFetched = 0;
+    for (const f of upcomingForH2H) {
+      if (apiCallCount >= callBudget || h2hFetched >= (mode === "full" ? 10 : 5)) break;
+      const matchId = matchUuidMap.get(f.fixture.id);
+      if (!matchId || existingH2HSet.has(matchId)) continue;
+      try {
+        const h2hData = await apiFetch(`/fixtures/headtohead?h2h=${f.teams.home.id}-${f.teams.away.id}&last=5`, apiKey);
+        await delay(400);
+        if (h2hData.length > 0) {
+          const h2hResults = h2hData.map((h: any) => ({
+            date: h.fixture.date, home: h.teams.home.name, away: h.teams.away.name,
+            score_home: h.goals.home, score_away: h.goals.away,
+          }));
+          await supabase.from("match_features").upsert({
+            match_id: matchId, h2h_results: h2hResults, computed_at: new Date().toISOString(),
+          }, { onConflict: "match_id" });
+          summary.h2h++;
+          h2hFetched++;
+        }
+      } catch (e) {
+        console.error(`H2H error for fixture ${f.fixture.id}:`, e);
+      }
+    }
+
+    // ════════════════════════════════════════════
+    // P2: Lineups for matches starting within 2h (max 5 calls)
+    // ════════════════════════════════════════════
+    const twoHoursFromNow = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    const nowIso = new Date().toISOString();
+    const soonMatches = allUpcomingFixtures.filter((f: any) => {
+      const matchTime = new Date(f.fixture.date).toISOString();
+      return matchTime <= twoHoursFromNow && matchTime >= nowIso && mapStatus(f.fixture.status.short) === "upcoming";
+    }).slice(0, 5);
+
+    for (const f of soonMatches) {
+      if (apiCallCount >= callBudget) break;
+      const matchId = matchUuidMap.get(f.fixture.id);
+      if (!matchId) continue;
+      try {
+        const lineups = await apiFetch(`/fixtures/lineups?fixture=${f.fixture.id}`, apiKey);
+        await delay(400);
+        if (lineups.length >= 2) {
+          await supabase.from("match_context").upsert({
+            match_id: matchId,
+            lineup_home: lineups[0]?.startXI ?? [],
+            lineup_away: lineups[1]?.startXI ?? [],
+            scraped_at: new Date().toISOString(),
+          }, { onConflict: "match_id" });
+          summary.lineups++;
+        }
+      } catch (e) {
+        console.error(`Lineups error for fixture ${f.fixture.id}:`, e);
+      }
+    }
+
+    // ════════════════════════════════════════════
+    // P3: Team statistics — FULL mode only, max 5 per league
+    // ════════════════════════════════════════════
+    if (mode === "full") {
+      for (const league of LEAGUES) {
+        if (apiCallCount >= callBudget) break;
+        if (league.type !== "league") continue; // Skip cups for team stats
+
+        const { data: leagueRow } = await supabase.from("leagues")
+          .select("id").eq("api_football_id", league.id).single();
+        if (!leagueRow) continue;
+
+        // Get team IDs from upcoming fixtures for this league
+        const leagueUpcoming = allUpcomingFixtures.filter((f: any) => f._league.id === league.id);
+        const teamApiIds = [...new Set(leagueUpcoming.flatMap((f: any) => [f.teams.home.id, f.teams.away.id]))].slice(0, 5);
 
         for (const teamApiId of teamApiIds) {
-          if (apiCallCount >= API_CALL_LIMIT) break;
+          if (apiCallCount >= callBudget) break;
           try {
             const stats = await apiFetch(`/teams/statistics?team=${teamApiId}&league=${league.id}&season=${SEASON}`, apiKey);
-            await delay(300);
+            await delay(400);
             if (stats && stats.fixtures) {
-              const teamUuid = teamUuidMap.get(teamApiId);
+              const teamUuid = globalTeamUuidMap.get(teamApiId);
               if (!teamUuid) continue;
-
-              const played = (stats.fixtures.played?.total ?? 0);
-              const goalsFor = (stats.goals?.for?.total?.total ?? 0);
-              const goalsAgainst = (stats.goals?.against?.total?.total ?? 0);
-
+              const played = stats.fixtures.played?.total ?? 0;
+              const goalsFor = stats.goals?.for?.total?.total ?? 0;
+              const goalsAgainst = stats.goals?.against?.total?.total ?? 0;
               const { error } = await supabase.from("team_statistics").upsert({
-                team_id: teamUuid,
-                league_id: leagueRow.id,
-                season: SEASON,
+                team_id: teamUuid, league_id: leagueRow.id, season: SEASON,
                 matches_played: played,
                 wins: stats.fixtures.wins?.total ?? 0,
                 draws: stats.fixtures.draws?.total ?? 0,
                 losses: stats.fixtures.loses?.total ?? 0,
-                goals_for: goalsFor,
-                goals_against: goalsAgainst,
-                goal_diff: goalsFor - goalsAgainst,
+                goals_for: goalsFor, goals_against: goalsAgainst, goal_diff: goalsFor - goalsAgainst,
                 form: stats.form ?? null,
                 home_record: {
-                  played: stats.fixtures.played?.home ?? 0,
-                  wins: stats.fixtures.wins?.home ?? 0,
-                  draws: stats.fixtures.draws?.home ?? 0,
-                  losses: stats.fixtures.loses?.home ?? 0,
-                  goals_for: stats.goals?.for?.total?.home ?? 0,
-                  goals_against: stats.goals?.against?.total?.home ?? 0,
+                  played: stats.fixtures.played?.home ?? 0, wins: stats.fixtures.wins?.home ?? 0,
+                  draws: stats.fixtures.draws?.home ?? 0, losses: stats.fixtures.loses?.home ?? 0,
+                  goals_for: stats.goals?.for?.total?.home ?? 0, goals_against: stats.goals?.against?.total?.home ?? 0,
                 },
                 away_record: {
-                  played: stats.fixtures.played?.away ?? 0,
-                  wins: stats.fixtures.wins?.away ?? 0,
-                  draws: stats.fixtures.draws?.away ?? 0,
-                  losses: stats.fixtures.loses?.away ?? 0,
-                  goals_for: stats.goals?.for?.total?.away ?? 0,
-                  goals_against: stats.goals?.against?.total?.away ?? 0,
+                  played: stats.fixtures.played?.away ?? 0, wins: stats.fixtures.wins?.away ?? 0,
+                  draws: stats.fixtures.draws?.away ?? 0, losses: stats.fixtures.loses?.away ?? 0,
+                  goals_for: stats.goals?.for?.total?.away ?? 0, goals_against: stats.goals?.against?.total?.away ?? 0,
                 },
                 clean_sheets: stats.clean_sheet?.total ?? 0,
                 failed_to_score: stats.failed_to_score?.total ?? 0,
@@ -493,138 +625,97 @@ Deno.serve(async (req) => {
                 avg_goals_conceded: played > 0 ? Math.round((goalsAgainst / played) * 100) / 100 : 0,
                 updated_at: new Date().toISOString(),
               }, { onConflict: "team_id,league_id,season" });
-              if (error) console.error("team_statistics upsert error:", error);
-              else summary.teamStats++;
+              if (!error) summary.teamStats++;
             }
           } catch (e) {
             console.error(`Team stats error for ${teamApiId}:`, e);
           }
         }
       }
+    }
 
-      // ── 6. Fetch predictions for upcoming matches (5 per league) ──
-      const upcomingFixtures = allFixtures.filter((f: any) => mapStatus(f.fixture.status.short) === "upcoming").slice(0, 5);
-      for (const f of upcomingFixtures) {
-        if (apiCallCount >= API_CALL_LIMIT) break;
-        try {
-          const preds = await apiFetch(`/predictions?fixture=${f.fixture.id}`, apiKey);
-          await delay(300);
-          if (preds.length > 0) {
-            const p = preds[0];
-            const matchId = matchUuidMap.get(f.fixture.id);
-            if (matchId) {
-              const homeWin = parseFloat(p.predictions.percent.home?.replace("%", "") ?? "0") / 100;
-              const draw = parseFloat(p.predictions.percent.draw?.replace("%", "") ?? "0") / 100;
-              const awayWin = parseFloat(p.predictions.percent.away?.replace("%", "") ?? "0") / 100;
-              const homeGoalAvg = parseFloat(p.teams?.home?.league?.goals?.for?.average?.total ?? "1.3");
-              const awayGoalAvg = parseFloat(p.teams?.away?.league?.goals?.for?.average?.total ?? "1.1");
-              const totalXg = homeGoalAvg + awayGoalAvg;
+    // ════════════════════════════════════════════
+    // P3: Predictions — FULL mode only, use our own Poisson model
+    // Skip API predictions endpoint entirely to save calls
+    // ════════════════════════════════════════════
+    if (mode === "full") {
+      const unpredicted = allUpcomingFixtures.filter((f: any) => mapStatus(f.fixture.status.short) === "upcoming");
+      // Check which already have predictions
+      const upcomingMatchIdsForPred = unpredicted
+        .map(f => matchUuidMap.get(f.fixture.id))
+        .filter(Boolean) as string[];
+      const { data: existingPreds } = await supabase.from("predictions")
+        .select("match_id").in("match_id", upcomingMatchIdsForPred.slice(0, 100));
+      const existingPredSet = new Set((existingPreds ?? []).map(r => r.match_id));
 
-              // Compute multi-goal-line probabilities using Poisson
-              const goalLines = computeGoalLines(homeGoalAvg, awayGoalAvg);
-
-              const { error: pe } = await supabase.from("predictions").upsert({
-                match_id: matchId,
-                home_win: homeWin, draw, away_win: awayWin,
-                expected_goals_home: homeGoalAvg, expected_goals_away: awayGoalAvg,
-                over_under_25: goalLines.over_2_5 > 0.5 ? "over" : "under",
-                model_confidence: Math.max(homeWin, draw, awayWin),
-                goal_lines: goalLines,
-                goal_distribution: computeGoalDistribution(homeGoalAvg, awayGoalAvg),
-                best_pick: findBestPick(goalLines),
-                best_pick_confidence: Math.max(...Object.values(goalLines) as number[]),
-              }, { onConflict: "match_id" });
-              if (pe) console.error("prediction upsert error:", pe);
-              else summary.predictions++;
-            }
-          }
-        } catch (e) {
-          console.error(`prediction error for ${f.fixture.id}:`, e);
-        }
-      }
-
-      // ── 7. Fetch H2H for upcoming matches ──
-      const upcomingForH2H = allFixtures
-        .filter((f: any) => mapStatus(f.fixture.status.short) === "upcoming")
-        .slice(0, 3);
-
-      for (const f of upcomingForH2H) {
-        if (apiCallCount >= API_CALL_LIMIT) break;
+      for (const f of unpredicted) {
         const matchId = matchUuidMap.get(f.fixture.id);
-        if (!matchId) continue;
-        try {
-          const h2hData = await apiFetch(
-            `/fixtures/headtohead?h2h=${f.teams.home.id}-${f.teams.away.id}&last=5`,
-            apiKey
-          );
-          await delay(300);
-          if (h2hData.length > 0) {
-            const h2hResults = h2hData.map((h: any) => ({
-              date: h.fixture.date,
-              home: h.teams.home.name,
-              away: h.teams.away.name,
-              score_home: h.goals.home,
-              score_away: h.goals.away,
-            }));
-            // Store H2H in match_features (create or update)
-            await supabase.from("match_features").upsert({
-              match_id: matchId,
-              h2h_results: h2hResults,
-              computed_at: new Date().toISOString(),
-            }, { onConflict: "match_id" });
-            summary.h2h++;
-          }
-        } catch (e) {
-          console.error(`H2H error for fixture ${f.fixture.id}:`, e);
-        }
-      }
+        if (!matchId || existingPredSet.has(matchId)) continue;
 
-      // ── 8. Fetch lineups for matches starting within 2 hours ──
-      const twoHoursFromNow = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
-      const soonMatches = allFixtures.filter((f: any) => {
-        const matchTime = new Date(f.fixture.date).toISOString();
-        return matchTime <= twoHoursFromNow && matchTime >= new Date().toISOString() && mapStatus(f.fixture.status.short) === "upcoming";
-      }).slice(0, 3);
+        // Use league average goals as fallback (1.3 home, 1.1 away)
+        const homeGoalAvg = 1.3;
+        const awayGoalAvg = 1.1;
 
-      for (const f of soonMatches) {
-        if (apiCallCount >= API_CALL_LIMIT) break;
-        const matchId = matchUuidMap.get(f.fixture.id);
-        if (!matchId) continue;
-        try {
-          const lineups = await apiFetch(`/fixtures/lineups?fixture=${f.fixture.id}`, apiKey);
-          await delay(300);
-          if (lineups.length >= 2) {
-            await supabase.from("match_context").upsert({
-              match_id: matchId,
-              lineup_home: lineups[0]?.startXI ?? [],
-              lineup_away: lineups[1]?.startXI ?? [],
-              scraped_at: new Date().toISOString(),
-            }, { onConflict: "match_id" });
-            summary.lineups++;
+        // Try to get team stats from DB for better estimates
+        const homeUuid = globalTeamUuidMap.get(f.teams.home.id);
+        const awayUuid = globalTeamUuidMap.get(f.teams.away.id);
+        let lambdaH = homeGoalAvg, lambdaA = awayGoalAvg;
+
+        if (homeUuid && awayUuid) {
+          const { data: homeStats } = await supabase.from("team_statistics")
+            .select("avg_goals_scored, avg_goals_conceded").eq("team_id", homeUuid).single();
+          const { data: awayStats } = await supabase.from("team_statistics")
+            .select("avg_goals_scored, avg_goals_conceded").eq("team_id", awayUuid).single();
+          if (homeStats && awayStats) {
+            lambdaH = (Number(homeStats.avg_goals_scored) + Number(awayStats.avg_goals_conceded)) / 2;
+            lambdaA = (Number(awayStats.avg_goals_scored) + Number(homeStats.avg_goals_conceded)) / 2;
           }
-        } catch (e) {
-          console.error(`Lineups error for fixture ${f.fixture.id}:`, e);
         }
+
+        const goalLines = computeGoalLines(lambdaH, lambdaA);
+        const homeWin = poissonHomeWin(lambdaH, lambdaA);
+        const drawProb = poissonDraw(lambdaH, lambdaA);
+        const awayWin = 1 - homeWin - drawProb;
+
+        const { error } = await supabase.from("predictions").upsert({
+          match_id: matchId,
+          home_win: Math.round(homeWin * 1000) / 1000,
+          draw: Math.round(drawProb * 1000) / 1000,
+          away_win: Math.round(awayWin * 1000) / 1000,
+          expected_goals_home: Math.round(lambdaH * 100) / 100,
+          expected_goals_away: Math.round(lambdaA * 100) / 100,
+          over_under_25: goalLines.over_2_5 > 0.5 ? "over" : "under",
+          model_confidence: Math.max(homeWin, drawProb, awayWin),
+          goal_lines: goalLines,
+          goal_distribution: computeGoalDistribution(lambdaH, lambdaA),
+          best_pick: findBestPick(goalLines),
+          best_pick_confidence: Math.max(...Object.values(goalLines)),
+        }, { onConflict: "match_id" });
+        if (!error) summary.predictions++;
       }
-      // ── 9. Fetch players for this league (first page = 20 players) ──
-      if (apiCallCount < API_CALL_LIMIT && league.type === "league") {
+    }
+
+    // ════════════════════════════════════════════
+    // P3: Players — FULL mode only, domestic leagues
+    // ════════════════════════════════════════════
+    if (mode === "full") {
+      for (const league of LEAGUES) {
+        if (apiCallCount >= callBudget) break;
+        if (league.type !== "league") continue;
         try {
           const playersData = await apiFetch(`/players?league=${league.id}&season=${SEASON}&page=1`, apiKey);
-          await delay(300);
+          await delay(400);
           for (const entry of playersData) {
             const p = entry.player;
             const stats = entry.statistics?.[0];
             const teamApiId = stats?.team?.id;
-            const teamUuid = teamApiId ? (teamUuidMap.get(teamApiId) ?? teamsByApiId.get(teamApiId)?.id) : null;
+            const teamUuid = teamApiId ? (globalTeamUuidMap.get(teamApiId) ?? teamsByApiId.get(teamApiId)?.id) : null;
             if (!p?.id) continue;
             const { error } = await supabase.from("players").upsert({
-              api_football_id: p.id,
-              name: p.name,
+              api_football_id: p.id, name: p.name,
               position: stats?.games?.position ?? p.position ?? null,
-              age: p.age ?? null,
-              nationality: p.nationality ?? null,
-              photo_url: p.photo ?? null,
-              team_id: teamUuid ?? null,
+              age: p.age ?? null, nationality: p.nationality ?? null,
+              photo_url: p.photo ?? null, team_id: teamUuid ?? null,
               updated_at: new Date().toISOString(),
             }, { onConflict: "api_football_id" });
             if (!error) summary.players++;
@@ -635,7 +726,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ success: true, summary, apiCalls: apiCallCount }), {
+    return new Response(JSON.stringify({ success: true, mode, summary, apiCalls: apiCallCount, budgetRemaining: callBudget - apiCallCount }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
@@ -646,3 +737,19 @@ Deno.serve(async (req) => {
     });
   }
 });
+
+// ─── Poisson helpers for 1X2 probabilities ───
+function poissonHomeWin(lambdaH: number, lambdaA: number): number {
+  let p = 0;
+  for (let h = 1; h <= 8; h++)
+    for (let a = 0; a < h; a++)
+      p += poissonPMF(lambdaH, h) * poissonPMF(lambdaA, a);
+  return p;
+}
+
+function poissonDraw(lambdaH: number, lambdaA: number): number {
+  let p = 0;
+  for (let k = 0; k <= 8; k++)
+    p += poissonPMF(lambdaH, k) * poissonPMF(lambdaA, k);
+  return p;
+}

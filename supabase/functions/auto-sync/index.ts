@@ -15,6 +15,13 @@ Deno.serve(async (req) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(supabaseUrl, serviceKey);
 
+  // Determine mode: "full" for comprehensive daily sync, "quick" for frequent updates
+  let mode = "quick";
+  try {
+    const body = await req.json();
+    mode = body.mode ?? "quick";
+  } catch { /* default quick */ }
+
   const log: string[] = [];
   const errors: string[] = [];
 
@@ -43,19 +50,19 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Step 1: Sync API-Football data (primary — fixtures, teams, standings, team stats, H2H)
-  await callFunction("sync-football-data");
+  // Step 1: Sync API-Football data with mode parameter
+  await callFunction("sync-football-data", { mode });
 
   // Step 2: Sync Sportradar data (secondary — live scores, odds)
   await callFunction("sync-sportradar-data");
 
-  // Step 3: Scrape matches from Dutch sites
-  await callFunction("scrape-matches");
+  // Step 3: Scrape matches (quick mode skips this)
+  if (mode === "full") {
+    await callFunction("scrape-matches");
+    await callFunction("scrape-news");
+  }
 
-  // Step 4: Scrape news
-  await callFunction("scrape-news");
-
-  // Step 5: Mark stale "upcoming" matches as completed
+  // Step 4: Mark stale "upcoming" matches as completed (3h buffer)
   const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
   const { data: stale, error: staleErr } = await supabase
     .from("matches")
@@ -70,18 +77,23 @@ Deno.serve(async (req) => {
     log.push(`cleanup: marked ${stale.length} stale matches as completed`);
   }
 
-  // Step 6: Compute AI-ready features for upcoming matches
-  await callFunction("compute-features");
+  // Step 5: Compute AI-ready features (full mode only)
+  if (mode === "full") {
+    await callFunction("compute-features");
+  }
 
-  // Step 7: Generate predictions for new matches
-  await callFunction("batch-generate-predictions");
+  // Step 6: Generate predictions for new matches (full mode only)
+  if (mode === "full") {
+    await callFunction("batch-generate-predictions");
+  }
 
-  // Step 8: Pre-match predictions for imminent matches (60m, 30m, 10m, 5m)
+  // Step 7: Pre-match predictions for imminent matches
   await callFunction("pre-match-predictions");
 
   return new Response(
     JSON.stringify({
       success: errors.length === 0,
+      mode,
       timestamp: new Date().toISOString(),
       log,
       errors,
