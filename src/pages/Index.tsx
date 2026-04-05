@@ -3,7 +3,6 @@ import { Header } from "@/components/Header";
 import { MatchCard } from "@/components/MatchCard";
 import { LeagueFilter } from "@/components/LeagueFilter";
 import { useDashboardMatches, useCompletedMatches } from "@/hooks/useMatches";
-import { useSyncFootballData } from "@/hooks/useSync";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Activity, Clock } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
