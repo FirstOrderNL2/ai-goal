@@ -103,14 +103,8 @@ Deno.serve(async (req) => {
   // Step 1: Sync API-Football data with detected mode
   await callFunction("sync-football-data", { mode: effectiveMode });
 
-  // Step 2: Sportradar — skip in idle mode to save resources
-  if (effectiveMode !== "idle") {
-    await callFunction("sync-sportradar-data");
-  }
-
-  // Step 3: Scraping — full mode only
+  // Step 2: News scraping — full mode only
   if (effectiveMode === "full") {
-    await callFunction("scrape-matches");
     await callFunction("scrape-news");
   }
 
