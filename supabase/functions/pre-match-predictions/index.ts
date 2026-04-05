@@ -134,7 +134,8 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        const ok = await callPredict(match.id);
+        // Use statistical refresh (free) — AI enrichment only for first prediction
+        const ok = await callStatisticalPredict(match.id);
         if (ok) {
           const intervals = pred?.prediction_intervals ?? [];
           const minutesLeft = Math.round(
