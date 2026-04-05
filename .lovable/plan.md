@@ -1,96 +1,105 @@
 
 
-# Optimize API-Football Request Usage
+# Smart Adaptive Request Strategy for API-Football
 
-## Problem
-The `sync-football-data` function makes **too many API calls per sync**, hitting the daily quota limit. Current worst case: ~500+ calls per sync cycle across 20 leagues.
+## Overview
 
-### Current Call Breakdown (per sync)
-- **2 calls** for live + today's fixtures
-- **40 calls** for fixtures (20 leagues × 2 date ranges: full season completed + upcoming)
-- **20 calls** for standings (every league, every sync)
-- **200 calls** for team statistics (20 leagues × 10 teams each)
-- **100 calls** for predictions (20 leagues × 5 fixtures)
-- **60 calls** for H2H (20 leagues × 3 fixtures)
-- **60 calls** for lineups (20 leagues × 3 fixtures)
-- **20 calls** for players (20 leagues × 1 page)
+Implement a match-phase-aware polling system that dynamically adjusts API request frequency based on how close each match is to kickoff and whether it's currently live. This replaces the current flat "quick vs full" approach with a granular, time-sensitive strategy.
 
-**Total: ~502 calls** per sync, exceeding the 400 limit regularly.
+## Current State
 
-## Key API Documentation Insights
+The system has two modes:
+- **quick** (budget: 80 calls): fetches live fixtures + today/yesterday scores + upcoming per league
+- **full** (budget: 250 calls): adds standings, team stats, H2H, predictions, players
 
-1. **`ids` parameter** (v3.9.2+): Fetch up to **20 fixtures in one call** with events, lineups, statistics, and players included. Massive saver.
-2. **`live` parameter accepts league filters**: `live=39-61-140` instead of `live=all` to get only our tracked leagues.
-3. **`next` / `last` parameters**: Fetch only the next N or last N fixtures per league/team — no need for full-season date range queries.
-4. **Recommended call frequencies** from docs:
-   - Standings: 1/hour when live, 1/day otherwise
-   - Fixtures: 1/minute when live, 1/day otherwise
-   - Team stats: updated every hour
+Both run on a fixed schedule regardless of match timing. There is no awareness of *when* matches start relative to the sync execution.
 
-## Optimization Plan
+## Architecture
 
-### 1. Replace full-season fixture fetch with `next` + `last` per league
-**Current**: 2 calls per league (from/to date ranges covering entire season) = 40 calls
-**New**: 1 call per league using `next=15` for upcoming = 20 calls
-Skip refetching completed fixtures — they don't change. Only fetch `last=5` for leagues with recent matches (to update final scores).
-**Savings: ~20 calls**
+```text
+┌─────────────────────────────────────────────────┐
+│              auto-sync orchestrator             │
+│  Runs every 10 min via cron                     │
+│  Determines effective mode per execution:       │
+│  - Are any matches LIVE? → "live" mode          │
+│  - Any within 1h? → "pre-match" mode            │
+│  - Otherwise → "idle" mode                      │
+│  Once daily at 06:00 UTC → "full" mode          │
+└──────────────────┬──────────────────────────────┘
+                   │
+        ┌──────────▼──────────┐
+        │ sync-football-data  │
+        │ Receives mode +     │
+        │ adapts budget &     │
+        │ fetch strategy      │
+        └─────────────────────┘
+```
 
-### 2. Use `ids` batching for lineups, H2H, and predictions
-**Current**: Individual calls per fixture (up to 60+100+60 = 220 calls)
-**New**: Group fixture IDs and fetch up to 20 per call using `ids=id1-id2-id3...` — this returns events, lineups, stats, and players in one response. For the ~15 upcoming fixtures needing lineups, that's 1 call instead of 15.
-**Savings: ~150+ calls**
+## Match Phases & Request Strategy
 
-### 3. Use league-filtered `live` parameter
-**Current**: `live=all` fetches every live fixture globally
-**New**: `live=39-140-135-78-61-88-89-40-2-3-848-748-1-32-34-33-5-4-9-10` fetches only tracked leagues
-**Savings**: Minimal call savings (still 1 call) but reduces data processing
-
-### 4. Throttle standings and team stats to daily
-**Current**: Standings and team stats fetched every sync for all leagues (~220 calls)
-**New**: 
-- Check `leagues.updated_at` — skip if updated within last 6 hours
-- Team stats: only fetch for leagues where matches were played today, max 5 teams per league
-- Store a `last_stats_sync` timestamp and skip if < 24h old
-**Savings: ~180 calls on most syncs**
-
-### 5. Skip players fetch during regular syncs
-**Current**: 20 calls for player data every sync
-**New**: Only fetch players once daily (check last sync timestamp)
-**Savings: ~20 calls on most syncs**
-
-### 6. Add per-minute rate limiting
-The API has a **per-minute** rate limit (not just daily). Add a check of `X-RateLimit-Remaining` header and throttle with longer delays when running low. Current 300ms delay is too aggressive when hitting limits.
-
-### 7. Prioritize calls with a budget system
-Split the sync into priority tiers:
-- **P0** (always): Live fixtures, today's fixtures (~2-3 calls)
-- **P1** (every sync): Upcoming fixtures for each league using `next=10` (~20 calls)
-- **P2** (every 6h): Standings (~20 calls)
-- **P3** (daily): Team stats, players, full H2H (~200 calls)
-- **P4** (on-demand): Predictions from API (replaced by our own AI predictions anyway)
+| Phase | Condition | API Behavior | Budget |
+|-------|-----------|-------------|--------|
+| IDLE | No matches within 2h, none live | Skip live fetch, only upcoming per league | 30 |
+| PRE_MATCH | Match within 1h | Fetch lineups, refresh context | 50 |
+| LIVE | Any match currently live | Aggressive live polling, events | 80 |
+| FULL | Daily comprehensive (06:00 UTC) | Standings, stats, players, H2H | 250 |
 
 ## File Changes
 
-### `supabase/functions/sync-football-data/index.ts`
-Complete rewrite of the sync logic:
-- Replace full-season date range queries with `next=10` / `last=5` per league
-- Use `live=39-140-135-...` with league IDs instead of `live=all`
-- Add timestamp-based skipping for standings (6h), team stats (24h), players (24h)
-- Use `ids` batching: collect all upcoming fixture IDs, then fetch in batches of 20
-- Add per-minute rate limit awareness from `X-RateLimit-Remaining` header
-- Lower `API_CALL_LIMIT` from 400 to 100 for regular syncs (budget system)
-- Add a `mode` parameter: `"full"` (daily comprehensive) vs `"quick"` (frequent live updates)
+### 1. `supabase/functions/auto-sync/index.ts`
 
-### `supabase/functions/auto-sync/index.ts`
-- Pass `mode: "quick"` for regular cron syncs
-- Add a separate daily schedule that passes `mode: "full"` for comprehensive data refresh
+Add smart mode detection before calling sync-football-data:
 
-## Expected Results
+- Query DB for matches starting within 1h (`upcoming` + `match_date` within next 60 min)
+- Query DB for any `live` / `1H` / `2H` / `HT` matches
+- Determine effective mode:
+  - If any live matches exist → `mode = "live"`
+  - Else if any matches within 1h → `mode = "pre_match"`
+  - Else → `mode = "idle"`
+- The daily full sync (via separate cron or time check) overrides to `mode = "full"`
+- Pass the detected mode to `sync-football-data`
+- In `idle` mode, skip calling `sync-sportradar-data` and `pre-match-predictions` to save resources
 
-| Metric | Before | After (quick) | After (full) |
-|--------|--------|---------------|--------------|
-| API calls per sync | ~500 | ~25-50 | ~200 |
-| Daily call budget (10 syncs/day) | ~5000 | ~250-500 | +200 |
-| Rate limit hits | Frequent | Rare | Rare |
-| Live score updates | Working | Working | Working |
+### 2. `supabase/functions/sync-football-data/index.ts`
+
+Extend the mode system from 2 modes to 4:
+
+**Budget allocation per mode:**
+- `idle`: budget=30 — P1 upcoming fixtures only (20 calls for leagues), skip live fetch
+- `pre_match`: budget=50 — P0 live (1 call) + P0 today (1-2 calls) + P1 upcoming (20 calls) + lineups for imminent matches (up to 5 calls)
+- `live`: budget=80 — same as current quick, with P0 live + today/yesterday + P1 upcoming + lineups
+- `full`: budget=250 — unchanged (standings, team stats, H2H, predictions, players)
+
+**Specific changes:**
+- Accept 4 mode values: `idle`, `pre_match`, `live`, `full`
+- In `idle` mode: skip the P0 live fixtures fetch entirely (no `/fixtures?live=...` call), skip today/yesterday fetch, only do P1 upcoming per league
+- In `pre_match` mode: expand lineup fetch window from 2h to include all matches within 1h, increase lineup cap from 5 to 10
+- In `live` mode: keep current behavior (P0 live + today + P1 upcoming)
+- Add a `last_synced_at` check: if the function was called less than 2 minutes ago in `idle` mode, return early with a cache response to prevent wasted executions
+
+### 3. Client-side polling (no changes needed)
+
+The existing client-side polling is already well-configured:
+- Live matches: 30s dashboard, 10s detail page, 5s for API fixture data
+- Upcoming: 5 min refresh
+- These are independent of the backend sync frequency
+
+## Cron Schedule
+
+Currently there should be a single cron job running auto-sync. The plan keeps this single entry point but makes it self-aware:
+
+- **Every 10 minutes**: auto-sync runs, auto-detects mode based on DB state
+- **Daily at 06:00 UTC**: auto-sync detects it's 06:00 and forces `full` mode
+- When matches are live, the 10-minute cron provides backend data freshness. The client-side polling via `useFixtureData.ts` (which calls the API proxy directly) handles sub-minute live score updates independently.
+
+## Expected Impact
+
+| Scenario | Before (calls/sync) | After (calls/sync) |
+|----------|---------------------|---------------------|
+| No matches today | ~27 (quick) | ~20 (idle) |
+| Match in 3 hours | ~27 (quick) | ~20 (idle) |
+| Match in 30 min | ~27 (quick) | ~30 (pre_match) |
+| Match live | ~27 (quick) | ~27 (live) |
+| Daily full sync | ~200 (full) | ~200 (full) |
+| Daily total (typical) | ~400-500 | ~250-350 |
 
