@@ -582,33 +582,38 @@ Deno.serve(async (req) => {
     }
 
     // ════════════════════════════════════════════
-    // P2: Lineups for matches starting within 2h (max 5 calls)
+    // P2: Lineups for imminent matches
+    // idle: skip entirely | pre_match: within 1h, up to 10 | live/full: within 2h, up to 5
     // ════════════════════════════════════════════
-    const twoHoursFromNow = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
-    const nowIso = new Date().toISOString();
-    const soonMatches = allUpcomingFixtures.filter((f: any) => {
-      const matchTime = new Date(f.fixture.date).toISOString();
-      return matchTime <= twoHoursFromNow && matchTime >= nowIso && mapStatus(f.fixture.status.short) === "upcoming";
-    }).slice(0, 5);
+    if (mode !== "idle") {
+      const lineupWindowMs = mode === "pre_match" ? 1 * 60 * 60 * 1000 : 2 * 60 * 60 * 1000;
+      const lineupCap = mode === "pre_match" ? 10 : 5;
+      const lineupCutoff = new Date(Date.now() + lineupWindowMs).toISOString();
+      const nowIso = new Date().toISOString();
+      const soonMatches = allUpcomingFixtures.filter((f: any) => {
+        const matchTime = new Date(f.fixture.date).toISOString();
+        return matchTime <= lineupCutoff && matchTime >= nowIso && mapStatus(f.fixture.status.short) === "upcoming";
+      }).slice(0, lineupCap);
 
-    for (const f of soonMatches) {
-      if (apiCallCount >= callBudget) break;
-      const matchId = matchUuidMap.get(f.fixture.id);
-      if (!matchId) continue;
-      try {
-        const lineups = await apiFetch(`/fixtures/lineups?fixture=${f.fixture.id}`, apiKey);
-        await delay(400);
-        if (lineups.length >= 2) {
-          await supabase.from("match_context").upsert({
-            match_id: matchId,
-            lineup_home: lineups[0]?.startXI ?? [],
-            lineup_away: lineups[1]?.startXI ?? [],
-            scraped_at: new Date().toISOString(),
-          }, { onConflict: "match_id" });
-          summary.lineups++;
+      for (const f of soonMatches) {
+        if (apiCallCount >= callBudget) break;
+        const matchId = matchUuidMap.get(f.fixture.id);
+        if (!matchId) continue;
+        try {
+          const lineups = await apiFetch(`/fixtures/lineups?fixture=${f.fixture.id}`, apiKey);
+          await delay(400);
+          if (lineups.length >= 2) {
+            await supabase.from("match_context").upsert({
+              match_id: matchId,
+              lineup_home: lineups[0]?.startXI ?? [],
+              lineup_away: lineups[1]?.startXI ?? [],
+              scraped_at: new Date().toISOString(),
+            }, { onConflict: "match_id" });
+            summary.lineups++;
+          }
+        } catch (e) {
+          console.error(`Lineups error for fixture ${f.fixture.id}:`, e);
         }
-      } catch (e) {
-        console.error(`Lineups error for fixture ${f.fixture.id}:`, e);
       }
     }
 
