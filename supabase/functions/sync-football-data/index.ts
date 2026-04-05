@@ -287,27 +287,49 @@ Deno.serve(async (req) => {
 
     // ════════════════════════════════════════════
     // P0: Today + yesterday's fixtures — catch recently completed (2 calls)
+    // Only update matches we track (have api_football_id in our DB)
     // ════════════════════════════════════════════
     const today = new Date().toISOString().slice(0, 10);
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const datesToSync = [today];
     if (yesterday !== today) datesToSync.push(yesterday);
 
+    // Get all api_football_ids we track for quick lookup
+    const { data: trackedMatches } = await supabase.from("matches")
+      .select("api_football_id")
+      .not("api_football_id", "is", null)
+      .gte("match_date", yesterday + "T00:00:00Z")
+      .lte("match_date", today + "T23:59:59Z");
+    const trackedIds = new Set((trackedMatches ?? []).map(m => m.api_football_id));
+
     for (const dateStr of datesToSync) {
       try {
         const fixtures = await apiFetch(`/fixtures?date=${dateStr}`, apiKey);
         await delay(500);
         if (fixtures.length > 0) {
-          console.log(`Found ${fixtures.length} fixtures for ${dateStr}`);
+          console.log(`Found ${fixtures.length} fixtures for ${dateStr}, tracking ${trackedIds.size} of ours`);
+          // Batch: collect updates for tracked fixtures only
+          const updates: { api_football_id: number; goals_home: number; goals_away: number; status: string }[] = [];
           for (const f of fixtures) {
+            if (!trackedIds.has(f.fixture.id)) continue;
             const status = mapStatus(f.fixture.status.short);
             if (status === "upcoming") continue;
+            updates.push({
+              api_football_id: f.fixture.id,
+              goals_home: f.goals.home,
+              goals_away: f.goals.away,
+              status,
+            });
+          }
+          // Apply updates in batch
+          for (const u of updates) {
             const { data: updated, error } = await supabase.from("matches")
-              .update({ goals_home: f.goals.home, goals_away: f.goals.away, status })
-              .eq("api_football_id", f.fixture.id)
+              .update({ goals_home: u.goals_home, goals_away: u.goals_away, status: u.status })
+              .eq("api_football_id", u.api_football_id)
               .select("id");
             if (!error && updated?.length) summary.liveUpdated++;
           }
+          console.log(`Updated ${updates.length} tracked fixtures for ${dateStr}`);
         }
       } catch (e) {
         console.error(`Error fetching fixtures for ${dateStr}:`, e);
