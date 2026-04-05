@@ -20,6 +20,7 @@ import { ArrowLeft, TrendingUp, Target, BarChart3 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLiveFixture } from "@/hooks/useFixtureData";
+import { deriveMatchPhase, isMatchLive as isPhaseLive } from "@/lib/match-status";
 
 export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
