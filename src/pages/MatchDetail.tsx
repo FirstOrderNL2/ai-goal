@@ -73,8 +73,11 @@ export default function MatchDetail() {
     }
   }, [match, id, prediction]);
 
-  const isLive = match?.status === "live" || match?.status === "1H" || match?.status === "2H" || match?.status === "HT" || match?.status === "ET";
-  const { data: liveFixture } = useLiveFixture(match?.api_football_id, match?.status);
+  const matchPhase = match ? deriveMatchPhase(match.status, match.match_date) : null;
+  const isLive = matchPhase ? isPhaseLive(matchPhase) : false;
+  // Pass derived status hint so useLiveFixture activates for transition_live too
+  const liveStatusHint = isLive ? "live" : match?.status;
+  const { data: liveFixture } = useLiveFixture(match?.api_football_id, liveStatusHint);
 
   // Compute estimated elapsed minutes from kickoff time
   const getEstimatedElapsed = () => {
