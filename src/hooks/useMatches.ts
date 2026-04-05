@@ -48,14 +48,7 @@ export function useLiveMatches(league?: string) {
       const { data: matches, error } = await query;
       if (error) throw error;
 
-      let filtered = matches as Match[];
-      if (!league || league === "all") {
-        filtered = filtered.filter(m =>
-          !API_FOOTBALL_LEAGUES.includes(m.league) || m.api_football_id != null
-        );
-      }
-
-      return enrichMatches(filtered);
+      return enrichMatches(matches as Match[]);
     },
   });
 }
