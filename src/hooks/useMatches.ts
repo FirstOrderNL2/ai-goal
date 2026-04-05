@@ -37,7 +37,7 @@ export function useLiveMatches(league?: string) {
       let query = supabase
         .from("matches")
         .select("*")
-        .in("status", ["live", "1H", "2H", "HT", "ET"])
+        .eq("status", "live")
         .order("match_date", { ascending: true })
         .limit(50);
 

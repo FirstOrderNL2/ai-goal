@@ -57,7 +57,21 @@ Deno.serve(async (req) => {
 
     if (immErr) errors.push(`imminent-check: ${immErr.message}`);
 
+    // Check for "stale upcoming" matches (should be live but weren't updated)
+    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const { data: staleUpcomingMatches, error: staleErr } = await supabase
+      .from("matches")
+      .select("id")
+      .eq("status", "upcoming")
+      .gte("match_date", threeHoursAgo)
+      .lte("match_date", nowIso)
+      .limit(1);
+
+    if (staleErr) errors.push(`stale-upcoming-check: ${staleErr.message}`);
+
     if (liveMatches && liveMatches.length > 0) {
+      effectiveMode = "live";
+    } else if (staleUpcomingMatches && staleUpcomingMatches.length > 0) {
       effectiveMode = "live";
     } else if (imminentMatches && imminentMatches.length > 0) {
       effectiveMode = "pre_match";
