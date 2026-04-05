@@ -1,9 +1,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Trophy, Target, BarChart3, Zap, ShieldCheck, TrendingUp, Loader2 } from "lucide-react";
+import { Trophy, Target, BarChart3, Zap, ShieldCheck, TrendingUp } from "lucide-react";
 import type { Prediction } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { ThinkingSteps } from "@/components/ThinkingSteps";
 
 interface AIVerdictCardProps {
   prediction: Prediction;
@@ -22,13 +23,7 @@ export function AIVerdictGenerating() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-col items-center justify-center py-8 gap-3">
-          <Loader2 className="h-8 w-8 text-primary animate-spin" />
-          <p className="text-sm font-semibold text-foreground">Generating prediction…</p>
-          <p className="text-xs text-muted-foreground text-center max-w-xs">
-            Our AI is analyzing form, stats, H2H, and market data. This usually takes 20–30 seconds.
-          </p>
-        </div>
+        <ThinkingSteps isActive={true} />
         <div className="grid grid-cols-3 gap-3">
           <Skeleton className="h-20 rounded-lg" />
           <Skeleton className="h-20 rounded-lg" />

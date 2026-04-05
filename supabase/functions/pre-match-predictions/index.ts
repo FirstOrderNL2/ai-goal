@@ -19,7 +19,25 @@ Deno.serve(async (req) => {
   const log: string[] = [];
   let totalProcessed = 0;
 
-  async function callPredict(matchId: string): Promise<boolean> {
+  // Call statistical prediction (AI-free, fast)
+  async function callStatisticalPredict(matchId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${supabaseUrl}/functions/v1/generate-statistical-prediction`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({ match_id: matchId }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  // Call full AI prediction (expensive, for enrichment)
+  async function callAIPredict(matchId: string): Promise<boolean> {
     try {
       const res = await fetch(`${supabaseUrl}/functions/v1/generate-ai-prediction`, {
         method: "POST",
@@ -54,14 +72,29 @@ Deno.serve(async (req) => {
       const existingMap = new Map((existing ?? []).map((p: any) => [p.match_id, p]));
       
       // Find matches with no prediction OR incomplete prediction (no ai_reasoning)
-      const needsPrediction = upcoming.filter((m: any) => {
+      const needsInitialPrediction = upcoming.filter((m: any) => {
         const pred = existingMap.get(m.id);
-        return !pred || !pred.ai_reasoning;
+        return !pred; // no prediction at all
       }).slice(0, 15);
 
-      for (const match of needsPrediction) {
-        const ok = await callPredict(match.id);
-        log.push(`phase-a: ${match.id} → ${ok ? "OK" : "FAIL"}`);
+      // Matches that have stats but no AI reasoning — enrich with AI
+      const needsAIEnrichment = upcoming.filter((m: any) => {
+        const pred = existingMap.get(m.id);
+        return pred && !pred.ai_reasoning;
+      }).slice(0, 5);
+
+      // Phase A1: Generate statistical predictions (fast, no AI cost)
+      for (const match of needsInitialPrediction) {
+        const ok = await callStatisticalPredict(match.id);
+        log.push(`phase-a-stats: ${match.id} → ${ok ? "OK" : "FAIL"}`);
+        if (ok) totalProcessed++;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+
+      // Phase A2: Enrich with AI reasoning (only for matches missing it)
+      for (const match of needsAIEnrichment) {
+        const ok = await callAIPredict(match.id);
+        log.push(`phase-a-ai: ${match.id} → ${ok ? "OK" : "FAIL"}`);
         if (ok) totalProcessed++;
         await new Promise((r) => setTimeout(r, 2000));
       }
@@ -101,7 +134,8 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        const ok = await callPredict(match.id);
+        // Use statistical refresh (free) — AI enrichment only for first prediction
+        const ok = await callStatisticalPredict(match.id);
         if (ok) {
           const intervals = pred?.prediction_intervals ?? [];
           const minutesLeft = Math.round(
@@ -184,7 +218,8 @@ Deno.serve(async (req) => {
             .eq("match_id", match.id);
         }
 
-        const ok = await callPredict(match.id);
+        // HT predictions use AI for full analysis since it's a key moment
+        const ok = await callAIPredict(match.id);
         if (ok) {
           intervals.push({ label: "HT", at: now.toISOString() });
           await supabase
