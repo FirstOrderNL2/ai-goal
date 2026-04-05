@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProbabilityBar } from "./ProbabilityBar";
+import { deriveMatchPhase, isMatchLive as isPhaseLive } from "@/lib/match-status";
 import type { Match } from "@/lib/types";
 import { TrendingUp, ArrowRight, RefreshCw } from "lucide-react";
 
