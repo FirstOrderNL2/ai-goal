@@ -204,7 +204,7 @@ export default function MatchDetail() {
         {/* 2. Live Score + Events (live matches only) */}
         <LiveMatchCard
           apiFootballId={match.api_football_id}
-          matchStatus={match.status}
+          matchStatus={liveStatusHint}
           homeTeamName={home_team?.name}
           awayTeamName={away_team?.name}
         />
