@@ -227,17 +227,21 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Parse mode from request body
-    let mode = "quick";
+    // Parse mode from request body — supports 4 modes: idle, pre_match, live, full
+    let mode = "live";
     try {
       const body = await req.json();
-      mode = body.mode ?? "quick";
-    } catch { /* no body = quick */ }
+      mode = body.mode ?? "live";
+    } catch { /* no body = live (backwards compat) */ }
 
-    // Reset counters
+    // Map legacy "quick" mode to "live"
+    if (mode === "quick") mode = "live";
+
+    // Reset counters with mode-specific budgets
     apiCallCount = 0;
     apiRemainingDaily = Infinity;
-    callBudget = mode === "full" ? 250 : 80;
+    const budgets: Record<string, number> = { idle: 30, pre_match: 50, live: 80, full: 250 };
+    callBudget = budgets[mode] ?? 80;
 
     console.log(`=== sync-football-data mode=${mode} budget=${callBudget} ===`);
 
