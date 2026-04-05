@@ -20,6 +20,7 @@ import { ArrowLeft, TrendingUp, Target, BarChart3 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLiveFixture } from "@/hooks/useFixtureData";
+import { deriveMatchPhase, isMatchLive as isPhaseLive } from "@/lib/match-status";
 
 export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
@@ -72,8 +73,11 @@ export default function MatchDetail() {
     }
   }, [match, id, prediction]);
 
-  const isLive = match?.status === "live" || match?.status === "1H" || match?.status === "2H" || match?.status === "HT" || match?.status === "ET";
-  const { data: liveFixture } = useLiveFixture(match?.api_football_id, match?.status);
+  const matchPhase = match ? deriveMatchPhase(match.status, match.match_date) : null;
+  const isLive = matchPhase ? isPhaseLive(matchPhase) : false;
+  // Pass derived status hint so useLiveFixture activates for transition_live too
+  const liveStatusHint = isLive ? "live" : match?.status;
+  const { data: liveFixture } = useLiveFixture(match?.api_football_id, liveStatusHint);
 
   // Compute estimated elapsed minutes from kickoff time
   const getEstimatedElapsed = () => {
@@ -112,7 +116,7 @@ export default function MatchDetail() {
   }
 
   const { odds } = match;
-  const isUpcoming = match.status === "upcoming";
+  const isUpcoming = matchPhase === "upcoming";
   const isMatchLive = isLive;
   const h2hResults = features?.h2h_results as any[] | null;
 
@@ -200,7 +204,7 @@ export default function MatchDetail() {
         {/* 2. Live Score + Events (live matches only) */}
         <LiveMatchCard
           apiFootballId={match.api_football_id}
-          matchStatus={match.status}
+          matchStatus={liveStatusHint}
           homeTeamName={home_team?.name}
           awayTeamName={away_team?.name}
         />

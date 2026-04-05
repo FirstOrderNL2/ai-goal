@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProbabilityBar } from "./ProbabilityBar";
+import { deriveMatchPhase, isMatchLive as isPhaseLive } from "@/lib/match-status";
 import type { Match } from "@/lib/types";
 import { TrendingUp, ArrowRight, RefreshCw } from "lucide-react";
 
@@ -66,10 +67,10 @@ function formatFreshness(prediction: Match["prediction"]): { label: string; isHT
   const lastAt = prediction.last_prediction_at;
   if (!lastAt) return null;
   const diffMin = Math.floor((Date.now() - new Date(lastAt).getTime()) / 60000);
-  if (diffMin < 1) return { label: "Updated just now", isHT: false };
-  if (diffMin < 60) return { label: `Updated ${diffMin}m ago`, isHT: false };
-  if (diffMin < 1440) return { label: `Updated ${Math.floor(diffMin / 60)}h ago`, isHT: false };
-  return { label: `Updated ${Math.floor(diffMin / 1440)}d ago`, isHT: false };
+  if (diffMin < 1) return { label: "Prediction updated just now", isHT: false };
+  if (diffMin < 60) return { label: `Prediction updated ${diffMin}m ago`, isHT: false };
+  if (diffMin < 1440) return { label: `Prediction updated ${Math.floor(diffMin / 60)}h ago`, isHT: false };
+  return { label: `Prediction updated ${Math.floor(diffMin / 1440)}d ago`, isHT: false };
 }
 
 function PredictionFreshness({ prediction }: { prediction: Match["prediction"] }) {
@@ -90,8 +91,9 @@ interface MatchCardProps {
 export function MatchCard({ match }: MatchCardProps) {
   const navigate = useNavigate();
   const { home_team, away_team, prediction, odds } = match;
-  const isUpcoming = match.status === "upcoming";
-  const isLive = match.status === "live" || match.status === "1H" || match.status === "2H" || match.status === "HT" || match.status === "ET";
+  const phase = deriveMatchPhase(match.status, match.match_date);
+  const isUpcoming = phase === "upcoming";
+  const isLive = isPhaseLive(phase);
   const roundLabel = formatRound(match.round);
   const liveMinute = useLiveMinute(match.match_date, match.status, isLive);
   return (

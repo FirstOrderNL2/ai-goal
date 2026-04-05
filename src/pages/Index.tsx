@@ -1,16 +1,43 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Header } from "@/components/Header";
 import { MatchCard } from "@/components/MatchCard";
 import { LeagueFilter } from "@/components/LeagueFilter";
-import { useUpcomingMatches, useCompletedMatches, useLiveMatches } from "@/hooks/useMatches";
+import { useDashboardMatches, useCompletedMatches } from "@/hooks/useMatches";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Activity, Clock } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+
+const HEAL_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes
 
 const Index = () => {
   const [league, setLeague] = useState("all");
-  const { data: live, isLoading: loadingLive } = useLiveMatches(league);
-  const { data: upcoming, isLoading: loadingUp } = useUpcomingMatches(league);
+  const queryClient = useQueryClient();
+  const lastHealRef = useRef(0);
+
+  const { data: dashboard, isLoading: loadingDash } = useDashboardMatches(league);
   const { data: completed, isLoading: loadingDone } = useCompletedMatches(league);
+
+  const live = dashboard?.live ?? [];
+  const upcoming = dashboard?.upcoming ?? [];
+  const transitionIds = dashboard?.transitionIds ?? [];
+
+  // Silent auto-heal: when transition_live matches detected, trigger backend sync
+  useEffect(() => {
+    if (transitionIds.length === 0) return;
+    const now = Date.now();
+    if (now - lastHealRef.current < HEAL_COOLDOWN_MS) return;
+    lastHealRef.current = now;
+
+    supabase.functions.invoke("auto-sync", { body: { mode: "live" } })
+      .then(() => {
+        // Invalidate after a short delay to let backend process
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ["matches"] });
+        }, 3000);
+      })
+      .catch(() => {/* silent */});
+  }, [transitionIds, queryClient]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -29,7 +56,7 @@ const Index = () => {
         <LeagueFilter selected={league} onChange={setLeague} />
 
         {/* Live Matches */}
-        {(loadingLive || (live && live.length > 0)) && (
+        {(loadingDash || live.length > 0) && (
           <section className="space-y-4">
             <div className="flex items-center gap-2">
               <span className="relative flex h-3 w-3">
@@ -37,11 +64,11 @@ const Index = () => {
                 <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
               </span>
               <h2 className="text-lg font-semibold">Live Matches</h2>
-              {live && (
+              {!loadingDash && (
                 <span className="text-xs text-muted-foreground">({live.length})</span>
               )}
             </div>
-            {loadingLive ? (
+            {loadingDash ? (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {Array.from({ length: 3 }).map((_, i) => (
                   <Skeleton key={i} className="h-56 rounded-lg" />
@@ -49,7 +76,7 @@ const Index = () => {
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {live!.map((m) => (
+                {live.map((m) => (
                   <MatchCard key={m.id} match={m} />
                 ))}
               </div>
@@ -62,17 +89,17 @@ const Index = () => {
           <div className="flex items-center gap-2">
             <Clock className="h-4 w-4 text-primary" />
             <h2 className="text-lg font-semibold">Upcoming Matches</h2>
-            {upcoming && (
+            {!loadingDash && upcoming && (
               <span className="text-xs text-muted-foreground">({upcoming.length})</span>
             )}
           </div>
-          {loadingUp ? (
+          {loadingDash ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton key={i} className="h-56 rounded-lg" />
               ))}
             </div>
-          ) : upcoming?.length ? (
+          ) : upcoming.length ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {upcoming.map((m) => (
                 <MatchCard key={m.id} match={m} />

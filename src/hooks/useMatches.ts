@@ -1,18 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { deriveMatchPhase, isMatchLive, type MatchPhase } from "@/lib/match-status";
 import type { Match, Team, Prediction, Odds, MatchFeatures, Player } from "@/lib/types";
 
-export function useUpcomingMatches(league?: string) {
+/**
+ * Single dashboard query: fetches upcoming + live + recently-started matches,
+ * then partitions them by derived phase so there's no dead zone.
+ */
+export function useDashboardMatches(league?: string) {
   return useQuery({
-    queryKey: ["matches", "upcoming", league],
-    refetchInterval: (query) => query.state.error ? false : 5 * 60 * 1000,
+    queryKey: ["matches", "dashboard", league],
+    refetchInterval: 30_000,
     queryFn: async () => {
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 
+      // Fetch all non-completed matches that could be live or upcoming
       let query = supabase
         .from("matches")
         .select("*")
-        .eq("status", "upcoming")
+        .in("status", ["upcoming", "live", "1H", "2H", "HT", "ET"])
         .gte("match_date", twoHoursAgo)
         .order("match_date", { ascending: true })
         .limit(200);
@@ -24,31 +30,24 @@ export function useUpcomingMatches(league?: string) {
       const { data: matches, error } = await query;
       if (error) throw error;
 
-      return enrichMatches(matches as Match[]);
-    },
-  });
-}
+      const enriched = await enrichMatches(matches as Match[]);
 
-export function useLiveMatches(league?: string) {
-  return useQuery({
-    queryKey: ["matches", "live", league],
-    refetchInterval: (query) => query.state.error ? false : 30_000,
-    queryFn: async () => {
-      let query = supabase
-        .from("matches")
-        .select("*")
-        .eq("status", "live")
-        .order("match_date", { ascending: true })
-        .limit(50);
+      // Partition by derived phase
+      const live: Match[] = [];
+      const upcoming: Match[] = [];
+      const transitionIds: string[] = [];
 
-      if (league && league !== "all") {
-        query = query.eq("league", league);
+      for (const m of enriched) {
+        const phase = deriveMatchPhase(m.status, m.match_date);
+        if (isMatchLive(phase)) {
+          live.push(m);
+          if (phase === "transition_live") transitionIds.push(m.id);
+        } else if (phase === "upcoming") {
+          upcoming.push(m);
+        }
       }
 
-      const { data: matches, error } = await query;
-      if (error) throw error;
-
-      return enrichMatches(matches as Match[]);
+      return { live, upcoming, transitionIds };
     },
   });
 }
@@ -95,8 +94,12 @@ export function useMatch(id: string) {
     },
     enabled: !!id,
     refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status && LIVE_STATUSES.includes(status) ? 10_000 : false;
+      const m = query.state.data;
+      if (!m) return false;
+      const phase = deriveMatchPhase(m.status, m.match_date);
+      // Poll aggressively for live and transition_live
+      if (isMatchLive(phase)) return 10_000;
+      return false;
     },
   });
 }
