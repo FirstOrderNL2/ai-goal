@@ -138,8 +138,8 @@ Deno.serve(async (req) => {
     log.push(`cleanup: marked ${staleUpcoming.length} stale matches as completed`);
   }
 
-  // Step 5: Compute features — full mode only
-  if (effectiveMode === "full") {
+  // Step 5: Compute features — full, pre_match, and live modes
+  if (effectiveMode === "full" || effectiveMode === "pre_match" || effectiveMode === "live") {
     await callFunction("compute-features");
   }
 

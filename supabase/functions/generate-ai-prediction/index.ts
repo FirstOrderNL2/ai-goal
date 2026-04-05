@@ -863,6 +863,15 @@ IMPORTANT:
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
     if (!lovableApiKey) throw new Error("LOVABLE_API_KEY not set");
 
+    // ── Step 0: Ensure statistical prediction exists first (AI-free base) ──
+    try {
+      await fetch(`${supabaseUrl}/functions/v1/generate-statistical-prediction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+        body: JSON.stringify({ match_id }),
+      });
+    } catch (_) { /* statistical prediction is best-effort */ }
+
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -870,12 +879,11 @@ IMPORTANT:
         Authorization: `Bearer ${lovableApiKey}`,
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
+        model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        reasoning: { effort: "high" },
         max_tokens: 5000,
         tools: [{
           type: "function",
