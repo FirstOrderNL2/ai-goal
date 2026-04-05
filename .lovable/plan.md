@@ -1,78 +1,113 @@
 
-# Fix kickoff-transition bugs across dashboard and match pages
 
-## What I found
-- The backend already has a stale-upcoming safeguard in `auto-sync`, but the UI still has its own kickoff bug.
-- `useUpcomingMatches()` deliberately includes fixtures from the last 2 hours, so a match can stay in the Upcoming section even after kickoff.
-- `useLiveMatches()` only shows rows already marked `status = 'live'`, so there is a gap until the backend sync catches up.
-- After removing the manual sync button, there is no client-side recovery path when kickoff happens before the next background update.
-- The same blind spot exists on the match detail page: live polling only starts after the DB row is already marked live.
-- The DB currently confirms this exact issue: `FC Volendam vs Feyenoord` and `Heerenveen vs Heracles` both have kickoff in the past but still `status = 'upcoming'`.
+# Improve AI Prediction System: Gap Analysis & Enhancement Plan
 
-## Plan
-### 1. Centralize match phase logic
-Create one shared helper for display state, based on:
-- normalized DB status
-- kickoff time
-- a short “transition live” window for matches that should have started already
+## Current State Assessment
 
-This helper will classify matches as:
-- `upcoming`
-- `transition_live`
-- `live`
-- `completed`
-- `cancelled`
+Your system already implements **most** of the blueprint's architecture. Here's a layer-by-layer comparison:
 
-### 2. Fix dashboard section partitioning
-Update the dashboard data flow so:
-- Upcoming only contains fixtures that are still in the future
-- Live includes both true `live` rows and `transition_live` rows
-- the same match cannot appear in both sections
+| Blueprint Layer | Status | Notes |
+|---|---|---|
+| Data Layer (API-Football) | **Done** | Fixtures, teams, stats, lineups, H2H, events all collected and stored |
+| Poisson Model | **Done** | Full implementation with league-specific averages, home/away split, score matrix |
+| Probability Engine | **Done** | Goal lines 0.5-4.5, BTTS, 1X2, goal distribution — all Poisson-based |
+| AI Explanation Layer | **Done** | 5-layer reasoning (Statistical, Feature, Context, Market, Contrarian) |
+| Self-Learning Loop | **Done** | model_performance table, Brier scores, calibration, feature weights, weak areas fed back into prompts |
+| Confidence System | **Done** | Blended from AI, data quality, model-market agreement, momentum |
+| Web Research | **Done** | Firecrawl for injuries, news, lineups |
+| Cost Optimization | **Partial** | Caching and pre-match refresh exist, but AI still generates core probabilities |
 
-I’d likely replace the current split logic with one shared dashboard match pipeline, or at minimum de-dupe and classify both hooks with the same helper.
+## Key Gaps to Fix
 
-### 3. Add silent auto-heal syncing
-When the dashboard detects any `transition_live` match:
-- quietly call the existing `auto-sync` orchestrator
-- throttle it with a cooldown
-- invalidate match queries on success
+### Gap 1: AI generates core probabilities (violates cost rule)
+Currently `generate-ai-prediction` asks the AI to produce `home_win`, `draw`, `away_win`, `expected_goals` — the blueprint says these should come purely from the statistical model. The AI should only adjust confidence and provide reasoning.
 
-This keeps the UI automatic without bringing back a visible sync button.
+**Fix**: Use Poisson outputs as the final probabilities. AI provides reasoning + a small confidence adjustment, not the numbers themselves.
 
-### 4. Fix the match detail page flow too
-Update detail-page logic so a just-started match behaves like live even before the DB status flips:
-- `useMatch()` should poll during the kickoff-transition window
-- `useLiveFixture()` / `useFixtureEvents()` should activate for `transition_live` matches too
-- the header/live widgets should use the shared derived phase instead of only raw DB status
+### Gap 2: No local prediction without AI
+`batch-generate-predictions` and `generate-ai-prediction` both call the AI gateway for every match. The blueprint calls for predictions to work without AI calls.
 
-### 5. Standardize status handling across components
-Clean up inconsistent UI checks like:
-- `FT`
-- `1H`
-- `2H`
-- `HT`
-- `ET`
+**Fix**: Create a `generate-statistical-prediction` edge function that runs the Poisson engine and stores predictions without any AI call. AI reasoning becomes an optional enrichment step.
 
-The DB mostly stores normalized statuses (`upcoming/live/completed/cancelled`), so list rendering should use normalized/derived status only. Raw API short codes should stay limited to live-detail display.
+### Gap 3: AI "Thinking Process" UI missing
+The blueprint calls for step-by-step animated progress showing each reasoning layer as it happens. Currently the UI shows a simple spinner ("Generating prediction... 20-30 seconds").
 
-### 6. Clarify the freshness label
-The card text currently says `Updated 49m ago`, but that is prediction freshness, not match-status freshness. I’d relabel it to `Prediction updated ...` so it doesn’t mislead users during live transitions.
+**Fix**: Add a thinking steps component that shows animated progress through the prediction pipeline stages.
 
-## Files to update
-- `src/hooks/useMatches.ts`
-- `src/pages/Index.tsx`
-- `src/hooks/useFixtureData.ts`
-- `src/pages/MatchDetail.tsx`
-- `src/components/MatchCard.tsx`
-- likely a new shared helper, e.g. `src/lib/match-status.ts`
-- possibly `src/hooks/useSync.ts` for the silent auto-heal hook
+### Gap 4: Batch predictions still use expensive model
+`batch-generate-predictions` uses `google/gemini-2.5-pro` with `reasoning: high` for every match. This is the most expensive option.
 
-## Backend/database impact
-- No schema change is required for the core fix.
-- I would keep the existing backend stale-upcoming logic and make the frontend actively cooperate with it instead of waiting passively.
+**Fix**: Use the statistical engine for batch predictions (no AI). Reserve AI calls for on-demand single-match enrichment only, using `gemini-2.5-flash` instead of Pro.
 
-## Expected result
-- A match like FC Volendam moves out of Upcoming as soon as kickoff passes.
-- It shows in Live immediately during the transition window, then becomes fully synced/live after the silent refresh.
-- No duplicate cards across Upcoming and Live.
-- Match detail pages also switch into live behavior at kickoff instead of waiting for the DB status to change.
+### Gap 5: Compute features not triggered often enough
+`compute-features` only runs during `full` mode (once daily at 06:00 UTC). New matches may not have features computed.
+
+**Fix**: Also run compute-features during `pre_match` mode for imminent matches.
+
+---
+
+## Implementation Plan
+
+### Step 1: Create statistical prediction function
+New edge function `generate-statistical-prediction` that:
+- Takes a match_id
+- Computes Poisson xG using league averages (reuses existing logic)
+- Calculates all probabilities, goal lines, BTTS, best pick
+- Stores to `predictions` table WITHOUT calling AI
+- Returns the prediction
+
+This is essentially extracting the Poisson logic already in `generate-ai-prediction` lines 51-142 into its own standalone function.
+
+### Step 2: Refactor batch predictions to be AI-free
+Update `batch-generate-predictions` to call `generate-statistical-prediction` instead of the AI gateway. This eliminates AI costs for batch processing entirely.
+
+### Step 3: Make AI enrichment optional and cheaper
+Update `generate-ai-prediction` to:
+- First run statistical prediction (or read existing)
+- Only call AI for reasoning/explanation — pass the already-computed probabilities as context
+- Switch from `gemini-2.5-pro` to `gemini-2.5-flash` (same quality for explanation, much cheaper)
+- AI output: reasoning text, confidence adjustment (+-5% max), anomaly flags
+- AI does NOT produce `home_win`, `draw`, `away_win` — those come from Poisson
+
+### Step 4: Run compute-features in pre_match mode
+Update `auto-sync` to call `compute-features` during `pre_match` and `live` modes too (not just `full`), ensuring fresh features for imminent matches.
+
+### Step 5: Add AI Thinking Process UI
+Create a `ThinkingSteps` component for the match detail page that shows animated progress:
+1. "Fetching match data..."
+2. "Analyzing team performance..."  
+3. "Computing expected goals (Poisson)..."
+4. "Calculating probabilities..."
+5. "Running market analysis..."
+6. "Generating AI insights..."
+7. "Finalizing prediction..."
+
+Each step transitions with a check mark animation. Steps 1-5 complete quickly (statistical), step 6 takes longer (AI call).
+
+### Step 6: Improve pre-match-predictions cost efficiency
+Update `pre-match-predictions` to only call AI when there's meaningful new data (confirmed lineups, significant odds movement). If nothing changed, just refresh the statistical model.
+
+## Files to Create/Modify
+
+| File | Action |
+|---|---|
+| `supabase/functions/generate-statistical-prediction/index.ts` | **Create** — standalone Poisson engine |
+| `supabase/functions/generate-ai-prediction/index.ts` | **Modify** — AI for reasoning only, use flash model |
+| `supabase/functions/batch-generate-predictions/index.ts` | **Modify** — call statistical engine instead of AI |
+| `supabase/functions/pre-match-predictions/index.ts` | **Modify** — conditional AI calls |
+| `supabase/functions/auto-sync/index.ts` | **Modify** — run compute-features in pre_match mode |
+| `src/components/ThinkingSteps.tsx` | **Create** — animated prediction pipeline UI |
+| `src/pages/MatchDetail.tsx` | **Modify** — integrate ThinkingSteps |
+| `src/components/AIVerdictCard.tsx` | **Modify** — replace spinner with ThinkingSteps |
+
+## Expected Cost Impact
+
+- Batch predictions: **100% reduction** (no AI calls)
+- Pre-match refreshes: **~70% reduction** (AI only when new data)
+- On-demand predictions: **~60% reduction** (flash instead of pro, reasoning only)
+- Overall: **~80-90% reduction** in AI gateway costs
+
+## No Database Changes Required
+
+All existing tables support this architecture. The `predictions` table already stores all necessary fields.
+
