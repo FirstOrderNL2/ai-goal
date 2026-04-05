@@ -62,19 +62,33 @@ Deno.serve(async (req) => {
     await callFunction("scrape-news");
   }
 
-  // Step 4: Mark stale "upcoming" matches as completed (3h buffer)
+  // Step 4: Mark stale "upcoming" and "live" matches as completed (3h buffer)
   const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-  const { data: stale, error: staleErr } = await supabase
+  const { data: staleUpcoming, error: staleUpErr } = await supabase
     .from("matches")
     .update({ status: "completed" })
     .eq("status", "upcoming")
     .lt("match_date", cutoff)
     .select("id");
 
-  if (staleErr) {
-    errors.push(`cleanup: ${staleErr.message}`);
-  } else if (stale && stale.length > 0) {
-    log.push(`cleanup: marked ${stale.length} stale matches as completed`);
+  if (staleUpErr) {
+    errors.push(`cleanup-upcoming: ${staleUpErr.message}`);
+  } else if (staleUpcoming?.length) {
+    log.push(`cleanup: marked ${staleUpcoming.length} stale upcoming as completed`);
+  }
+
+  // Also mark stale "live" matches — any match live for 3h+ is definitely finished
+  const { data: staleLive, error: staleLiveErr } = await supabase
+    .from("matches")
+    .update({ status: "completed" })
+    .eq("status", "live")
+    .lt("match_date", cutoff)
+    .select("id");
+
+  if (staleLiveErr) {
+    errors.push(`cleanup-live: ${staleLiveErr.message}`);
+  } else if (staleLive?.length) {
+    log.push(`cleanup: marked ${staleLive.length} stale live matches as completed`);
   }
 
   // Step 5: Compute AI-ready features (full mode only)
