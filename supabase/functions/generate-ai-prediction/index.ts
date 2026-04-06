@@ -847,12 +847,13 @@ ${learningBlock}
 
 IMPORTANT: 
 1. Your reasoning must cite SPECIFIC numbers from the data above. Every claim must reference a stat.
-2. Apply the FEATURE WEIGHTS and REASONING LAYERS specified in your instructions.
-3. Note any disagreement with market odds and explain why.
-4. Ensure predicted score is CONSISTENT with BTTS and Over/Under verdicts.
+2. You do NOT set probabilities (home_win/draw/away_win/xG) — those are from the Poisson model above.
+3. You provide: reasoning, predicted_score, btts, confidence_adjustment, highlight_key_factors, live_data_sources, contrarian_note.
+4. Ensure predicted score is CONSISTENT with BTTS verdict.
 5. Flag any anomalies or data gaps in the anomalies field.
-6. Before finalizing, do a CONTRARIAN CHECK: state 1-2 reasons your prediction could be wrong.
-7. Use WEIGHTED recent averages (not just raw averages) to capture current form trajectory.`;
+6. Before finalizing, do a CONTRARIAN CHECK: state 1-2 reasons the prediction could be wrong.
+7. List ALL sources you referenced (form data, H2H, news, injury reports) in live_data_sources.
+8. List the 3-5 most impactful factors in highlight_key_factors.`;
 
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
     if (!lovableApiKey) throw new Error("LOVABLE_API_KEY not set");
