@@ -173,7 +173,7 @@ async function scrapeWithFirecrawl(url: string, firecrawlKey: string): Promise<s
     }
     const data = await res.json();
     const md = data.data?.markdown || data.markdown || "";
-    return md.slice(0, 4000);
+    return md.slice(0, 6000);
   } catch (e) {
     console.error(`Firecrawl fetch failed for ${url}:`, e);
     return "";
