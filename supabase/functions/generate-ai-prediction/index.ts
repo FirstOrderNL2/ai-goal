@@ -944,28 +944,53 @@ IMPORTANT:
 
     const pred = JSON.parse(toolCall.function.arguments);
 
-    // Validation
+    // ── Fetch existing statistical prediction as source of truth ──
+    const { data: statPred } = await supabase
+      .from("predictions")
+      .select("*")
+      .eq("match_id", match_id)
+      .maybeSingle();
+
+    // Use Poisson statistical values as the final probabilities
+    const hw = statPred?.home_win ?? statsAnchors.poisson_home_win ?? 0.4;
+    const dr = statPred?.draw ?? statsAnchors.poisson_draw ?? 0.3;
+    const aw = statPred?.away_win ?? statsAnchors.poisson_away_win ?? 0.3;
+    const lambdaH = statPred?.expected_goals_home ?? statsAnchors.poisson_xg_home ?? 1.2;
+    const lambdaA = statPred?.expected_goals_away ?? statsAnchors.poisson_xg_away ?? 1.0;
+
+    // Use statistical goal lines and distribution if available, else recompute from Poisson lambdas
+    const goalLines = (statPred?.goal_lines as Record<string, number>) ?? computeGoalLines(lambdaH, lambdaA);
+    const goalDist = (statPred?.goal_distribution as Record<string, number>) ?? computeGoalDistribution(lambdaH, lambdaA);
+
+    // Validation — only for predicted score consistency
     const warnings = validatePrediction(pred);
     if (warnings.length > 0) {
       console.warn("Prediction validation warnings:", warnings);
       const totalScore = (pred.predicted_score_home ?? 0) + (pred.predicted_score_away ?? 0);
-      pred.over_under_25 = totalScore > 2 ? "over" : "under";
       pred.btts = (pred.predicted_score_home > 0 && pred.predicted_score_away > 0) ? "yes" : "no";
     }
 
-    // Normalize probabilities
-    const total = (pred.home_win || 0) + (pred.draw || 0) + (pred.away_win || 0);
-    const hw = total > 0 ? pred.home_win / total : 0.4;
-    const dr = total > 0 ? pred.draw / total : 0.3;
-    const aw = total > 0 ? pred.away_win / total : 0.3;
-
-    // Build structured reasoning text with contrarian check and anomalies
+    // Build structured reasoning text
     const anomaliesStr = (pred.anomalies && pred.anomalies.length > 0)
       ? `\n\n⚠️ ANOMALIES & DATA NOTES:\n${pred.anomalies.map((a: string) => `• ${a}`).join("\n")}`
       : "";
 
     const contrarianStr = pred.contrarian_check
       ? `\n\n🔄 CONTRARIAN CHECK:\n${pred.contrarian_check}`
+      : "";
+
+    const contrarianNoteStr = pred.contrarian_note
+      ? `\n\n💡 CONTRARIAN NOTE:\n${pred.contrarian_note}`
+      : "";
+
+    // Format highlight key factors
+    const keyFactorsStr = (pred.highlight_key_factors && pred.highlight_key_factors.length > 0)
+      ? `\n\n🎯 KEY FACTORS:\n${pred.highlight_key_factors.map((f: string) => `• ${f}`).join("\n")}`
+      : "";
+
+    // Format live data sources
+    const liveSourcesStr = (pred.live_data_sources && pred.live_data_sources.length > 0)
+      ? `\n\n📡 LIVE DATA SOURCES:\n${pred.live_data_sources.map((s: string) => `• ${s}`).join("\n")}`
       : "";
 
     const reasoning = [
@@ -975,20 +1000,21 @@ IMPORTANT:
       `⚽ BTTS (${(pred.btts || "no").toUpperCase()}):`,
       pred.btts_reasoning || "",
       ``,
-      `📊 OVER/UNDER 2.5 (${(pred.over_under_25 || "under").toUpperCase()}):`,
+      `📊 OVER/UNDER 2.5 (${goalLines.over_2_5 > 0.5 ? "OVER" : "UNDER"}):`,
       pred.over_under_reasoning || "",
       ``,
       `🔑 KEY FACTORS:`,
       pred.key_factors || "",
       contrarianStr,
+      contrarianNoteStr,
+      keyFactorsStr,
+      liveSourcesStr,
       anomaliesStr,
     ].join("\n");
 
-    // Smarter confidence scoring
-    const aiConfidence = pred.confidence || 0.5;
+    // New confidence blend: 50% data quality, 30% model-market agreement, 20% prediction certainty
     let modelMarketAgreement = 0.5;
     if (statsAnchors.implied_home_win != null && statsAnchors.poisson_home_win != null) {
-      // If Poisson and market agree, boost confidence
       const maxPoissonDelta = Math.max(
         Math.abs(statsAnchors.poisson_home_win - statsAnchors.implied_home_win),
         Math.abs(statsAnchors.poisson_draw - statsAnchors.implied_draw),
@@ -996,23 +1022,25 @@ IMPORTANT:
       );
       modelMarketAgreement = maxPoissonDelta < 0.05 ? 1.0 : maxPoissonDelta < 0.10 ? 0.8 : maxPoissonDelta < 0.15 ? 0.6 : 0.4;
     }
-    const blendedConfidence = Math.round((
-      (aiConfidence * 0.45) +
-      (dataQuality * 0.30) +
-      (modelMarketAgreement * 0.15) +
-      (homeMomentum.momentum !== "neutral" || awayMomentum.momentum !== "neutral" ? 0.1 : 0.05)
-    ) * 1000) / 1000;
 
-    // Compute multi-goal-line probabilities
-    const lambdaH = pred.expected_goals_home || 1.2;
-    const lambdaA = pred.expected_goals_away || 1.0;
-    const goalLines = computeGoalLines(lambdaH, lambdaA);
-    const goalDist = computeGoalDistribution(lambdaH, lambdaA);
+    // Prediction certainty: how decisive is the max probability
+    const maxProb = Math.max(hw, dr, aw);
+    const predictionCertainty = maxProb >= 0.55 ? 0.9 : maxProb >= 0.45 ? 0.7 : maxProb >= 0.38 ? 0.5 : 0.3;
 
-    // Enhanced best pick with value detection across all markets
+    let blendedConfidence = (
+      (dataQuality * 0.50) +
+      (modelMarketAgreement * 0.30) +
+      (predictionCertainty * 0.20)
+    );
+
+    // Apply AI confidence adjustment (clamped to -0.10 to +0.10)
+    const confAdj = Math.max(-0.10, Math.min(0.10, pred.confidence_adjustment || 0));
+    blendedConfidence = Math.round(Math.max(0.05, Math.min(0.95, blendedConfidence + confAdj)) * 1000) / 1000;
+
+    // Enhanced best pick with value detection
     const bestPickResult = findBestPick(
       goalLines,
-      statsAnchors.poisson_home_win ?? hw, statsAnchors.poisson_draw ?? dr, statsAnchors.poisson_away_win ?? aw,
+      hw, dr, aw,
       statsAnchors.implied_home_win ?? null, statsAnchors.implied_draw ?? null, statsAnchors.implied_away_win ?? null,
       statsAnchors.poisson_btts ?? null
     );
