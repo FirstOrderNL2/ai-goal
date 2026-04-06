@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Brain, Sparkles, ClipboardCheck } from "lucide-react";
+import { Brain, Sparkles, ClipboardCheck, ExternalLink, Zap } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,27 @@ function ScoreBadge({ score }: { score: number }) {
       {score}/100
     </span>
   );
+}
+
+function parseInsightsSections(text: string) {
+  const liveSourcesMatch = text.match(/📡 LIVE DATA SOURCES:\n([\s\S]*?)(?=\n\n|$)/);
+  const keyFactorsMatch = text.match(/🎯 KEY FACTORS:\n([\s\S]*?)(?=\n\n|$)/);
+
+  const liveSources = liveSourcesMatch
+    ? liveSourcesMatch[1].split("\n").map(s => s.replace(/^[•\-]\s*/, "").trim()).filter(Boolean)
+    : [];
+
+  const keyFactors = keyFactorsMatch
+    ? keyFactorsMatch[1].split("\n").map(s => s.replace(/^[•\-]\s*/, "").trim()).filter(Boolean)
+    : [];
+
+  // Remove the parsed sections from the main text for cleaner display
+  let cleanText = text
+    .replace(/\n\n📡 LIVE DATA SOURCES:\n[\s\S]*?(?=\n\n|$)/, "")
+    .replace(/\n\n🎯 KEY FACTORS:\n[\s\S]*?(?=\n\n|$)/, "")
+    .trim();
+
+  return { cleanText, liveSources, keyFactors };
 }
 
 export function AIInsightsCard({
@@ -85,6 +106,8 @@ export function AIInsightsCard({
   const score = accuracyScore ?? reviewMutation.data?.accuracy_score ?? null;
   const isCompleted = matchStatus === "completed";
 
+  const parsed = insights ? parseInsightsSections(insights) : null;
+
   return (
     <Card className="border-border/50">
       {/* Pre-match prediction section */}
@@ -117,8 +140,49 @@ export function AIInsightsCard({
         ) : (
           <>
             <div className="text-sm leading-relaxed whitespace-pre-line text-muted-foreground">
-              {insights}
+              {parsed?.cleanText || insights}
             </div>
+
+            {/* Key Factors badges */}
+            {parsed && parsed.keyFactors.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                  <Zap className="h-3 w-3 text-primary" />
+                  Key Factors
+                </h4>
+                <div className="flex flex-wrap gap-1.5">
+                  {parsed.keyFactors.map((factor, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex items-center px-2 py-1 rounded-md text-xs bg-primary/10 text-primary border border-primary/20"
+                    >
+                      {factor}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Live Data Sources */}
+            {parsed && parsed.liveSources.length > 0 && (
+              <div className="space-y-1.5">
+                <h4 className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                  <ExternalLink className="h-3 w-3" />
+                  Sources Referenced
+                </h4>
+                <div className="flex flex-wrap gap-1">
+                  {parsed.liveSources.map((source, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-muted text-muted-foreground"
+                    >
+                      {source}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <Button
               onClick={() => generateMutation.mutate()}
               variant="ghost"

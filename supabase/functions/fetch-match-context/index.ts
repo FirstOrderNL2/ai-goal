@@ -173,7 +173,7 @@ async function scrapeWithFirecrawl(url: string, firecrawlKey: string): Promise<s
     }
     const data = await res.json();
     const md = data.data?.markdown || data.markdown || "";
-    return md.slice(0, 4000);
+    return md.slice(0, 6000);
   } catch (e) {
     console.error(`Firecrawl fetch failed for ${url}:`, e);
     return "";
@@ -188,6 +188,7 @@ async function scrapeFirecrawlContext(
   const searchQueries = [
     `${homeName} ${awayName} opstelling blessures`,
     `${homeName} ${awayName} lineup injuries team news`,
+    `${homeName} OR ${awayName} press conference team news today`,
   ];
 
   for (const query of searchQueries) {
@@ -200,7 +201,7 @@ async function scrapeFirecrawlContext(
         },
         body: JSON.stringify({
           query,
-          limit: 3,
+          limit: 4,
           tbs: "qdr:w",
           scrapeOptions: { formats: ["markdown"] },
         }),
@@ -210,7 +211,7 @@ async function scrapeFirecrawlContext(
         const results = data.data || [];
         for (const r of results) {
           if (r.markdown) {
-            parts.push(`[SOURCE: ${r.url || "web"}]\n${r.markdown.slice(0, 2000)}`);
+            parts.push(`[SOURCE: ${r.url || "web"}]\n${r.markdown.slice(0, 2500)}`);
           }
         }
       }

@@ -66,18 +66,18 @@ Deno.serve(async (req) => {
       const ids = upcoming.map((m: any) => m.id);
       const { data: existing } = await supabase
         .from("predictions")
-        .select("match_id, ai_reasoning")
+        .select("match_id, ai_reasoning, last_prediction_at")
         .in("match_id", ids);
 
       const existingMap = new Map((existing ?? []).map((p: any) => [p.match_id, p]));
-      
-      // Find matches with no prediction OR incomplete prediction (no ai_reasoning)
+
+      // Find matches with no prediction at all
       const needsInitialPrediction = upcoming.filter((m: any) => {
         const pred = existingMap.get(m.id);
-        return !pred; // no prediction at all
+        return !pred;
       }).slice(0, 15);
 
-      // Matches that have stats but no AI reasoning — enrich with AI
+      // Matches that have stats but no AI reasoning — enrich with AI only if new context exists
       const needsAIEnrichment = upcoming.filter((m: any) => {
         const pred = existingMap.get(m.id);
         return pred && !pred.ai_reasoning;
@@ -91,12 +91,33 @@ Deno.serve(async (req) => {
         await new Promise((r) => setTimeout(r, 500));
       }
 
-      // Phase A2: Enrich with AI reasoning (only for matches missing it)
-      for (const match of needsAIEnrichment) {
-        const ok = await callAIPredict(match.id);
-        log.push(`phase-a-ai: ${match.id} → ${ok ? "OK" : "FAIL"}`);
-        if (ok) totalProcessed++;
-        await new Promise((r) => setTimeout(r, 2000));
+      // Phase A2: Conditional AI enrichment — only when new context exists
+      if (needsAIEnrichment.length > 0) {
+        const enrichIds = needsAIEnrichment.map((m: any) => m.id);
+        const { data: contextRows } = await supabase
+          .from("match_context")
+          .select("match_id, scraped_at, lineup_home")
+          .in("match_id", enrichIds);
+
+        const contextMap = new Map((contextRows ?? []).map((c: any) => [c.match_id, c]));
+
+        for (const match of needsAIEnrichment) {
+          const pred = existingMap.get(match.id);
+          const ctx = contextMap.get(match.id);
+
+          // Only call AI if: context is newer than last prediction, OR lineups confirmed
+          const hasNewContext = ctx?.scraped_at && (!pred?.last_prediction_at || ctx.scraped_at > pred.last_prediction_at);
+          const hasLineups = ctx?.lineup_home && (Array.isArray(ctx.lineup_home) ? ctx.lineup_home.length > 0 : true);
+
+          if (hasNewContext || hasLineups) {
+            const ok = await callAIPredict(match.id);
+            log.push(`phase-a-ai: ${match.id} → ${ok ? "OK" : "FAIL"} (new_context=${!!hasNewContext}, lineups=${!!hasLineups})`);
+            if (ok) totalProcessed++;
+            await new Promise((r) => setTimeout(r, 2000));
+          } else {
+            log.push(`phase-a-ai: ${match.id} → SKIPPED (no new context)`);
+          }
+        }
       }
     }
   }

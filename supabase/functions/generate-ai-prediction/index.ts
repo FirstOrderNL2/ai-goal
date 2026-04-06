@@ -787,37 +787,31 @@ Exact score hits: ${mp.exact_score_hits}/${mp.total_matches}`;
       importanceBlock = `\nMATCH IMPORTANCE: ${importance.level} — ${importance.description}`;
     }
 
-    const systemPrompt = `You are a world-class football analyst and prediction engine with access to comprehensive statistical data. Your job is to analyze match data and produce ACCURATE, FACT-BASED predictions using multi-layer reasoning.
+    const systemPrompt = `You are a world-class football analyst providing REASONING and CONTEXT for match predictions. The statistical probabilities (1X2, xG, Over/Under lines) are computed by a deterministic Poisson model and CANNOT be changed by you. Your job is to EXPLAIN why those probabilities make sense (or flag when they might be off), provide contextual insights, and suggest small confidence adjustments.
 
 ${weightBlock}
 
 REASONING LAYERS (apply in order):
-LAYER 1 — STATISTICAL MODEL: Start from the Poisson distribution probabilities as your mathematical anchor. Only deviate with clear justification.
-LAYER 2 — FEATURE ANALYSIS: Apply weighted form, stats, H2H, and positional data. Use WEIGHTED RECENT averages (exponential decay) to emphasize recent performance over older results.
-LAYER 3 — CONTEXTUAL: Adjust for injuries, suspensions, confirmed lineups (or lack thereof), weather, match importance, and momentum.
-LAYER 4 — MARKET INTELLIGENCE: Compare your model output with market implied probabilities. Note disagreements >5% and explain why you believe the market is wrong (or right).
-LAYER 5 — CONTRARIAN CHECK: Before finalizing, argue AGAINST your own prediction. List 1-2 reasons it could be wrong. If you can't find strong counter-arguments, that increases confidence.
+LAYER 1 — ACKNOWLEDGE STATISTICAL MODEL: Reference the Poisson probabilities provided. Do NOT generate your own probability numbers.
+LAYER 2 — FEATURE ANALYSIS: Apply weighted form, stats, H2H, and positional data to explain the statistical output.
+LAYER 3 — CONTEXTUAL: Adjust reasoning for injuries, suspensions, confirmed lineups, weather, match importance, and momentum.
+LAYER 4 — MARKET INTELLIGENCE: Compare Poisson output with market implied probabilities. Note disagreements >5% and explain.
+LAYER 5 — CONTRARIAN CHECK: Argue AGAINST the statistical prediction. List 1-2 reasons it could be wrong.
 
 CRITICAL RULES:
-1. Every prediction MUST be justified with specific statistics from the data provided
-2. Use the STATISTICAL MODEL (Poisson) probabilities as your mathematical anchor — deviate only with clear justification
-3. Compare your prediction against MARKET IMPLIED PROBABILITIES — note where you agree and disagree
+1. You do NOT set home_win, draw, away_win, or expected_goals — those come from the statistical engine
+2. You provide reasoning, predicted scoreline, BTTS verdict, and a small confidence_adjustment (-0.10 to +0.10)
+3. Every claim MUST reference specific statistics from the data provided
 4. Predicted scoreline must be derived from actual goal-scoring averages (use WEIGHTED recent averages)
 5. BTTS must be justified by both teams' scoring/conceding rates
-6. Over/Under must reference combined goal averages and Poisson probability
-7. Winner prediction must cite form, H2H, home advantage, and key absences
-8. Use injuries/suspensions/lineup data and SQUAD INFORMATION to adjust predictions
-9. When CONFIRMED LINEUPS are available, assess starting XI quality vs bench strength. Flag if key players are benched or missing.
-10. Be honest about uncertainty — lower confidence when data is sparse
-11. Your predicted score MUST be consistent with your BTTS and Over/Under verdicts
-12. Flag ANOMALIES: when your prediction significantly disagrees with market odds, or when data is insufficient
-13. Consider SEASON STATISTICS (wins/draws/losses record, home/away split) when available
-14. AVOID defaulting to draws — draws should only be predicted when statistical evidence strongly supports it (tight H2H, similar form, defensive teams)
-15. Consider MOMENTUM: teams on winning/losing streaks behave differently than their averages suggest
-16. For HIGH-STAKES matches (finals, knockout rounds), expect more conservative, lower-scoring games
+6. List which live data sources you referenced in live_data_sources
+7. List the most impactful factors in highlight_key_factors
+8. If your analysis suggests the statistical model is significantly wrong, explain why in contrarian_note
+9. AVOID defaulting to draws — only predict draw when evidence strongly supports it
+10. Be honest about uncertainty — use confidence_adjustment to lower confidence when data is sparse
 
-DATA QUALITY NOTE: This prediction has a data quality score of ${Math.round(dataQuality * 100)}%. ${dataQuality < 0.5 ? "Data is limited — be more conservative and express higher uncertainty." : dataQuality < 0.7 ? "Moderate data coverage — reasonable confidence possible but flag gaps." : "Good data coverage — you can be more decisive."}
-${!hasConfirmedLineups ? "⚠️ NO CONFIRMED LINEUPS AVAILABLE — reduce confidence by 5-10% as lineup changes can significantly impact predictions." : "✅ Confirmed lineups available — factor starting XI quality into your analysis."}
+DATA QUALITY NOTE: This prediction has a data quality score of ${Math.round(dataQuality * 100)}%. ${dataQuality < 0.5 ? "Data is limited — suggest negative confidence_adjustment." : dataQuality < 0.7 ? "Moderate data coverage." : "Good data coverage."}
+${!hasConfirmedLineups ? "⚠️ NO CONFIRMED LINEUPS — suggest confidence_adjustment of -0.05 to -0.10." : "✅ Confirmed lineups available."}
 
 You must call the predict_match tool with your structured analysis.`;
 
@@ -853,12 +847,13 @@ ${learningBlock}
 
 IMPORTANT: 
 1. Your reasoning must cite SPECIFIC numbers from the data above. Every claim must reference a stat.
-2. Apply the FEATURE WEIGHTS and REASONING LAYERS specified in your instructions.
-3. Note any disagreement with market odds and explain why.
-4. Ensure predicted score is CONSISTENT with BTTS and Over/Under verdicts.
+2. You do NOT set probabilities (home_win/draw/away_win/xG) — those are from the Poisson model above.
+3. You provide: reasoning, predicted_score, btts, confidence_adjustment, highlight_key_factors, live_data_sources, contrarian_note.
+4. Ensure predicted score is CONSISTENT with BTTS verdict.
 5. Flag any anomalies or data gaps in the anomalies field.
-6. Before finalizing, do a CONTRARIAN CHECK: state 1-2 reasons your prediction could be wrong.
-7. Use WEIGHTED recent averages (not just raw averages) to capture current form trajectory.`;
+6. Before finalizing, do a CONTRARIAN CHECK: state 1-2 reasons the prediction could be wrong.
+7. List ALL sources you referenced (form data, H2H, news, injury reports) in live_data_sources.
+8. List the 3-5 most impactful factors in highlight_key_factors.`;
 
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
     if (!lovableApiKey) throw new Error("LOVABLE_API_KEY not set");
@@ -893,28 +888,24 @@ IMPORTANT:
             parameters: {
               type: "object",
               properties: {
-                home_win: { type: "number", description: "Home win probability 0-1" },
-                draw: { type: "number", description: "Draw probability 0-1" },
-                away_win: { type: "number", description: "Away win probability 0-1" },
-                expected_goals_home: { type: "number", description: "Expected goals home (e.g. 1.4)" },
-                expected_goals_away: { type: "number", description: "Expected goals away (e.g. 1.1)" },
                 predicted_score_home: { type: "integer", description: "Predicted exact goals for home team" },
                 predicted_score_away: { type: "integer", description: "Predicted exact goals for away team" },
-                over_under_25: { type: "string", enum: ["over", "under"], description: "Over or under 2.5 total goals" },
                 btts: { type: "string", enum: ["yes", "no"], description: "Both teams to score" },
-                confidence: { type: "number", description: "Confidence 0-1 based on data quality and model agreement" },
-                winner_reasoning: { type: "string", description: "3-4 bullet points citing specific stats for why this team wins/draws. Reference Poisson probabilities, form, H2H, and momentum. Include how weighted recent form differs from overall averages." },
-                btts_reasoning: { type: "string", description: "2 bullet points with specific scoring/conceding rates justifying BTTS verdict. Reference Poisson BTTS probability and clean sheet rates." },
-                over_under_reasoning: { type: "string", description: "2 bullet points with combined goal averages, Poisson Over 2.5 probability, and H2H goal averages justifying verdict." },
-                key_factors: { type: "string", description: "3-4 bullet points about injuries, suspensions, tactical factors, match importance, momentum, lineup quality, and market value disagreements." },
-                contrarian_check: { type: "string", description: "1-2 bullet points arguing AGAINST your prediction. What could go wrong? What are you potentially missing?" },
-                anomalies: { type: "array", items: { type: "string" }, description: "List of anomalies: data gaps, prediction-vs-odds conflicts >5%, momentum-vs-stats conflicts, or insufficient data warnings. Empty array if none." },
+                confidence_adjustment: { type: "number", description: "Small adjustment to model confidence, between -0.10 and +0.10. Positive if context supports the stats, negative if injuries/context weaken confidence." },
+                winner_reasoning: { type: "string", description: "3-4 bullet points citing specific stats for why this team wins/draws. Reference Poisson probabilities, form, H2H, and momentum." },
+                btts_reasoning: { type: "string", description: "2 bullet points with specific scoring/conceding rates justifying BTTS verdict." },
+                over_under_reasoning: { type: "string", description: "2 bullet points with combined goal averages, Poisson Over 2.5 probability justifying verdict." },
+                key_factors: { type: "string", description: "3-4 bullet points about injuries, suspensions, tactical factors, match importance, momentum, lineup quality." },
+                contrarian_check: { type: "string", description: "1-2 bullet points arguing AGAINST the statistical prediction." },
+                contrarian_note: { type: "string", description: "Optional: If you believe the statistical model is significantly wrong, explain why here." },
+                highlight_key_factors: { type: "array", items: { type: "string" }, description: "3-5 most impactful factors affecting this match (e.g. 'Striker injured, missing top scorer', 'On a 5-match winning streak')" },
+                live_data_sources: { type: "array", items: { type: "string" }, description: "List of data sources referenced: form stats, H2H data, injury reports, news articles, lineup confirmations, etc." },
+                anomalies: { type: "array", items: { type: "string" }, description: "List of anomalies: data gaps, model-vs-odds conflicts >5%, or insufficient data warnings. Empty array if none." },
               },
               required: [
-                "home_win", "draw", "away_win", "expected_goals_home", "expected_goals_away",
-                "predicted_score_home", "predicted_score_away", "over_under_25", "btts",
-                "confidence", "winner_reasoning", "btts_reasoning", "over_under_reasoning",
-                "key_factors", "contrarian_check", "anomalies"
+                "predicted_score_home", "predicted_score_away", "btts",
+                "confidence_adjustment", "winner_reasoning", "btts_reasoning", "over_under_reasoning",
+                "key_factors", "contrarian_check", "highlight_key_factors", "live_data_sources", "anomalies"
               ],
               additionalProperties: false,
             },
@@ -953,28 +944,53 @@ IMPORTANT:
 
     const pred = JSON.parse(toolCall.function.arguments);
 
-    // Validation
+    // ── Fetch existing statistical prediction as source of truth ──
+    const { data: statPred } = await supabase
+      .from("predictions")
+      .select("*")
+      .eq("match_id", match_id)
+      .maybeSingle();
+
+    // Use Poisson statistical values as the final probabilities
+    const hw = statPred?.home_win ?? statsAnchors.poisson_home_win ?? 0.4;
+    const dr = statPred?.draw ?? statsAnchors.poisson_draw ?? 0.3;
+    const aw = statPred?.away_win ?? statsAnchors.poisson_away_win ?? 0.3;
+    const lambdaH = statPred?.expected_goals_home ?? statsAnchors.poisson_xg_home ?? 1.2;
+    const lambdaA = statPred?.expected_goals_away ?? statsAnchors.poisson_xg_away ?? 1.0;
+
+    // Use statistical goal lines and distribution if available, else recompute from Poisson lambdas
+    const goalLines = (statPred?.goal_lines as Record<string, number>) ?? computeGoalLines(lambdaH, lambdaA);
+    const goalDist = (statPred?.goal_distribution as Record<string, number>) ?? computeGoalDistribution(lambdaH, lambdaA);
+
+    // Validation — only for predicted score consistency
     const warnings = validatePrediction(pred);
     if (warnings.length > 0) {
       console.warn("Prediction validation warnings:", warnings);
       const totalScore = (pred.predicted_score_home ?? 0) + (pred.predicted_score_away ?? 0);
-      pred.over_under_25 = totalScore > 2 ? "over" : "under";
       pred.btts = (pred.predicted_score_home > 0 && pred.predicted_score_away > 0) ? "yes" : "no";
     }
 
-    // Normalize probabilities
-    const total = (pred.home_win || 0) + (pred.draw || 0) + (pred.away_win || 0);
-    const hw = total > 0 ? pred.home_win / total : 0.4;
-    const dr = total > 0 ? pred.draw / total : 0.3;
-    const aw = total > 0 ? pred.away_win / total : 0.3;
-
-    // Build structured reasoning text with contrarian check and anomalies
+    // Build structured reasoning text
     const anomaliesStr = (pred.anomalies && pred.anomalies.length > 0)
       ? `\n\n⚠️ ANOMALIES & DATA NOTES:\n${pred.anomalies.map((a: string) => `• ${a}`).join("\n")}`
       : "";
 
     const contrarianStr = pred.contrarian_check
       ? `\n\n🔄 CONTRARIAN CHECK:\n${pred.contrarian_check}`
+      : "";
+
+    const contrarianNoteStr = pred.contrarian_note
+      ? `\n\n💡 CONTRARIAN NOTE:\n${pred.contrarian_note}`
+      : "";
+
+    // Format highlight key factors
+    const keyFactorsStr = (pred.highlight_key_factors && pred.highlight_key_factors.length > 0)
+      ? `\n\n🎯 KEY FACTORS:\n${pred.highlight_key_factors.map((f: string) => `• ${f}`).join("\n")}`
+      : "";
+
+    // Format live data sources
+    const liveSourcesStr = (pred.live_data_sources && pred.live_data_sources.length > 0)
+      ? `\n\n📡 LIVE DATA SOURCES:\n${pred.live_data_sources.map((s: string) => `• ${s}`).join("\n")}`
       : "";
 
     const reasoning = [
@@ -984,20 +1000,21 @@ IMPORTANT:
       `⚽ BTTS (${(pred.btts || "no").toUpperCase()}):`,
       pred.btts_reasoning || "",
       ``,
-      `📊 OVER/UNDER 2.5 (${(pred.over_under_25 || "under").toUpperCase()}):`,
+      `📊 OVER/UNDER 2.5 (${goalLines.over_2_5 > 0.5 ? "OVER" : "UNDER"}):`,
       pred.over_under_reasoning || "",
       ``,
       `🔑 KEY FACTORS:`,
       pred.key_factors || "",
       contrarianStr,
+      contrarianNoteStr,
+      keyFactorsStr,
+      liveSourcesStr,
       anomaliesStr,
     ].join("\n");
 
-    // Smarter confidence scoring
-    const aiConfidence = pred.confidence || 0.5;
+    // New confidence blend: 50% data quality, 30% model-market agreement, 20% prediction certainty
     let modelMarketAgreement = 0.5;
     if (statsAnchors.implied_home_win != null && statsAnchors.poisson_home_win != null) {
-      // If Poisson and market agree, boost confidence
       const maxPoissonDelta = Math.max(
         Math.abs(statsAnchors.poisson_home_win - statsAnchors.implied_home_win),
         Math.abs(statsAnchors.poisson_draw - statsAnchors.implied_draw),
@@ -1005,23 +1022,25 @@ IMPORTANT:
       );
       modelMarketAgreement = maxPoissonDelta < 0.05 ? 1.0 : maxPoissonDelta < 0.10 ? 0.8 : maxPoissonDelta < 0.15 ? 0.6 : 0.4;
     }
-    const blendedConfidence = Math.round((
-      (aiConfidence * 0.45) +
-      (dataQuality * 0.30) +
-      (modelMarketAgreement * 0.15) +
-      (homeMomentum.momentum !== "neutral" || awayMomentum.momentum !== "neutral" ? 0.1 : 0.05)
-    ) * 1000) / 1000;
 
-    // Compute multi-goal-line probabilities
-    const lambdaH = pred.expected_goals_home || 1.2;
-    const lambdaA = pred.expected_goals_away || 1.0;
-    const goalLines = computeGoalLines(lambdaH, lambdaA);
-    const goalDist = computeGoalDistribution(lambdaH, lambdaA);
+    // Prediction certainty: how decisive is the max probability
+    const maxProb = Math.max(hw, dr, aw);
+    const predictionCertainty = maxProb >= 0.55 ? 0.9 : maxProb >= 0.45 ? 0.7 : maxProb >= 0.38 ? 0.5 : 0.3;
 
-    // Enhanced best pick with value detection across all markets
+    let blendedConfidence = (
+      (dataQuality * 0.50) +
+      (modelMarketAgreement * 0.30) +
+      (predictionCertainty * 0.20)
+    );
+
+    // Apply AI confidence adjustment (clamped to -0.10 to +0.10)
+    const confAdj = Math.max(-0.10, Math.min(0.10, pred.confidence_adjustment || 0));
+    blendedConfidence = Math.round(Math.max(0.05, Math.min(0.95, blendedConfidence + confAdj)) * 1000) / 1000;
+
+    // Enhanced best pick with value detection
     const bestPickResult = findBestPick(
       goalLines,
-      statsAnchors.poisson_home_win ?? hw, statsAnchors.poisson_draw ?? dr, statsAnchors.poisson_away_win ?? aw,
+      hw, dr, aw,
       statsAnchors.implied_home_win ?? null, statsAnchors.implied_draw ?? null, statsAnchors.implied_away_win ?? null,
       statsAnchors.poisson_btts ?? null
     );
