@@ -1,113 +1,103 @@
 
 
-# Improve AI Prediction System: Gap Analysis & Enhancement Plan
+# Hybrid AI Prediction with Statistical Backbone & Live Research
 
-## Current State Assessment
+## Problem Summary
+The AI prediction function (`generate-ai-prediction`) still asks the AI to produce `home_win`, `draw`, `away_win`, and `expected_goals` (lines 896-899), then uses those AI-generated values as final output (lines 966-969, 1031-1035). This violates the hybrid architecture where statistical probabilities should be the source of truth. Live research via Firecrawl already exists in `fetch-match-context` but its results aren't surfaced transparently in the prediction output.
 
-Your system already implements **most** of the blueprint's architecture. Here's a layer-by-layer comparison:
+## Changes
 
-| Blueprint Layer | Status | Notes |
-|---|---|---|
-| Data Layer (API-Football) | **Done** | Fixtures, teams, stats, lineups, H2H, events all collected and stored |
-| Poisson Model | **Done** | Full implementation with league-specific averages, home/away split, score matrix |
-| Probability Engine | **Done** | Goal lines 0.5-4.5, BTTS, 1X2, goal distribution — all Poisson-based |
-| AI Explanation Layer | **Done** | 5-layer reasoning (Statistical, Feature, Context, Market, Contrarian) |
-| Self-Learning Loop | **Done** | model_performance table, Brier scores, calibration, feature weights, weak areas fed back into prompts |
-| Confidence System | **Done** | Blended from AI, data quality, model-market agreement, momentum |
-| Web Research | **Done** | Firecrawl for injuries, news, lineups |
-| Cost Optimization | **Partial** | Caching and pre-match refresh exist, but AI still generates core probabilities |
+### 1. Fix: Remove probability fields from AI tool schema
+**File**: `supabase/functions/generate-ai-prediction/index.ts`
 
-## Key Gaps to Fix
+Remove `home_win`, `draw`, `away_win`, `expected_goals_home`, `expected_goals_away` from the `predict_match` tool schema (lines 896-900) and from `required` (line 913-914).
 
-### Gap 1: AI generates core probabilities (violates cost rule)
-Currently `generate-ai-prediction` asks the AI to produce `home_win`, `draw`, `away_win`, `expected_goals` — the blueprint says these should come purely from the statistical model. The AI should only adjust confidence and provide reasoning.
+Add new fields to the schema:
+- `confidence_adjustment` (number, -0.10 to +0.10)
+- `contrarian_note` (string, optional)
+- `highlight_key_factors` (array of strings)
+- `live_data_sources` (array of strings -- sources the AI referenced)
 
-**Fix**: Use Poisson outputs as the final probabilities. AI provides reasoning + a small confidence adjustment, not the numbers themselves.
+After AI response, read the existing statistical prediction from DB and use its Poisson values as the final `home_win`, `draw`, `away_win`, `expected_goals_home/away`, `goal_lines`, `goal_distribution`. AI only contributes: reasoning text, predicted score, BTTS, confidence adjustment, and anomalies.
 
-### Gap 2: No local prediction without AI
-`batch-generate-predictions` and `generate-ai-prediction` both call the AI gateway for every match. The blueprint calls for predictions to work without AI calls.
+Update the upsert block (lines 1029-1046) to use statistical values instead of AI values:
+- Read the statistical prediction row for this match_id
+- Use its `home_win`, `draw`, `away_win`, `expected_goals_home/away`, `goal_lines`, `goal_distribution`
+- Apply `confidence_adjustment` from AI as a delta on the blended confidence
+- Store `live_data_sources` and `highlight_key_factors` in the `ai_reasoning` text
 
-**Fix**: Create a `generate-statistical-prediction` edge function that runs the Poisson engine and stores predictions without any AI call. AI reasoning becomes an optional enrichment step.
+Update the confidence blend (lines 1008-1013) to remove `aiConfidence * 0.45` and replace with:
+- 50% data quality
+- 30% model-market agreement  
+- 20% prediction certainty (how decisive the max probability is)
+- Then apply AI's `confidence_adjustment` as a clamp-limited delta
 
-### Gap 3: AI "Thinking Process" UI missing
-The blueprint calls for step-by-step animated progress showing each reasoning layer as it happens. Currently the UI shows a simple spinner ("Generating prediction... 20-30 seconds").
+### 2. Enhance: Live web research integration in AI prompt
+**File**: `supabase/functions/generate-ai-prediction/index.ts`
 
-**Fix**: Add a thinking steps component that shows animated progress through the prediction pipeline stages.
+The `fetchMatchContext` call already scrapes via Firecrawl (injuries, lineups, news). Enhance the system prompt to instruct the AI to:
+- Reference which live sources it used in `live_data_sources`
+- Highlight how live context (injuries, lineup changes) affects reasoning
+- Never modify probabilities, only reasoning and confidence
 
-### Gap 4: Batch predictions still use expensive model
-`batch-generate-predictions` uses `google/gemini-2.5-pro` with `reasoning: high` for every match. This is the most expensive option.
+Add to the user prompt: explicit instruction to list sources in `live_data_sources` and key factors in `highlight_key_factors`.
 
-**Fix**: Use the statistical engine for batch predictions (no AI). Reserve AI calls for on-demand single-match enrichment only, using `gemini-2.5-flash` instead of Pro.
+### 3. Enhance: Broader live research in fetch-match-context
+**File**: `supabase/functions/fetch-match-context/index.ts`
 
-### Gap 5: Compute features not triggered often enough
-`compute-features` only runs during `full` mode (once daily at 06:00 UTC). New matches may not have features computed.
+Add a third Firecrawl search query for English press conference / team news:
+- `"{homeName} OR {awayName} press conference team news today"`
+This broadens coverage beyond Dutch sources.
 
-**Fix**: Also run compute-features during `pre_match` mode for imminent matches.
+Increase the per-search result limit from current behavior to capture more signals. Truncate combined output to 6000 chars (up from 4000) to give AI more context.
 
----
+### 4. Surface live sources in UI
+**File**: `src/components/AIInsightsCard.tsx`
 
-## Implementation Plan
+Parse the `ai_reasoning` field for the `📡 LIVE DATA SOURCES:` section (added in step 1). Display source URLs/descriptions as small badges or links below the reasoning text so users see transparency.
 
-### Step 1: Create statistical prediction function
-New edge function `generate-statistical-prediction` that:
-- Takes a match_id
-- Computes Poisson xG using league averages (reuses existing logic)
-- Calculates all probabilities, goal lines, BTTS, best pick
-- Stores to `predictions` table WITHOUT calling AI
-- Returns the prediction
+### 5. Update pre-match-predictions for conditional AI enrichment
+**File**: `supabase/functions/pre-match-predictions/index.ts`
 
-This is essentially extracting the Poisson logic already in `generate-ai-prediction` lines 51-142 into its own standalone function.
+In Phase A2 (AI enrichment), only call AI when there's meaningful new context:
+- Check if `match_context.scraped_at` is newer than `predictions.last_prediction_at`
+- Check if lineups have been confirmed (lineup_home is not empty)
+- If neither condition is met, skip the AI call to save costs
 
-### Step 2: Refactor batch predictions to be AI-free
-Update `batch-generate-predictions` to call `generate-statistical-prediction` instead of the AI gateway. This eliminates AI costs for batch processing entirely.
+## Technical Details
 
-### Step 3: Make AI enrichment optional and cheaper
-Update `generate-ai-prediction` to:
-- First run statistical prediction (or read existing)
-- Only call AI for reasoning/explanation — pass the already-computed probabilities as context
-- Switch from `gemini-2.5-pro` to `gemini-2.5-flash` (same quality for explanation, much cheaper)
-- AI output: reasoning text, confidence adjustment (+-5% max), anomaly flags
-- AI does NOT produce `home_win`, `draw`, `away_win` — those come from Poisson
+**Tool schema change** (generate-ai-prediction):
+```
+// REMOVE from schema:
+home_win, draw, away_win, expected_goals_home, expected_goals_away
 
-### Step 4: Run compute-features in pre_match mode
-Update `auto-sync` to call `compute-features` during `pre_match` and `live` modes too (not just `full`), ensuring fresh features for imminent matches.
+// ADD to schema:
+confidence_adjustment: { type: "number", description: "Small adjustment -0.10 to +0.10" }
+highlight_key_factors: { type: "array", items: { type: "string" } }
+live_data_sources: { type: "array", items: { type: "string" } }
+contrarian_note: { type: "string" }
+```
 
-### Step 5: Add AI Thinking Process UI
-Create a `ThinkingSteps` component for the match detail page that shows animated progress:
-1. "Fetching match data..."
-2. "Analyzing team performance..."  
-3. "Computing expected goals (Poisson)..."
-4. "Calculating probabilities..."
-5. "Running market analysis..."
-6. "Generating AI insights..."
-7. "Finalizing prediction..."
+**Upsert logic change**: After AI call, fetch the existing statistical prediction and merge:
+```
+const { data: statPred } = await supabase.from("predictions").select("*").eq("match_id", match_id).maybeSingle();
+// Use statPred.home_win, statPred.draw, statPred.away_win, etc. as final values
+// Only take reasoning, predicted_score, btts from AI
+```
 
-Each step transitions with a check mark animation. Steps 1-5 complete quickly (statistical), step 6 takes longer (AI call).
-
-### Step 6: Improve pre-match-predictions cost efficiency
-Update `pre-match-predictions` to only call AI when there's meaningful new data (confirmed lineups, significant odds movement). If nothing changed, just refresh the statistical model.
-
-## Files to Create/Modify
+## Files Summary
 
 | File | Action |
 |---|---|
-| `supabase/functions/generate-statistical-prediction/index.ts` | **Create** — standalone Poisson engine |
-| `supabase/functions/generate-ai-prediction/index.ts` | **Modify** — AI for reasoning only, use flash model |
-| `supabase/functions/batch-generate-predictions/index.ts` | **Modify** — call statistical engine instead of AI |
-| `supabase/functions/pre-match-predictions/index.ts` | **Modify** — conditional AI calls |
-| `supabase/functions/auto-sync/index.ts` | **Modify** — run compute-features in pre_match mode |
-| `src/components/ThinkingSteps.tsx` | **Create** — animated prediction pipeline UI |
-| `src/pages/MatchDetail.tsx` | **Modify** — integrate ThinkingSteps |
-| `src/components/AIVerdictCard.tsx` | **Modify** — replace spinner with ThinkingSteps |
+| `supabase/functions/generate-ai-prediction/index.ts` | Fix AI override bug, new schema, statistical-first upsert |
+| `supabase/functions/fetch-match-context/index.ts` | Add broader search query, increase context limit |
+| `src/components/AIInsightsCard.tsx` | Surface live data sources in UI |
+| `supabase/functions/pre-match-predictions/index.ts` | Conditional AI calls based on new context |
 
-## Expected Cost Impact
-
-- Batch predictions: **100% reduction** (no AI calls)
-- Pre-match refreshes: **~70% reduction** (AI only when new data)
-- On-demand predictions: **~60% reduction** (flash instead of pro, reasoning only)
-- Overall: **~80-90% reduction** in AI gateway costs
-
-## No Database Changes Required
-
-All existing tables support this architecture. The `predictions` table already stores all necessary fields.
+## Expected Impact
+- Probabilities become purely mathematical (Poisson) -- no more AI noise
+- AI focuses on what it's good at: reasoning, context, explaining "why"
+- Live research sources are visible to users for transparency
+- AI costs reduced ~60% further (conditional enrichment)
+- 1X2 accuracy expected to improve from 47% toward 50%+ by eliminating AI probability noise
 
