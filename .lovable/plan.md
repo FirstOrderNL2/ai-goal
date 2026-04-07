@@ -1,103 +1,82 @@
 
 
-# Hybrid AI Prediction with Statistical Backbone & Live Research
+# Enhance & Fix Football Prediction System
 
-## Problem Summary
-The AI prediction function (`generate-ai-prediction`) still asks the AI to produce `home_win`, `draw`, `away_win`, and `expected_goals` (lines 896-899), then uses those AI-generated values as final output (lines 966-969, 1031-1035). This violates the hybrid architecture where statistical probabilities should be the source of truth. Live research via Firecrawl already exists in `fetch-match-context` but its results aren't surfaced transparently in the prediction output.
+## Issues Found
 
-## Changes
+**Score-Probability Inconsistency**: Multiple upcoming matches show the highest probability pointing to Home Win, but the predicted score is a draw (e.g., Rayo Vallecano 40% home win but predicted 1-1; Meppen 40% home win but predicted 0-0). This is because the statistical engine uses the **most probable single scoreline** (Poisson mode), which for tight matches is often a draw — even when cumulative home win probability is highest.
 
-### 1. Fix: Remove probability fields from AI tool schema
-**File**: `supabase/functions/generate-ai-prediction/index.ts`
+**Stale AI-Override Predictions**: 4 matches still have `home_win=0.100, draw=0.450` — old AI-generated values that were never refreshed with Poisson.
 
-Remove `home_win`, `draw`, `away_win`, `expected_goals_home`, `expected_goals_away` from the `predict_match` tool schema (lines 896-900) and from `required` (line 913-914).
+**Best Picks Too Obvious**: "Over 1.5" at 82-84% appears frequently — falls within the 55-85% window but is still trivially obvious.
 
-Add new fields to the schema:
-- `confidence_adjustment` (number, -0.10 to +0.10)
-- `contrarian_note` (string, optional)
-- `highlight_key_factors` (array of strings)
-- `live_data_sources` (array of strings -- sources the AI referenced)
+**No Self-Consistency Validation**: The AI can return a score that contradicts the probabilities, and nothing corrects it.
 
-After AI response, read the existing statistical prediction from DB and use its Poisson values as the final `home_win`, `draw`, `away_win`, `expected_goals_home/away`, `goal_lines`, `goal_distribution`. AI only contributes: reasoning text, predicted score, BTTS, confidence adjustment, and anomalies.
+## Plan
 
-Update the upsert block (lines 1029-1046) to use statistical values instead of AI values:
-- Read the statistical prediction row for this match_id
-- Use its `home_win`, `draw`, `away_win`, `expected_goals_home/away`, `goal_lines`, `goal_distribution`
-- Apply `confidence_adjustment` from AI as a delta on the blended confidence
-- Store `live_data_sources` and `highlight_key_factors` in the `ai_reasoning` text
+### Step 1: Score-Probability Consistency Enforcement
+**Files**: `generate-statistical-prediction/index.ts`, `generate-ai-prediction/index.ts`
 
-Update the confidence blend (lines 1008-1013) to remove `aiConfidence * 0.45` and replace with:
-- 50% data quality
-- 30% model-market agreement  
-- 20% prediction certainty (how decisive the max probability is)
-- Then apply AI's `confidence_adjustment` as a clamp-limited delta
+In the statistical engine (lines 222-229), after computing the most probable scoreline, add a consistency check:
+- If `poissonHW` is highest but `bestScore.h <= bestScore.a`, adjust the score: find the most probable scoreline **where home wins** (e.g., 1-0 or 2-1).
+- If `poissonAW` is highest but `bestScore.a <= bestScore.h`, find the most probable scoreline **where away wins**.
+- If `poissonDR` is highest, keep draw scorelines.
 
-### 2. Enhance: Live web research integration in AI prompt
-**File**: `supabase/functions/generate-ai-prediction/index.ts`
+In the AI prediction (after line 945), add the same consistency enforcement to `pred.predicted_score_home/away` — if AI returns a score contradicting the statistical probabilities, override the score to match.
 
-The `fetchMatchContext` call already scrapes via Firecrawl (injuries, lineups, news). Enhance the system prompt to instruct the AI to:
-- Reference which live sources it used in `live_data_sources`
-- Highlight how live context (injuries, lineup changes) affects reasoning
-- Never modify probabilities, only reasoning and confidence
+### Step 2: Input Data Validation
+**File**: `generate-statistical-prediction/index.ts`
 
-Add to the user prompt: explicit instruction to list sources in `live_data_sources` and key factors in `highlight_key_factors`.
+Add validation after `calcStats()` (line 174):
+- Clamp `wAvgScored` and `wAvgConceded` to [0, 5.0] (no team scores >5 per game on average).
+- Clamp `lambdaHome` and `lambdaAway` to [0.3, 4.0] (already done on line 199-200, keep it).
+- Validate form string length: if `home_form_last5` has >5 characters, truncate.
+- If `cleanSheets > played`, cap at `played`.
 
-### 3. Enhance: Broader live research in fetch-match-context
-**File**: `supabase/functions/fetch-match-context/index.ts`
+### Step 3: Raise Best Pick Minimum Threshold
+**File**: `generate-statistical-prediction/index.ts` (line 56)
 
-Add a third Firecrawl search query for English press conference / team news:
-- `"{homeName} OR {awayName} press conference team news today"`
-This broadens coverage beyond Dutch sources.
+Change the goal line best pick range from `v >= 0.55 && v <= 0.85` to `v >= 0.55 && v <= 0.80`. Also exclude Over/Under 0.5 and Over/Under 1.5 entirely — these are trivially obvious. Only consider Over/Under 2.5, 3.5, 4.5 as candidates.
 
-Increase the per-search result limit from current behavior to capture more signals. Truncate combined output to 6000 chars (up from 4000) to give AI more context.
+### Step 4: Competition-Specific Adjustments
+**File**: `generate-statistical-prediction/index.ts`
 
-### 4. Surface live sources in UI
-**File**: `src/components/AIInsightsCard.tsx`
+After computing `poissonHW/DR/AW` (line 211), apply league-type adjustments:
+- For Champions League / Europa League / international: boost draw probability by 3%, reduce the highest of HW/AW by 3%.
+- For lower leagues (Keuken Kampioen Divisie, etc.): apply stronger regression toward league mean (reduce lambda extremes by 10%).
 
-Parse the `ai_reasoning` field for the `📡 LIVE DATA SOURCES:` section (added in step 1). Display source URLs/descriptions as small badges or links below the reasoning text so users see transparency.
+### Step 5: Confidence Level Labels in UI
+**File**: `src/components/AIVerdictCard.tsx`
 
-### 5. Update pre-match-predictions for conditional AI enrichment
-**File**: `supabase/functions/pre-match-predictions/index.ts`
+Replace the numeric confidence display with labeled tiers:
+- ≥70%: "High 🟢"
+- 40-69%: "Medium 🟡"  
+- <40%: "Low 🔴"
 
-In Phase A2 (AI enrichment), only call AI when there's meaningful new context:
-- Check if `match_context.scraped_at` is newer than `predictions.last_prediction_at`
-- Check if lineups have been confirmed (lineup_home is not empty)
-- If neither condition is met, skip the AI call to save costs
+Keep the numeric value as a tooltip.
 
-## Technical Details
+### Step 6: Remove Duplicate Reasoning Sections
+**File**: `generate-ai-prediction/index.ts` (lines 996-1013)
 
-**Tool schema change** (generate-ai-prediction):
-```
-// REMOVE from schema:
-home_win, draw, away_win, expected_goals_home, expected_goals_away
+The reasoning text currently has both `🔑 KEY FACTORS:` (from `pred.key_factors`) and `🎯 KEY FACTORS:` (from `pred.highlight_key_factors`) — these are duplicative. Remove the first `🔑 KEY FACTORS:` block and keep only the structured `🎯 KEY FACTORS:` section.
 
-// ADD to schema:
-confidence_adjustment: { type: "number", description: "Small adjustment -0.10 to +0.10" }
-highlight_key_factors: { type: "array", items: { type: "string" } }
-live_data_sources: { type: "array", items: { type: "string" } }
-contrarian_note: { type: "string" }
-```
+### Step 7: Batch-Fix Stale Predictions
+**File**: `generate-statistical-prediction/index.ts`
 
-**Upsert logic change**: After AI call, fetch the existing statistical prediction and merge:
-```
-const { data: statPred } = await supabase.from("predictions").select("*").eq("match_id", match_id).maybeSingle();
-// Use statPred.home_win, statPred.draw, statPred.away_win, etc. as final values
-// Only take reasoning, predicted_score, btts from AI
-```
+No code change needed — we'll invoke `generate-statistical-prediction` for the 4 matches that still have stale `0.100/0.450` AI values, which will overwrite them with proper Poisson values.
 
 ## Files Summary
 
-| File | Action |
+| File | Changes |
 |---|---|
-| `supabase/functions/generate-ai-prediction/index.ts` | Fix AI override bug, new schema, statistical-first upsert |
-| `supabase/functions/fetch-match-context/index.ts` | Add broader search query, increase context limit |
-| `src/components/AIInsightsCard.tsx` | Surface live data sources in UI |
-| `supabase/functions/pre-match-predictions/index.ts` | Conditional AI calls based on new context |
+| `supabase/functions/generate-statistical-prediction/index.ts` | Score-probability consistency, input validation, better best picks, competition adjustments |
+| `supabase/functions/generate-ai-prediction/index.ts` | Score consistency enforcement after AI, remove duplicate reasoning section |
+| `src/components/AIVerdictCard.tsx` | Confidence tier labels (High/Medium/Low) |
 
 ## Expected Impact
-- Probabilities become purely mathematical (Poisson) -- no more AI noise
-- AI focuses on what it's good at: reasoning, context, explaining "why"
-- Live research sources are visible to users for transparency
-- AI costs reduced ~60% further (conditional enrichment)
-- 1X2 accuracy expected to improve from 47% toward 50%+ by eliminating AI probability noise
+- Zero score-probability contradictions
+- Best picks become genuinely useful (no more "Over 1.5 at 83%")
+- Draw probability more realistic for cup competitions
+- Cleaner UI with no duplicate reasoning blocks
+- Stale predictions replaced with proper Poisson values
 
