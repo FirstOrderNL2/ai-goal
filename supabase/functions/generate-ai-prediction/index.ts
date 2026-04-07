@@ -966,9 +966,30 @@ IMPORTANT:
     const warnings = validatePrediction(pred);
     if (warnings.length > 0) {
       console.warn("Prediction validation warnings:", warnings);
-      const totalScore = (pred.predicted_score_home ?? 0) + (pred.predicted_score_away ?? 0);
       pred.btts = (pred.predicted_score_home > 0 && pred.predicted_score_away > 0) ? "yes" : "no";
     }
+
+    // ── Score-Probability Consistency Enforcement ──
+    // If AI predicted score contradicts statistical probabilities, override
+    const scoreH = pred.predicted_score_home ?? 0;
+    const scoreA = pred.predicted_score_away ?? 0;
+    if (hw > dr && hw > aw && scoreH <= scoreA) {
+      // Stats say home win but AI score says draw/away → force home win score
+      if (lambdaH >= 2) { pred.predicted_score_home = 2; pred.predicted_score_away = 1; }
+      else { pred.predicted_score_home = 1; pred.predicted_score_away = 0; }
+      console.warn("Score overridden: stats predict home win but AI gave", scoreH, "-", scoreA);
+    } else if (aw > hw && aw > dr && scoreA <= scoreH) {
+      if (lambdaA >= 2) { pred.predicted_score_home = 1; pred.predicted_score_away = 2; }
+      else { pred.predicted_score_home = 0; pred.predicted_score_away = 1; }
+      console.warn("Score overridden: stats predict away win but AI gave", scoreH, "-", scoreA);
+    } else if (dr > hw && dr > aw && scoreH !== scoreA) {
+      const drawGoals = Math.round(Math.min(lambdaH, lambdaA));
+      pred.predicted_score_home = drawGoals;
+      pred.predicted_score_away = drawGoals;
+      console.warn("Score overridden: stats predict draw but AI gave", scoreH, "-", scoreA);
+    }
+    // Update BTTS after potential score override
+    pred.btts = (pred.predicted_score_home > 0 && pred.predicted_score_away > 0) ? "yes" : "no";
 
     // Build structured reasoning text
     const anomaliesStr = (pred.anomalies && pred.anomalies.length > 0)
@@ -1002,9 +1023,6 @@ IMPORTANT:
       ``,
       `📊 OVER/UNDER 2.5 (${goalLines.over_2_5 > 0.5 ? "OVER" : "UNDER"}):`,
       pred.over_under_reasoning || "",
-      ``,
-      `🔑 KEY FACTORS:`,
-      pred.key_factors || "",
       contrarianStr,
       contrarianNoteStr,
       keyFactorsStr,
