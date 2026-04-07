@@ -39,6 +39,7 @@ export function AIVerdictCard({ prediction, homeTeamName, awayTeamName, odds }: 
   const dr = Number(prediction.draw);
   const aw = Number(prediction.away_win);
   const confidence = Math.round(Number(prediction.model_confidence) * 100);
+  const confidenceLabel = confidence >= 70 ? "High 🟢" : confidence >= 40 ? "Medium 🟡" : "Low 🔴";
   const hasPredictedScore = prediction.predicted_score_home != null && prediction.predicted_score_away != null;
 
   // Determine predicted winner
@@ -88,9 +89,9 @@ export function AIVerdictCard({ prediction, homeTeamName, awayTeamName, odds }: 
         <CardTitle className="flex items-center gap-2 text-base">
           <Trophy className="h-4 w-4 text-primary" />
           AI Verdict
-          <Badge variant="outline" className="ml-auto text-xs">
+          <Badge variant="outline" className="ml-auto text-xs" title={`${confidence}% confident`}>
             <ShieldCheck className="h-3 w-3 mr-1" />
-            {confidence}% confident
+            {confidenceLabel}
           </Badge>
         </CardTitle>
       </CardHeader>

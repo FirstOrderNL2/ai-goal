@@ -52,8 +52,11 @@ function findBestPick(
 ): { pick: string; confidence: number; edge: number } {
   const candidates: { pick: string; confidence: number; edge: number }[] = [];
 
+  // Only consider 2.5, 3.5, 4.5 goal lines — exclude trivial 0.5 and 1.5
+  const allowedLines = ["over_2_5", "under_2_5", "over_3_5", "under_3_5", "over_4_5", "under_4_5"];
   for (const [k, v] of Object.entries(goalLines)) {
-    if (v >= 0.55 && v <= 0.85) {
+    if (!allowedLines.includes(k)) continue;
+    if (v >= 0.55 && v <= 0.80) {
       const label = k.startsWith("over_")
         ? k.replace("over_", "Over ").replace("_", ".")
         : k.replace("under_", "Under ").replace("_", ".");
@@ -70,7 +73,7 @@ function findBestPick(
     if (awayEdge > 0.05 && poissonAwayWin >= 0.3) candidates.push({ pick: "Away Win", confidence: poissonAwayWin, edge: awayEdge });
   }
 
-  if (poissonBtts != null && poissonBtts >= 0.55 && poissonBtts <= 0.85) {
+  if (poissonBtts != null && poissonBtts >= 0.55 && poissonBtts <= 0.80) {
     candidates.push({ pick: "BTTS Yes", confidence: poissonBtts, edge: 0 });
   }
 
@@ -163,13 +166,15 @@ Deno.serve(async (req) => {
         const w = Math.pow(0.85, i);
         wScored += gf * w; wConceded += ga * w; wTotal += w;
       }
+      const played = matches.length;
       return {
-        played: matches.length,
-        avgScored: scored / matches.length,
-        avgConceded: conceded / matches.length,
-        wAvgScored: wScored / wTotal,
-        wAvgConceded: wConceded / wTotal,
-        cleanSheets, bttsRate: bttsCount / matches.length,
+        played,
+        avgScored: scored / played,
+        avgConceded: conceded / played,
+        wAvgScored: Math.min(wScored / wTotal, 5.0),
+        wAvgConceded: Math.min(wConceded / wTotal, 5.0),
+        cleanSheets: Math.min(cleanSheets, played),
+        bttsRate: bttsCount / played,
       };
     }
 
@@ -210,6 +215,23 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Competition-specific adjustments
+    const cupCompetitions = ["champions league", "europa league", "conference league", "world cup", "euro", "nations league"];
+    const isCup = cupCompetitions.some(c => match.league.toLowerCase().includes(c));
+    if (isCup) {
+      const boost = 0.03;
+      const highest = poissonHW > poissonAW ? "home" : "away";
+      if (highest === "home") poissonHW -= boost;
+      else poissonAW -= boost;
+      poissonDR += boost;
+    }
+
+    // Normalize after adjustments
+    const totalP = poissonHW + poissonDR + poissonAW;
+    poissonHW /= totalP;
+    poissonDR /= totalP;
+    poissonAW /= totalP;
+
     // BTTS
     const homeScoringRate = 1 - poissonPMF(lambdaHome, 0);
     const awayScoringRate = 1 - poissonPMF(lambdaAway, 0);
@@ -219,13 +241,28 @@ Deno.serve(async (req) => {
     const goalLines = computeGoalLines(lambdaHome, lambdaAway);
     const goalDist = computeGoalDistribution(lambdaHome, lambdaAway);
 
-    // Predicted score = most probable scoreline
+    // Predicted score = most probable scoreline, enforcing consistency with 1X2
     let bestScore = { h: 1, a: 1, p: 0 };
+    let bestScoreHW = { h: 1, a: 0, p: 0 };
+    let bestScoreAW = { h: 0, a: 1, p: 0 };
+    let bestScoreDR = { h: 0, a: 0, p: 0 };
     for (let h = 0; h <= 5; h++) {
       for (let a = 0; a <= 5; a++) {
         const p = poissonPMF(lambdaHome, h) * poissonPMF(lambdaAway, a);
         if (p > bestScore.p) bestScore = { h, a, p };
+        if (h > a && p > bestScoreHW.p) bestScoreHW = { h, a, p };
+        if (a > h && p > bestScoreAW.p) bestScoreAW = { h, a, p };
+        if (h === a && p > bestScoreDR.p) bestScoreDR = { h, a, p };
       }
+    }
+
+    // Enforce: predicted score must match predicted outcome
+    if (poissonHW > poissonDR && poissonHW > poissonAW && bestScore.h <= bestScore.a) {
+      bestScore = bestScoreHW;
+    } else if (poissonAW > poissonHW && poissonAW > poissonDR && bestScore.a <= bestScore.h) {
+      bestScore = bestScoreAW;
+    } else if (poissonDR > poissonHW && poissonDR > poissonAW && bestScore.h !== bestScore.a) {
+      bestScore = bestScoreDR;
     }
 
     // Implied probabilities from odds
