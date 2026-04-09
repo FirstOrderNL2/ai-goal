@@ -11,6 +11,7 @@ import { H2HCard } from "@/components/H2HCard";
 import { OverUnderCard } from "@/components/OverUnderCard";
 import { LineupsCard } from "@/components/LineupsCard";
 import { PredictionComparisonCard } from "@/components/PredictionComparisonCard";
+import { VolatilityCard } from "@/components/VolatilityCard";
 import { PredictionHistoryCard } from "@/components/PredictionHistoryCard";
 import { LiveMatchCard } from "@/components/LiveMatchCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -316,7 +317,16 @@ export default function MatchDetail() {
           />
         )}
 
-        {/* 9. Match Intelligence */}
+        {/* 9. Volatility & Referee */}
+        <VolatilityCard
+          matchId={match.id}
+          refereeName={match.referee ?? null}
+          homeTeamId={match.team_home_id}
+          awayTeamId={match.team_away_id}
+          league={match.league}
+        />
+
+        {/* 10. Match Intelligence */}
         <MatchContextCard
           matchId={match.id}
           homeTeamName={home_team?.name}
