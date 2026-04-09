@@ -345,7 +345,15 @@ Deno.serve(async (req) => {
       marketAgreement = maxDelta < 0.05 ? 1.0 : maxDelta < 0.10 ? 0.8 : maxDelta < 0.15 ? 0.6 : 0.4;
     }
 
-    const confidence = Math.round((dataQuality * 0.6 + marketAgreement * 0.4) * 1000) / 1000;
+    // Volatility penalty on confidence
+    let volPenalty = 0;
+    if (volatilityScore > 0.65) volPenalty = Math.min(0.05, (volatilityScore - 0.65) * 0.15);
+    const confidence = Math.round(Math.max(0.05, (dataQuality * 0.6 + marketAgreement * 0.4) - volPenalty) * 1000) / 1000;
+
+    // Store volatility_score in match_features
+    if (features) {
+      await supabase.from("match_features").update({ volatility_score: volatilityScore }).eq("match_id", match_id);
+    }
 
     const overUnder = goalLines.over_2_5 > 0.5 ? "over" : "under";
     const btts = poissonBtts >= 0.5 ? "yes" : "no";

@@ -26,10 +26,33 @@ export interface Match {
   ai_insights: string | null;
   ai_post_match_review: string | null;
   ai_accuracy_score: number | null;
+  referee: string | null;
   home_team?: Team;
   away_team?: Team;
   prediction?: Prediction;
   odds?: Odds;
+}
+
+export interface Referee {
+  id: string;
+  name: string;
+  matches_officiated: number;
+  yellow_avg: number;
+  red_avg: number;
+  foul_avg: number;
+  penalty_avg: number;
+  updated_at: string;
+}
+
+export interface TeamDiscipline {
+  id: string;
+  team_id: string;
+  season: number;
+  yellow_avg: number;
+  red_avg: number;
+  foul_avg: number;
+  matches_counted: number;
+  updated_at: string;
 }
 
 export interface Prediction {
