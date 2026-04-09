@@ -843,7 +843,9 @@ ${statsBlock}
 ${contextBlock}
 ${newsSignals}
 ${liveContext ? `\nLIVE CONTEXT (injuries, suspensions, lineups, news):\n${liveContext}` : ""}
+${match.referee ? `\nREFEREE: ${match.referee}` : ""}
 ${learningBlock}
+\nVOLATILITY NOTE: If the referee is known to be strict or both teams are aggressive, factor this into your reasoning about match tempo and card risk. This may affect Over/Under and BTTS assessments.
 
 IMPORTANT: 
 1. Your reasoning must cite SPECIFIC numbers from the data above. Every claim must reference a stat.
