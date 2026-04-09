@@ -447,6 +447,7 @@ Deno.serve(async (req) => {
         status,
         league: f._league.name,
         round: f.league.round ?? null,
+        referee: f.fixture.referee ?? null,
       };
     }).filter(Boolean);
 
@@ -474,6 +475,7 @@ Deno.serve(async (req) => {
           status,
           league: f._league.name,
           round: f.league.round ?? null,
+          referee: f.fixture.referee ?? null,
         };
       }).filter(Boolean);
       if (recentRows.length > 0) {
