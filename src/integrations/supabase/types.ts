@@ -125,6 +125,7 @@ export type Database = {
           poisson_xg_away: number | null
           poisson_xg_home: number | null
           position_diff: number | null
+          volatility_score: number | null
         }
         Insert: {
           away_avg_conceded?: number | null
@@ -147,6 +148,7 @@ export type Database = {
           poisson_xg_away?: number | null
           poisson_xg_home?: number | null
           position_diff?: number | null
+          volatility_score?: number | null
         }
         Update: {
           away_avg_conceded?: number | null
@@ -169,6 +171,7 @@ export type Database = {
           poisson_xg_away?: number | null
           poisson_xg_home?: number | null
           position_diff?: number | null
+          volatility_score?: number | null
         }
         Relationships: [
           {
@@ -193,6 +196,7 @@ export type Database = {
           id: string
           league: string
           match_date: string
+          referee: string | null
           round: string | null
           sportradar_id: string | null
           status: string
@@ -213,6 +217,7 @@ export type Database = {
           id?: string
           league: string
           match_date: string
+          referee?: string | null
           round?: string | null
           sportradar_id?: string | null
           status?: string
@@ -233,6 +238,7 @@ export type Database = {
           id?: string
           league?: string
           match_date?: string
+          referee?: string | null
           round?: string | null
           sportradar_id?: string | null
           status?: string
@@ -479,6 +485,72 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      referees: {
+        Row: {
+          foul_avg: number | null
+          id: string
+          matches_officiated: number | null
+          name: string
+          penalty_avg: number | null
+          red_avg: number | null
+          updated_at: string | null
+          yellow_avg: number | null
+        }
+        Insert: {
+          foul_avg?: number | null
+          id?: string
+          matches_officiated?: number | null
+          name: string
+          penalty_avg?: number | null
+          red_avg?: number | null
+          updated_at?: string | null
+          yellow_avg?: number | null
+        }
+        Update: {
+          foul_avg?: number | null
+          id?: string
+          matches_officiated?: number | null
+          name?: string
+          penalty_avg?: number | null
+          red_avg?: number | null
+          updated_at?: string | null
+          yellow_avg?: number | null
+        }
+        Relationships: []
+      }
+      team_discipline: {
+        Row: {
+          foul_avg: number | null
+          id: string
+          matches_counted: number | null
+          red_avg: number | null
+          season: number
+          team_id: string
+          updated_at: string | null
+          yellow_avg: number | null
+        }
+        Insert: {
+          foul_avg?: number | null
+          id?: string
+          matches_counted?: number | null
+          red_avg?: number | null
+          season: number
+          team_id: string
+          updated_at?: string | null
+          yellow_avg?: number | null
+        }
+        Update: {
+          foul_avg?: number | null
+          id?: string
+          matches_counted?: number | null
+          red_avg?: number | null
+          season?: number
+          team_id?: string
+          updated_at?: string | null
+          yellow_avg?: number | null
+        }
+        Relationships: []
       }
       team_statistics: {
         Row: {
