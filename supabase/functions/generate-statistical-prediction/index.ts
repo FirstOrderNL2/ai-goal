@@ -123,6 +123,9 @@ Deno.serve(async (req) => {
       { data: homeMatches },
       { data: awayMatches },
       { data: leagueMatches },
+      { data: refereeData },
+      { data: homeDiscipline },
+      { data: awayDiscipline },
     ] = await Promise.all([
       supabase.from("odds").select("*").eq("match_id", match_id).single(),
       supabase.from("match_features").select("*").eq("match_id", match_id).single(),
@@ -138,6 +141,9 @@ Deno.serve(async (req) => {
         .select("goals_home, goals_away, league")
         .eq("league", match.league).eq("status", "completed")
         .order("match_date", { ascending: false }).limit(200),
+      match.referee ? supabase.from("referees").select("*").eq("name", match.referee).maybeSingle() : Promise.resolve({ data: null }),
+      supabase.from("team_discipline").select("*").eq("team_id", match.team_home_id).order("season", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("team_discipline").select("*").eq("team_id", match.team_away_id).order("season", { ascending: false }).limit(1).maybeSingle(),
     ]);
 
     // Compute league averages
@@ -215,15 +221,54 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Competition-specific adjustments
+    // ── Volatility adjustments ──
     const cupCompetitions = ["champions league", "europa league", "conference league", "world cup", "euro", "nations league"];
     const isCup = cupCompetitions.some(c => match.league.toLowerCase().includes(c));
+
+    // Compute volatility score
+    let refStrictness = 0.5; // neutral default
+    if (refereeData) {
+      // Normalize: league avg ~3.5 yellows/match
+      refStrictness = Math.min(1.0, (refereeData.yellow_avg || 3.5) / 5.0);
+    }
+
+    let teamAggression = 0.5;
+    const hDisc = homeDiscipline;
+    const aDisc = awayDiscipline;
+    if (hDisc || aDisc) {
+      const combinedYellow = ((hDisc?.yellow_avg || 1.5) + (aDisc?.yellow_avg || 1.5));
+      teamAggression = Math.min(1.0, combinedYellow / 5.0);
+    }
+
+    const matchImportance = isCup ? 1.0 : 0.5;
+    const volatilityScore = Math.round(
+      (refStrictness * 0.4 + teamAggression * 0.4 + matchImportance * 0.2) * 1000
+    ) / 1000;
+
+    // Apply volatility adjustments (capped at ±5%)
+    if (volatilityScore > 0.6) {
+      const volAdjust = Math.min(0.05, (volatilityScore - 0.5) * 0.10);
+      // High volatility: slightly increase over probability, increase draw
+      goalLines.over_2_5 = Math.min(0.95, goalLines.over_2_5 + volAdjust * 0.5);
+      goalLines.under_2_5 = Math.max(0.05, 1 - goalLines.over_2_5);
+    }
+
+    // Competition-specific adjustments (cup draw boost)
     if (isCup) {
       const boost = 0.03;
       const highest = poissonHW > poissonAW ? "home" : "away";
       if (highest === "home") poissonHW -= boost;
       else poissonAW -= boost;
       poissonDR += boost;
+    }
+
+    // High volatility: reduce favorite margin slightly, increase draw
+    if (volatilityScore > 0.65) {
+      const volBoost = Math.min(0.02, (volatilityScore - 0.65) * 0.06);
+      const highest2 = poissonHW > poissonAW ? "home" : "away";
+      if (highest2 === "home") poissonHW -= volBoost;
+      else poissonAW -= volBoost;
+      poissonDR += volBoost;
     }
 
     // Normalize after adjustments
