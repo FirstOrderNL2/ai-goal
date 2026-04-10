@@ -70,7 +70,8 @@
     "cta_button_secondary": "Vorhersagen entdecken",
     "footer_disclaimer": "GoalGPT bietet KI-generierte Vorhersagen ausschließlich zu Informationszwecken. Vorhersagen sind nicht garantiert und stellen keine Finanz- oder Wettberatung dar. Nutzer sind für ihre eigenen Entscheidungen verantwortlich.",
     "footer_copyright": "© {{year}} GoalGPT. Alle Rechte vorbehalten.",
-    "create_account": "Konto erstellen"
+    "create_account": "Konto erstellen",
+    "sign_up": "Registrieren"
   },
   "login": {
     "title": "GoalGPT",
