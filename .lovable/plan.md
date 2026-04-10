@@ -1,99 +1,74 @@
 
 
-# GoalGPT Full System Health Check Report
+# GoalGPT System Health Check Report
 
-## CRITICAL Issues (Must Fix)
+## CRITICAL Issues (Must Fix Immediately)
 
-### 1. `generate-statistical-prediction` is completely broken
-The edge function logs show a continuous crash: `ReferenceError: Cannot access 'goalLines' before initialization` at line 280.
+### 1. `generate-statistical-prediction` edge function NOT deployed
+The code fix from the previous session (moving `goalLines` declaration before the volatility block) exists in the repository at lines 264-266 but the **deployed version still crashes**. Logs show continuous `ReferenceError: Cannot access 'goalLines' before initialization` errors as recently as 19:20 UTC today. The most recent log entry at 19:26 shows a boot followed by a 404 — indicating the function may have been deleted or is in a broken deploy state.
 
-**Root cause:** At line 268, the code modifies `goalLines.over_2_5` inside a volatility adjustment block, but `goalLines` is not declared until line 317 (`const goalLines = computeGoalLines(...)`). JavaScript `const` has a temporal dead zone, so accessing it before declaration causes a runtime error.
+**Impact**: 346 of 527 upcoming matches have zero predictions. Every call returns HTTP 500.
 
-**Impact:** Every statistical prediction call fails. This is being called repeatedly by `pre-match-predictions` and `batch-generate-predictions`, resulting in hundreds of failed invocations (visible in logs). **346 out of 527 upcoming matches have no prediction at all.**
+**Fix**: Redeploy `generate-statistical-prediction` edge function, then verify with a test invocation.
 
-**Fix:** Move the volatility adjustment block (lines 264-270) to after line 317 where `goalLines` is computed, or compute `goalLines` earlier.
-
-### 2. SEO hardcoded URLs still point to `ai-goal.lovable.app`
-`src/components/SEOHead.tsx` and `src/pages/Landing.tsx` have hardcoded `https://ai-goal.lovable.app` instead of the custom domain `goalgpt.io`. This hurts SEO since canonical URLs and structured data point to the wrong domain.
-
-**Fix:** Replace hardcoded URLs with `https://goalgpt.io` or dynamically use `window.location.origin`.
+### 2. 12 matches stuck in "live" status
+12 matches show `status = 'live'` but none are stale (all started within the last 3 hours), so these may be legitimately live right now. No action needed unless they persist past the 3-hour window.
 
 ---
 
 ## MEDIUM Issues (Should Fix)
 
-### 3. Prediction coverage gap
-- 330 total predictions exist across 4,423 matches
-- 194 of 330 have AI reasoning (59%) — 136 predictions are stats-only with no reasoning
-- Average confidence is 0.539 (reasonable) with min 0.01 (some outliers near zero)
-- 42% outcome accuracy (44/104 reviewed) — acceptable but could improve
+### 3. Low prediction coverage
+- Only 330 predictions across 4,423 total matches (7.5%)
+- 346 upcoming matches have no prediction at all (due to the crash above)
+- Once the edge function is redeployed, trigger `pre-match-predictions` to backfill
 
-### 4. Console warning: `Function components cannot be given refs`
-The `Trans` component from `react-i18next` in `Landing.tsx` is receiving a ref it cannot handle. This is a non-breaking warning but indicates improper component usage.
+### 4. Model accuracy below benchmarks
+- Outcome accuracy: 42.3% (44/104) — below the 45-50% benchmark for 1X2
+- BTTS accuracy: 52.9% (55/104) — barely above coin flip
+- Average goals error: 1.97 — nearly 2 goals off per match
+- O/U 2.5 accuracy: 54.8% (57/104)
+- Exact score hits: 11.5% (12/104) — acceptable for exact scores
 
-### 5. Model accuracy metrics need attention
-- Average goals error of 1.97 is high (nearly 2 goals off per match)
-- Exact score hits: 12/104 (11.5%) — reasonable for exact scores
-- BTTS accuracy: 55/104 (52.9%) — barely above coin flip
-- Outcome accuracy: 42.3% — below the ~45-50% benchmark for 1X2
+**Recommendation**: After deploying the fix and generating new predictions, run `compute-model-performance` to recalibrate weights.
 
-### 6. 12 matches stuck in "live" status
-There are 12 matches with `status = 'live'` — these may be stale if no actual live matches are happening. The 3-hour cleanup in `auto-sync` should catch these, but they persist.
+### 5. 2 predictions with very low confidence (< 0.05)
+These outliers suggest edge cases where the model had insufficient data. Consider clamping minimum confidence to 0.10.
 
 ---
 
 ## MINOR Issues (Nice to Fix)
 
-### 7. JSON-LD cleanup not implemented
-In `Landing.tsx`, the `useEffect` at line 39 adds a `<script type="application/ld+json">` element but the cleanup function may not remove previous scripts on re-render, leading to duplicate structured data.
-
-### 8. Missing `landing.sign_up` translation key
-Line 91 uses a fallback `t("landing.sign_up", "Sign Up")` — this key doesn't exist in either `en.json` or `de.json`, so it always uses the fallback string (English) even in German mode.
-
-### 9. React Router v6 deprecation warnings
-Console shows warnings about `v7_startTransition` and `v7_relativeSplatPath` future flags. Non-breaking but should be addressed before upgrading.
-
----
-
-## Performance Insights
-
-- Edge functions boot in ~22-31ms (fast)
-- `generate-statistical-prediction` is being called rapidly in loops (every ~1s) and always failing, wasting compute
-- `sync-football-data` is healthy, fetching data with 7,285+ API calls remaining
-- No database query performance issues detected
-- Frontend query caching is configured well (30s stale time, no window refocus)
+### 6. React Router v6 deprecation warnings
+Console shows `v7_startTransition` and `v7_relativeSplatPath` future flag warnings. Non-breaking but should be addressed before React Router v7 migration.
 
 ---
 
 ## Stable Components (Confirmed Working)
 
-- Authentication system (Google login verified in auth logs)
-- Match data sync pipeline (`sync-football-data` operates correctly)
-- i18n routing system (EN/DE prefixes work)
-- Dashboard rendering and league filtering
-- Match detail page structure
-- Community voting and comments system
-- Profile management
-- Auto-sync mode detection logic
+- Authentication system (Google OAuth + email login with localized callback)
+- Database schema and RLS policies (properly configured)
+- Match data sync pipeline (`sync-football-data` operational)
+- i18n system (EN/DE translations complete, including `sign_up` key)
+- SEO URLs (corrected to `goalgpt.io`)
+- Frontend routing with `/:lang/` prefixes
+- Query caching (30s stale time, no window refocus)
+- Edge function boot times (~20-30ms)
+- Landing page mobile header (responsive layout fixed)
 
 ---
 
 ## Implementation Plan
 
-### Step 1: Fix the `goalLines` crash (Critical)
-In `supabase/functions/generate-statistical-prediction/index.ts`:
-- Move `const goalLines = computeGoalLines(lambdaHome, lambdaAway)` from line 317 to before line 264 (before the volatility adjustment block)
-- Move `const goalDist = computeGoalDistribution(lambdaHome, lambdaAway)` alongside it
-- Redeploy the edge function
+### Step 1: Redeploy the `generate-statistical-prediction` edge function
+The code is already fixed in the repo. Just needs deployment and verification.
 
-### Step 2: Fix SEO URLs
-In `src/components/SEOHead.tsx` and `src/pages/Landing.tsx`:
-- Replace `https://ai-goal.lovable.app` with `https://goalgpt.io`
+### Step 2: Trigger prediction generation
+After successful deployment, invoke `pre-match-predictions` to generate predictions for the 346 upcoming matches currently missing them.
 
-### Step 3: Add missing translation key
-In `src/i18n/de.json`: add `"sign_up": "Registrieren"` under `landing`
-In `src/i18n/en.json`: add `"sign_up": "Sign Up"` under `landing`
+### Step 3: Run model recalibration
+Invoke `compute-model-performance` to update weights based on the 104 reviewed matches.
 
-### Step 4: Trigger batch prediction regeneration
-After deploying the fix, invoke `pre-match-predictions` to generate predictions for the 346 matches currently missing them.
+### Step 4: (Optional) Clamp minimum confidence
+Add a `Math.max(0.10, confidence)` floor in the statistical prediction function to prevent near-zero confidence outliers.
 
