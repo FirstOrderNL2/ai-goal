@@ -108,12 +108,20 @@ export default function Landing() {
             {t("landing.hero_subtitle")}
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
-            <Button size="lg" className="text-base px-8 h-12" asChild>
-              <Link to={`${prefix}/login`}>{t("landing.hero_cta")} <ChevronRight className="ml-1 h-4 w-4" /></Link>
-            </Button>
-            <Button size="lg" variant="outline" className="text-base px-8 h-12" asChild>
-              <Link to={`${prefix}/login`}>{t("landing.hero_cta_secondary")}</Link>
-            </Button>
+            {session ? (
+              <Button size="lg" className="text-base px-8 h-12" asChild>
+                <Link to={`${prefix}/dashboard`}>{t("landing.dashboard", "Dashboard")} <ChevronRight className="ml-1 h-4 w-4" /></Link>
+              </Button>
+            ) : (
+              <>
+                <Button size="lg" className="text-base px-8 h-12" asChild>
+                  <Link to={`${prefix}/login`}>{t("landing.hero_cta")} <ChevronRight className="ml-1 h-4 w-4" /></Link>
+                </Button>
+                <Button size="lg" variant="outline" className="text-base px-8 h-12" asChild>
+                  <Link to={`${prefix}/login`}>{t("landing.hero_cta_secondary")}</Link>
+                </Button>
+              </>
+            )}
           </div>
           <p className="text-sm text-muted-foreground pt-2">{t("landing.hero_tagline")}</p>
         </div>
