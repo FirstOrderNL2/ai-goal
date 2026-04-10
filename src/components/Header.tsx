@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { Activity, BarChart3, Users, Database, Trophy, Menu, X, Moon, Sun, LogOut, Shield } from "lucide-react";
 import logoImg from "@/assets/logo.png";
 import { Button } from "@/components/ui/button";
@@ -14,25 +14,30 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-
-const navItems = [
-  { to: "/dashboard", label: "Dashboard", icon: Activity },
-  { to: "/standings", label: "Standings", icon: Trophy },
-  { to: "/leaderboard", label: "Leaderboard", icon: Shield },
-  { to: "/accuracy", label: "Accuracy", icon: BarChart3 },
-  { to: "/teams", label: "Teams", icon: Users },
-  { to: "/statsbomb", label: "StatsBomb", icon: Database },
-];
+import { useTranslation } from "react-i18next";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 export function Header() {
   const location = useLocation();
+  const { lang } = useParams<{ lang: string }>();
+  const prefix = `/${lang || "en"}`;
   const { user, signOut } = useAuth();
+  const { t } = useTranslation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dark, setDark] = useState(() => !document.documentElement.classList.contains("light"));
   const [profile, setProfile] = useState<{ display_name: string | null; avatar_url: string | null }>({
     display_name: null,
     avatar_url: null,
   });
+
+  const navItems = [
+    { to: `${prefix}/dashboard`, label: t("nav.dashboard"), icon: Activity },
+    { to: `${prefix}/standings`, label: t("nav.standings"), icon: Trophy },
+    { to: `${prefix}/leaderboard`, label: t("nav.leaderboard"), icon: Shield },
+    { to: `${prefix}/accuracy`, label: t("nav.accuracy"), icon: BarChart3 },
+    { to: `${prefix}/teams`, label: t("nav.teams"), icon: Users },
+    { to: `${prefix}/statsbomb`, label: t("nav.statsbomb"), icon: Database },
+  ];
 
   useEffect(() => {
     if (!user) return;
@@ -66,7 +71,7 @@ export function Header() {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
       <div className="container flex h-14 items-center justify-between">
-        <Link to="/dashboard" className="flex items-center gap-2">
+        <Link to={`${prefix}/dashboard`} className="flex items-center gap-2">
           <img src={logoImg} alt="GoalGPT logo" className="h-8 w-8 rounded" />
           <span className="text-lg font-bold tracking-tight">
             Goal<span className="text-primary">GPT</span>
@@ -90,6 +95,8 @@ export function Header() {
             </Link>
           ))}
 
+          <LanguageSwitcher />
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="relative ml-1 h-8 w-8 rounded-full p-0">
@@ -110,19 +117,19 @@ export function Header() {
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
-                <Link to="/profile" className="cursor-pointer">
+                <Link to={`${prefix}/profile`} className="cursor-pointer">
                   <Shield className="mr-2 h-4 w-4" />
-                  Profile settings
+                  {t("nav.profile_settings")}
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={toggleTheme}>
                 {dark ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
-                {dark ? "Light mode" : "Dark mode"}
+                {dark ? t("nav.light_mode") : t("nav.dark_mode")}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={signOut} className="text-destructive focus:text-destructive">
                 <LogOut className="mr-2 h-4 w-4" />
-                Sign out
+                {t("nav.sign_out")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -130,6 +137,7 @@ export function Header() {
 
         {/* Mobile controls */}
         <div className="flex sm:hidden items-center gap-1">
+          <LanguageSwitcher />
           <Button variant="ghost" size="icon" onClick={toggleTheme} className="h-8 w-8">
             {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
@@ -142,7 +150,6 @@ export function Header() {
       {/* Mobile menu */}
       {mobileOpen && (
         <nav className="sm:hidden border-t border-border bg-background px-4 pb-4 pt-2 space-y-1">
-          {/* User info */}
           <div className="flex items-center gap-3 px-3 py-2.5">
             <Avatar className="h-8 w-8">
               {profile.avatar_url && <AvatarImage src={profile.avatar_url} alt={displayName} />}
@@ -170,12 +177,12 @@ export function Header() {
             </Link>
           ))}
           <Link
-            to="/profile"
+            to={`${prefix}/profile`}
             onClick={() => setMobileOpen(false)}
             className="flex items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
           >
             <Shield className="h-4 w-4" />
-            Profile settings
+            {t("nav.profile_settings")}
           </Link>
           <div className="h-px bg-border my-1" />
           <button
@@ -183,7 +190,7 @@ export function Header() {
             className="flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors"
           >
             <LogOut className="h-4 w-4" />
-            Sign out
+            {t("nav.sign_out")}
           </button>
         </nav>
       )}
