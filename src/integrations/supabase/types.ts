@@ -277,6 +277,7 @@ export type Database = {
           goal_line_accuracy: Json | null
           id: string
           mae_goals: number | null
+          numeric_weights: Json | null
           ou_25_accuracy: number | null
           outcome_accuracy: number | null
           period_end: string
@@ -296,6 +297,7 @@ export type Database = {
           goal_line_accuracy?: Json | null
           id?: string
           mae_goals?: number | null
+          numeric_weights?: Json | null
           ou_25_accuracy?: number | null
           outcome_accuracy?: number | null
           period_end: string
@@ -315,6 +317,7 @@ export type Database = {
           goal_line_accuracy?: Json | null
           id?: string
           mae_goals?: number | null
+          numeric_weights?: Json | null
           ou_25_accuracy?: number | null
           outcome_accuracy?: number | null
           period_end?: string
@@ -402,6 +405,62 @@ export type Database = {
             columns: ["team_id"]
             isOneToOne: false
             referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prediction_reviews: {
+        Row: {
+          actual_outcome: string | null
+          btts_correct: boolean | null
+          confidence_at_prediction: number | null
+          created_at: string | null
+          error_type: string | null
+          goals_error: number | null
+          id: string
+          league: string | null
+          match_id: string
+          ou_correct: boolean | null
+          outcome_correct: boolean | null
+          predicted_outcome: string | null
+          score_correct: boolean | null
+        }
+        Insert: {
+          actual_outcome?: string | null
+          btts_correct?: boolean | null
+          confidence_at_prediction?: number | null
+          created_at?: string | null
+          error_type?: string | null
+          goals_error?: number | null
+          id?: string
+          league?: string | null
+          match_id: string
+          ou_correct?: boolean | null
+          outcome_correct?: boolean | null
+          predicted_outcome?: string | null
+          score_correct?: boolean | null
+        }
+        Update: {
+          actual_outcome?: string | null
+          btts_correct?: boolean | null
+          confidence_at_prediction?: number | null
+          created_at?: string | null
+          error_type?: string | null
+          goals_error?: number | null
+          id?: string
+          league?: string | null
+          match_id?: string
+          ou_correct?: boolean | null
+          outcome_correct?: boolean | null
+          predicted_outcome?: string | null
+          score_correct?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prediction_reviews_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: true
+            referencedRelation: "matches"
             referencedColumns: ["id"]
           },
         ]

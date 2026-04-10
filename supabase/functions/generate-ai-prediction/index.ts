@@ -708,6 +708,39 @@ ${relevantReviews.length > 0
 Apply the lessons above. Avoid repeating the same mistakes.`;
     }
 
+    // ── RECENT ERRORS: query prediction_reviews for same teams/league ──
+    const { data: recentErrors } = await supabase
+      .from("prediction_reviews")
+      .select("*")
+      .or(`league.eq.${match.league}`)
+      .eq("outcome_correct", false)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    let recentErrorsBlock = "";
+    if (recentErrors && recentErrors.length > 0) {
+      // Group errors by type
+      const errorCounts: Record<string, number> = {};
+      for (const e of recentErrors) {
+        if (e.error_type) errorCounts[e.error_type] = (errorCounts[e.error_type] || 0) + 1;
+      }
+      const topErrors = Object.entries(errorCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+      // Find team-specific errors
+      const teamErrors = recentErrors.filter((e: any) => {
+        // We don't have team_id on prediction_reviews, but we can match by league
+        return e.league === match.league;
+      });
+
+      recentErrorsBlock = `\n\nRECENT PREDICTION ERRORS (${match.league}):
+Top error patterns: ${topErrors.map(([type, count]) => `${type} (${count}x)`).join(", ")}
+${teamErrors.length > 0 ? `Recent ${match.league} mistakes: ${teamErrors.slice(0, 5).map((e: any) =>
+        `predicted ${e.predicted_outcome} → actual ${e.actual_outcome} (conf: ${Math.round((e.confidence_at_prediction || 0) * 100)}%, error: ${e.error_type})`
+      ).join("; ")}` : ""}
+⚠️ LEARN FROM THESE: Adjust your reasoning to avoid repeating these specific error patterns.`;
+    }
+    learningBlock += recentErrorsBlock;
+
     // Fetch model_performance for calibration awareness
     const { data: perfData } = await supabase
       .from("model_performance")

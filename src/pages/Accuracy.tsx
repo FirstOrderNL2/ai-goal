@@ -1,18 +1,36 @@
 import { Header } from "@/components/Header";
 import { useCompletedMatches } from "@/hooks/useMatches";
-import { useLatestPerformance } from "@/hooks/useModelPerformance";
+import { useLatestPerformance, useModelPerformance } from "@/hooks/useModelPerformance";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from "recharts";
-import { CheckCircle, XCircle, Target, TrendingUp, AlertTriangle, BarChart3, Activity } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, ScatterChart, Scatter, Cell } from "recharts";
+import { CheckCircle, XCircle, Target, TrendingUp, AlertTriangle, BarChart3, Activity, Brain, Zap } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+
+function usePredictionReviews() {
+  return useQuery({
+    queryKey: ["prediction-reviews"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("prediction_reviews")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      return data;
+    },
+  });
+}
 
 export default function Accuracy() {
   const { data: completed, isLoading } = useCompletedMatches();
   const { data: perf, isLoading: perfLoading } = useLatestPerformance();
+  const { data: perfHistory } = useModelPerformance();
+  const { data: reviews } = usePredictionReviews();
   const [computing, setComputing] = useState(false);
   const [reviewing, setReviewing] = useState(false);
 
@@ -74,10 +92,87 @@ export default function Accuracy() {
         }))
     : [];
 
+  // Learning trend from performance history
+  const trendData = (perfHistory || [])
+    .slice()
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    .map((p, i) => ({
+      period: `#${i + 1}`,
+      outcome: p.outcome_accuracy,
+      ou: p.ou_25_accuracy,
+      btts: p.btts_accuracy,
+      date: new Date(p.created_at).toLocaleDateString(),
+    }));
+
+  // Determine if learning is happening
+  const isLearning = trendData.length >= 3 && (() => {
+    const recent = trendData.slice(-3);
+    const earlier = trendData.slice(0, Math.max(1, trendData.length - 3));
+    const recentAvg = recent.reduce((s, d) => s + d.outcome, 0) / recent.length;
+    const earlierAvg = earlier.reduce((s, d) => s + d.outcome, 0) / earlier.length;
+    return recentAvg > earlierAvg;
+  })();
+
+  // Error pattern analysis from prediction_reviews
+  const errorPatterns = (() => {
+    if (!reviews || reviews.length === 0) return [];
+    const counts: Record<string, number> = {};
+    for (const r of reviews) {
+      if (r.error_type) counts[r.error_type] = (counts[r.error_type] || 0) + 1;
+    }
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => ({ type, count, pct: Math.round((count / reviews.length) * 100) }));
+  })();
+
+  // League breakdown from reviews
+  const leagueBreakdown = (() => {
+    if (!reviews || reviews.length === 0) return [];
+    const leagues: Record<string, { correct: number; total: number }> = {};
+    for (const r of reviews) {
+      const l = r.league || "Unknown";
+      if (!leagues[l]) leagues[l] = { correct: 0, total: 0 };
+      leagues[l].total++;
+      if (r.outcome_correct) leagues[l].correct++;
+    }
+    return Object.entries(leagues)
+      .filter(([, d]) => d.total >= 3)
+      .map(([league, d]) => ({
+        league,
+        accuracy: Math.round((d.correct / d.total) * 100),
+        total: d.total,
+      }))
+      .sort((a, b) => b.total - a.total);
+  })();
+
+  // Confidence calibration scatter
+  const confCalData = (() => {
+    if (!reviews || reviews.length === 0) return [];
+    const buckets: Record<number, { correct: number; total: number }> = {};
+    for (const r of reviews) {
+      const conf = Math.round((r.confidence_at_prediction || 0) * 10) * 10;
+      if (!buckets[conf]) buckets[conf] = { correct: 0, total: 0 };
+      buckets[conf].total++;
+      if (r.outcome_correct) buckets[conf].correct++;
+    }
+    return Object.entries(buckets)
+      .filter(([, d]) => d.total >= 2)
+      .map(([conf, d]) => ({
+        predicted: Number(conf),
+        actual: Math.round((d.correct / d.total) * 100),
+        count: d.total,
+      }))
+      .sort((a, b) => a.predicted - b.predicted);
+  })();
+
   const chartConfig = {
     accuracy: { label: "Accuracy %", color: "hsl(var(--primary))" },
     predicted: { label: "Predicted", color: "hsl(var(--primary))" },
     actual: { label: "Actual", color: "hsl(var(--chart-2))" },
+    outcome: { label: "1X2", color: "hsl(var(--primary))" },
+    ou: { label: "O/U", color: "hsl(var(--chart-2))" },
+    btts: { label: "BTTS", color: "hsl(var(--chart-3))" },
+    count: { label: "Count", color: "hsl(var(--chart-4))" },
   };
 
   const summaryChartData = [
@@ -99,6 +194,7 @@ export default function Accuracy() {
     setReviewing(true);
     try {
       await supabase.functions.invoke("batch-review-matches", { method: "POST", body: {} });
+      window.location.reload();
     } catch (e) { console.error(e); }
     setReviewing(false);
   }
@@ -116,7 +212,16 @@ export default function Accuracy() {
               {totalMatches} matches evaluated • {perf ? `Last computed ${new Date(perf.created_at).toLocaleDateString()}` : "Live computation from match data"}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            {trendData.length >= 3 && (
+              <Badge variant={isLearning ? "default" : "destructive"} className="text-xs">
+                {isLearning ? (
+                  <><Brain className="h-3 w-3 mr-1" /> Learning ✅</>
+                ) : (
+                  <><Zap className="h-3 w-3 mr-1" /> Static ⚠️</>
+                )}
+              </Badge>
+            )}
             <button onClick={runBatchReview} disabled={reviewing}
               className="text-xs px-3 py-1.5 rounded-md bg-muted text-muted-foreground hover:bg-muted/80 disabled:opacity-50">
               {reviewing ? "Reviewing…" : "Batch Review"}
@@ -180,6 +285,32 @@ export default function Accuracy() {
               </Card>
             </div>
 
+            {/* Learning Trend Chart */}
+            {trendData.length >= 2 && (
+              <Card className="border-border/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Brain className="h-4 w-4 text-primary" />
+                    Learning Trend
+                  </CardTitle>
+                  <p className="text-[10px] text-muted-foreground">Accuracy over successive computations</p>
+                </CardHeader>
+                <CardContent>
+                  <ChartContainer config={chartConfig} className="h-48">
+                    <LineChart data={trendData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis dataKey="period" stroke="hsl(var(--muted-foreground))" fontSize={10} />
+                      <YAxis domain={[0, 100]} stroke="hsl(var(--muted-foreground))" fontSize={10} />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Line type="monotone" dataKey="outcome" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} name="1X2" />
+                      <Line type="monotone" dataKey="ou" stroke="hsl(var(--chart-2))" strokeWidth={2} dot={{ r: 3 }} name="O/U" />
+                      <Line type="monotone" dataKey="btts" stroke="hsl(var(--chart-3))" strokeWidth={2} dot={{ r: 3 }} name="BTTS" />
+                    </LineChart>
+                  </ChartContainer>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Charts Row */}
             <div className="grid gap-4 md:grid-cols-2">
               {/* Accuracy Breakdown */}
@@ -200,8 +331,27 @@ export default function Accuracy() {
                 </CardContent>
               </Card>
 
-              {/* Calibration Chart */}
-              {calibrationData.length > 0 && (
+              {/* Confidence Calibration */}
+              {confCalData.length > 0 ? (
+                <Card className="border-border/50">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Confidence Calibration</CardTitle>
+                    <p className="text-[10px] text-muted-foreground">Predicted confidence vs actual hit rate (diagonal = perfect)</p>
+                  </CardHeader>
+                  <CardContent>
+                    <ChartContainer config={chartConfig} className="h-44">
+                      <LineChart data={confCalData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis dataKey="predicted" stroke="hsl(var(--muted-foreground))" fontSize={10} label={{ value: "Confidence %", position: "bottom", fontSize: 10 }} />
+                        <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} domain={[0, 100]} />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <Line type="monotone" dataKey="predicted" stroke="hsl(var(--muted-foreground))" strokeDasharray="5 5" dot={false} name="Perfect" />
+                        <Line type="monotone" dataKey="actual" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 4 }} name="Actual" />
+                      </LineChart>
+                    </ChartContainer>
+                  </CardContent>
+                </Card>
+              ) : calibrationData.length > 0 ? (
                 <Card className="border-border/50">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm">Calibration Plot</CardTitle>
@@ -211,13 +361,70 @@ export default function Accuracy() {
                     <ChartContainer config={chartConfig} className="h-44">
                       <LineChart data={calibrationData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                        <XAxis dataKey="predicted" stroke="hsl(var(--muted-foreground))" fontSize={10} label={{ value: "Predicted %", position: "bottom", fontSize: 10 }} />
+                        <XAxis dataKey="predicted" stroke="hsl(var(--muted-foreground))" fontSize={10} />
                         <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} domain={[0, 100]} />
                         <ChartTooltip content={<ChartTooltipContent />} />
                         <Line type="monotone" dataKey="predicted" stroke="hsl(var(--muted-foreground))" strokeDasharray="5 5" dot={false} name="Perfect" />
                         <Line type="monotone" dataKey="actual" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 4 }} name="Actual" />
                       </LineChart>
                     </ChartContainer>
+                  </CardContent>
+                </Card>
+              ) : null}
+            </div>
+
+            {/* Error Patterns + League Breakdown Row */}
+            <div className="grid gap-4 md:grid-cols-2">
+              {/* Error Patterns */}
+              {errorPatterns.length > 0 && (
+                <Card className="border-border/50">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-destructive" />
+                      Error Patterns
+                    </CardTitle>
+                    <p className="text-[10px] text-muted-foreground">Most common prediction mistakes</p>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {errorPatterns.slice(0, 8).map((ep) => (
+                      <div key={ep.type} className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">{ep.type.replace(/_/g, " ")}</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-20 h-1.5 rounded-full bg-muted">
+                            <div
+                              className="h-full rounded-full bg-destructive/70"
+                              style={{ width: `${Math.min(100, ep.pct * 2)}%` }}
+                            />
+                          </div>
+                          <span className="font-mono w-10 text-right">{ep.count}×</span>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* League Breakdown */}
+              {leagueBreakdown.length > 0 && (
+                <Card className="border-border/50">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Per-League Accuracy</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {leagueBreakdown.map((lb) => (
+                      <div key={lb.league} className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground truncate max-w-[140px]">{lb.league}</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-20 h-1.5 rounded-full bg-muted">
+                            <div
+                              className={`h-full rounded-full ${lb.accuracy >= 50 ? "bg-primary" : lb.accuracy >= 35 ? "bg-yellow-500" : "bg-destructive"}`}
+                              style={{ width: `${lb.accuracy}%` }}
+                            />
+                          </div>
+                          <span className="font-mono w-16 text-right">{lb.accuracy}% ({lb.total})</span>
+                        </div>
+                      </div>
+                    ))}
                   </CardContent>
                 </Card>
               )}

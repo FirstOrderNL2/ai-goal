@@ -323,6 +323,74 @@ Deno.serve(async (req) => {
     const periodEnd = now.toISOString().slice(0, 10);
     const periodStart = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
+    // ===== Compute numeric weights for statistical engine =====
+    const numericWeights: Record<string, number> = {};
+
+    // Home bias adjustment: if home win predictions systematically wrong
+    if (homeAdvTotalCount >= 20) {
+      const homeWinRate = homeAdvCorrectCount / homeAdvTotalCount;
+      // If we over-predict home wins (predict correctly < 40%), reduce home bias
+      if (homeWinRate < 0.40) numericWeights.home_bias_adjustment = -0.03;
+      else if (homeWinRate > 0.55) numericWeights.home_bias_adjustment = 0.02;
+      else numericWeights.home_bias_adjustment = 0;
+    }
+
+    // Draw calibration: track how often draws are correctly predicted
+    let drawPredCount = 0, drawCorrectCount = 0, actualDrawCount = 0;
+    for (const match of matches) {
+      const pred = predMap.get(match.id);
+      if (!pred) continue;
+      const hw = Number(pred.home_win) || 0;
+      const dr = Number(pred.draw) || 0;
+      const aw = Number(pred.away_win) || 0;
+      const isDraw = match.goals_home === match.goals_away;
+      if (isDraw) actualDrawCount++;
+      const predDraw = dr >= hw && dr >= aw;
+      if (predDraw) {
+        drawPredCount++;
+        if (isDraw) drawCorrectCount++;
+      }
+    }
+    const actualDrawRate = total > 0 ? actualDrawCount / total : 0.26;
+    const predDrawRate = total > 0 ? drawPredCount / total : 0.26;
+    numericWeights.draw_calibration = Math.round(Math.max(-0.03, Math.min(0.03, (actualDrawRate - predDrawRate))) * 1000) / 1000;
+
+    // O/U calibration: if O/U consistently biased one way
+    if (ou25Acc < 48) {
+      // Count how many were predicted over vs actual
+      let predOverCount = 0, actualOverCount = 0;
+      for (const match of matches) {
+        const pred = predMap.get(match.id);
+        if (!pred) continue;
+        if (pred.over_under_25 === "over") predOverCount++;
+        if ((match.goals_home ?? 0) + (match.goals_away ?? 0) > 2.5) actualOverCount++;
+      }
+      const overBias = total > 0 ? (predOverCount - actualOverCount) / total : 0;
+      numericWeights.ou_lambda_adjustment = Math.round(Math.max(-0.15, Math.min(0.15, -overBias * 0.3)) * 1000) / 1000;
+    } else {
+      numericWeights.ou_lambda_adjustment = 0;
+    }
+
+    // Confidence deflator: if high-confidence predictions don't hit well enough
+    if (highConfTotalCount >= 5) {
+      const highConfAcc = highConfCorrectCount / highConfTotalCount;
+      if (highConfAcc < 0.55) {
+        numericWeights.confidence_deflator = Math.round(Math.max(-0.15, (highConfAcc - 0.65) * 0.5) * 1000) / 1000;
+      } else {
+        numericWeights.confidence_deflator = 0;
+      }
+    }
+
+    // League-specific penalties
+    for (const [league, data] of Object.entries(leagueAccuracy)) {
+      if (data.total >= 10) {
+        const acc = data.correct / data.total;
+        if (acc < 0.35) {
+          numericWeights[`league_penalty_${league.replace(/\s/g, "_").toLowerCase()}`] = Math.round((0.35 - acc) * -1 * 1000) / 1000;
+        }
+      }
+    }
+
     const { error: upsertErr } = await supabase
       .from("model_performance")
       .upsert({
@@ -341,6 +409,7 @@ Deno.serve(async (req) => {
         goal_line_accuracy: glAccuracy,
         feature_weights: featureWeights,
         weak_areas: weaknesses,
+        numeric_weights: numericWeights,
       });
 
     if (upsertErr) throw upsertErr;

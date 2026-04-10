@@ -6,6 +6,32 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+function classifyError(pred: any, match: any): string {
+  const hw = Number(pred.home_win) || 0;
+  const dr = Number(pred.draw) || 0;
+  const aw = Number(pred.away_win) || 0;
+  const conf = Number(pred.model_confidence) || 0;
+  const gh = match.goals_home;
+  const ga = match.goals_away;
+  const actualHome = gh > ga;
+  const actualDraw = gh === ga;
+  const actualAway = ga > gh;
+  const predHome = hw > dr && hw > aw;
+  const predDraw = dr >= hw && dr >= aw && !predHome;
+
+  const totalGoals = gh + ga;
+  const predXG = (Number(pred.expected_goals_home) || 0) + (Number(pred.expected_goals_away) || 0);
+
+  if (predHome && actualDraw) return "missed_draw";
+  if (predHome && actualAway) return conf >= 0.6 ? "overconfident_home" : "wrong_winner";
+  if (predDraw && (actualHome || actualAway)) return "false_draw";
+  if (!predHome && !predDraw && actualHome) return conf >= 0.6 ? "overconfident_away" : "wrong_winner";
+  if (totalGoals > predXG + 2) return "goals_underestimated";
+  if (totalGoals < predXG - 2) return "goals_overestimated";
+
+  return "general_miss";
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -19,77 +45,141 @@ Deno.serve(async (req) => {
     // Find completed matches without post-match reviews
     const { data: unreviewed, error } = await supabase
       .from("matches")
-      .select("id")
+      .select("id, goals_home, goals_away, league")
       .eq("status", "completed")
-      .is("ai_post_match_review", null)
       .not("goals_home", "is", null)
       .order("match_date", { ascending: false })
-      .limit(10);
+      .limit(200);
 
     if (error) throw error;
     if (!unreviewed || unreviewed.length === 0) {
-      return new Response(JSON.stringify({ message: "No unreviewed matches", processed: 0 }), {
+      return new Response(JSON.stringify({ message: "No completed matches", processed: 0 }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Check that predictions exist for these matches
     const matchIds = unreviewed.map((m: any) => m.id);
-    const { data: preds } = await supabase
-      .from("predictions")
-      .select("match_id")
-      .in("match_id", matchIds);
 
-    const predMatchIds = new Set((preds || []).map((p: any) => p.match_id));
-    const reviewable = unreviewed.filter((m: any) => predMatchIds.has(m.id));
+    // Fetch predictions and existing reviews in chunks
+    const chunkSize = 200;
+    const allPreds: any[] = [];
+    const allReviews: any[] = [];
+    for (let i = 0; i < matchIds.length; i += chunkSize) {
+      const chunk = matchIds.slice(i, i + chunkSize);
+      const [{ data: preds }, { data: reviews }] = await Promise.all([
+        supabase.from("predictions").select("*").in("match_id", chunk),
+        supabase.from("prediction_reviews").select("match_id").in("match_id", chunk),
+      ]);
+      if (preds) allPreds.push(...preds);
+      if (reviews) allReviews.push(...reviews);
+    }
 
-    let processed = 0;
-    let errors = 0;
-    const results: any[] = [];
+    const predMap = new Map(allPreds.map((p: any) => [p.match_id, p]));
+    const reviewedSet = new Set(allReviews.map((r: any) => r.match_id));
 
-    // Process in batches of 3 with delays
-    for (let i = 0; i < Math.min(reviewable.length, 6); i++) {
+    // Build reviews for matches that have predictions but no review yet
+    const newReviews: any[] = [];
+    for (const match of unreviewed) {
+      if (reviewedSet.has(match.id)) continue;
+      const pred = predMap.get(match.id);
+      if (!pred) continue;
+
+      const gh = match.goals_home!;
+      const ga = match.goals_away!;
+      const hw = Number(pred.home_win) || 0;
+      const dr = Number(pred.draw) || 0;
+      const aw = Number(pred.away_win) || 0;
+
+      const actualOutcome = gh > ga ? "home" : gh === ga ? "draw" : "away";
+      const predHome = hw > dr && hw > aw;
+      const predDraw = dr >= hw && dr >= aw && !predHome;
+      const predictedOutcome = predHome ? "home" : predDraw ? "draw" : "away";
+      const outcomeCorrect = actualOutcome === predictedOutcome;
+
+      const totalGoals = gh + ga;
+      const predOver = pred.over_under_25 === "over";
+      const ouCorrect = (totalGoals > 2.5 && predOver) || (totalGoals <= 2.5 && !predOver);
+
+      const actualBtts = gh > 0 && ga > 0;
+      const predBtts = pred.btts === "yes";
+      const bttsCorrect = actualBtts === predBtts;
+
+      const scoreCorrect = pred.predicted_score_home === gh && pred.predicted_score_away === ga;
+
+      const goalsError = Math.abs((Number(pred.expected_goals_home) || 0) - gh) +
+        Math.abs((Number(pred.expected_goals_away) || 0) - ga);
+
+      const errorType = outcomeCorrect ? null : classifyError(pred, match);
+
+      newReviews.push({
+        match_id: match.id,
+        predicted_outcome: predictedOutcome,
+        actual_outcome: actualOutcome,
+        outcome_correct: outcomeCorrect,
+        ou_correct: ouCorrect,
+        btts_correct: bttsCorrect,
+        score_correct: scoreCorrect,
+        confidence_at_prediction: Number(pred.model_confidence) || 0,
+        error_type: errorType,
+        goals_error: Math.round(goalsError * 100) / 100,
+        league: match.league,
+      });
+    }
+
+    if (newReviews.length > 0) {
+      // Insert in chunks
+      for (let i = 0; i < newReviews.length; i += 50) {
+        const chunk = newReviews.slice(i, i + 50);
+        const { error: insertErr } = await supabase.from("prediction_reviews").upsert(chunk, { onConflict: "match_id" });
+        if (insertErr) console.error("Review insert error:", insertErr);
+      }
+    }
+
+    // Also trigger AI post-match reviews for unreviewed matches (limited)
+    const unreviewedAI = unreviewed.filter((m: any) =>
+      predMap.has(m.id) && !m.ai_post_match_review
+    );
+
+    let aiProcessed = 0;
+    for (let i = 0; i < Math.min(unreviewedAI.length, 6); i++) {
+      // Check if match has ai_post_match_review
+      const { data: matchCheck } = await supabase
+        .from("matches")
+        .select("ai_post_match_review")
+        .eq("id", unreviewedAI[i].id)
+        .single();
+
+      if (matchCheck?.ai_post_match_review) continue;
+
       try {
         const res = await fetch(`${supabaseUrl}/functions/v1/generate-post-match-review`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${serviceKey}`,
+            Authorization: `Bearer ${serviceKey}`,
           },
-          body: JSON.stringify({ match_id: reviewable[i].id }),
+          body: JSON.stringify({ match_id: unreviewedAI[i].id }),
         });
 
         if (res.ok) {
-          const data = await res.json();
-          results.push({ match_id: reviewable[i].id, success: true, score: data.accuracy_score });
-          processed++;
-        } else {
-          const status = res.status;
-          if (status === 429) {
-            // Rate limited — stop processing
-            results.push({ match_id: reviewable[i].id, success: false, error: "rate_limited" });
-            break;
-          }
-          errors++;
-          results.push({ match_id: reviewable[i].id, success: false, error: `status_${status}` });
+          aiProcessed++;
+        } else if (res.status === 429) {
+          break;
         }
       } catch (e) {
-        errors++;
-        results.push({ match_id: reviewable[i].id, success: false, error: e.message });
+        console.error("AI review error:", e);
       }
 
-      // Delay between requests
-      if (i < reviewable.length - 1) {
+      if (i < unreviewedAI.length - 1) {
         await new Promise(r => setTimeout(r, 3000));
       }
     }
 
     return new Response(JSON.stringify({
       success: true,
-      total_unreviewed: unreviewed.length,
-      processed,
-      errors,
-      results,
+      prediction_reviews_created: newReviews.length,
+      ai_reviews_processed: aiProcessed,
+      total_completed: unreviewed.length,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

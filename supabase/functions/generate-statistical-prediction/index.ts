@@ -116,7 +116,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch data in parallel
+    // Fetch data in parallel (including model_performance for calibration)
     const [
       { data: odds },
       { data: features },
@@ -126,6 +126,7 @@ Deno.serve(async (req) => {
       { data: refereeData },
       { data: homeDiscipline },
       { data: awayDiscipline },
+      { data: perfData },
     ] = await Promise.all([
       supabase.from("odds").select("*").eq("match_id", match_id).single(),
       supabase.from("match_features").select("*").eq("match_id", match_id).single(),
@@ -144,7 +145,18 @@ Deno.serve(async (req) => {
       match.referee ? supabase.from("referees").select("*").eq("name", match.referee).maybeSingle() : Promise.resolve({ data: null }),
       supabase.from("team_discipline").select("*").eq("team_id", match.team_home_id).order("season", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("team_discipline").select("*").eq("team_id", match.team_away_id).order("season", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("model_performance").select("numeric_weights").order("created_at", { ascending: false }).limit(1).maybeSingle(),
     ]);
+
+    // Extract numeric calibration weights
+    const nw = (perfData as any)?.numeric_weights || {};
+    const homeBiasAdj: number = nw.home_bias_adjustment || 0;
+    const drawCalAdj: number = nw.draw_calibration || 0;
+    const ouLambdaAdj: number = nw.ou_lambda_adjustment || 0;
+    const confDeflator: number = nw.confidence_deflator || 0;
+    // League-specific penalty
+    const leagueKey = `league_penalty_${match.league.replace(/\s/g, "_").toLowerCase()}`;
+    const leaguePenalty: number = nw[leagueKey] || 0;
 
     // Compute league averages
     const leagueComplete = (leagueMatches || []).filter((m: any) => m.goals_home != null);
@@ -206,6 +218,10 @@ Deno.serve(async (req) => {
       lambdaAway = leagueAwayAvg;
     }
 
+    // Apply O/U calibration adjustment to lambdas
+    lambdaHome = lambdaHome + ouLambdaAdj;
+    lambdaAway = lambdaAway + ouLambdaAdj;
+
     // Ensure reasonable bounds
     lambdaHome = Math.max(0.3, Math.min(lambdaHome, 4.0));
     lambdaAway = Math.max(0.3, Math.min(lambdaAway, 4.0));
@@ -251,6 +267,21 @@ Deno.serve(async (req) => {
       // High volatility: slightly increase over probability, increase draw
       goalLines.over_2_5 = Math.min(0.95, goalLines.over_2_5 + volAdjust * 0.5);
       goalLines.under_2_5 = Math.max(0.05, 1 - goalLines.over_2_5);
+    }
+
+    // Apply home bias calibration from learning loop
+    if (homeBiasAdj !== 0) {
+      poissonHW += homeBiasAdj;
+      poissonAW -= homeBiasAdj * 0.5;
+      poissonDR -= homeBiasAdj * 0.5;
+    }
+
+    // Apply draw calibration from learning loop
+    if (drawCalAdj !== 0) {
+      poissonDR += drawCalAdj;
+      const shift = drawCalAdj / 2;
+      poissonHW -= shift;
+      poissonAW -= shift;
     }
 
     // Competition-specific adjustments (cup draw boost)
@@ -348,7 +379,10 @@ Deno.serve(async (req) => {
     // Volatility penalty on confidence
     let volPenalty = 0;
     if (volatilityScore > 0.65) volPenalty = Math.min(0.05, (volatilityScore - 0.65) * 0.15);
-    const confidence = Math.round(Math.max(0.05, (dataQuality * 0.6 + marketAgreement * 0.4) - volPenalty) * 1000) / 1000;
+
+    // Apply confidence deflator from learning loop + league penalty
+    const totalConfPenalty = volPenalty + Math.abs(confDeflator) + Math.abs(leaguePenalty);
+    const confidence = Math.round(Math.max(0.05, (dataQuality * 0.6 + marketAgreement * 0.4) - totalConfPenalty) * 1000) / 1000;
 
     // Store volatility_score in match_features
     if (features) {
