@@ -47,13 +47,13 @@ export default function Login() {
     setLoading(false);
   };
 
-  const handleAppleSignIn = async () => {
+  const handleOAuthSignIn = async (provider: "apple" | "google") => {
     setLoading(true);
-    const result = await lovable.auth.signInWithOAuth("apple", {
+    const result = await lovable.auth.signInWithOAuth(provider, {
       redirect_uri: window.location.origin,
     });
     if (result.error) {
-      toast.error("Apple sign-in failed");
+      toast.error(`${provider.charAt(0).toUpperCase() + provider.slice(1)} sign-in failed`);
       setLoading(false);
       return;
     }
