@@ -861,6 +861,39 @@ export type Database = {
         }
         Relationships: []
       }
+      user_performance: {
+        Row: {
+          accuracy_score: number
+          correct_votes: number
+          id: string
+          last_updated: string
+          tier: string
+          total_votes: number
+          trust_score: number
+          user_id: string
+        }
+        Insert: {
+          accuracy_score?: number
+          correct_votes?: number
+          id?: string
+          last_updated?: string
+          tier?: string
+          total_votes?: number
+          trust_score?: number
+          user_id: string
+        }
+        Update: {
+          accuracy_score?: number
+          correct_votes?: number
+          id?: string
+          last_updated?: string
+          tier?: string
+          total_votes?: number
+          trust_score?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
