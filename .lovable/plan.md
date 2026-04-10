@@ -1,26 +1,35 @@
 
 
-# User Profile Dropdown in Header
+# Profile Settings Page
 
 ## What changes
 
-Replace the standalone LogOut button in the header with an avatar-based dropdown menu that shows the user's name, email, and avatar (from the `profiles` table or auth metadata), plus theme toggle and sign-out options.
+Create a `/profile` page where users can edit their display name and upload a custom avatar. Add a link to it from the header dropdown. Create an `avatars` storage bucket for avatar uploads.
 
 ## Implementation
 
-### 1. Header.tsx
-- Import `Avatar`, `AvatarImage`, `AvatarFallback` from UI components
-- Import `DropdownMenu`, `DropdownMenuTrigger`, `DropdownMenuContent`, `DropdownMenuItem`, `DropdownMenuSeparator`, `DropdownMenuLabel`
-- Read `user` from `useAuth()` 
-- Query `profiles` table for `display_name` and `avatar_url` using `useEffect` + `supabase.from('profiles').select(...)` filtered by `user.id`
-- Replace the LogOut button (desktop) with a `DropdownMenu` triggered by an `Avatar` showing the user's photo (fallback: initials from display_name or email)
-- Dropdown content: user name + email label, separator, theme toggle item, separator, sign out item (red text)
-- In mobile menu: add user info row at top + sign out button at bottom
+### 1. Database: Create `avatars` storage bucket
+Migration to create a public `avatars` bucket with RLS policies allowing authenticated users to upload/update/delete their own files (path prefixed by `user_id`).
 
-### Files modified
-| File | Change |
+### 2. New page: `src/pages/Profile.tsx`
+- Form with display name input (pre-filled from profiles table)
+- Avatar section: current avatar preview + file upload button
+- On avatar upload: upload to `avatars/{user_id}/avatar.png`, get public URL, update `profiles.avatar_url`
+- On name save: update `profiles.display_name`
+- Success/error toasts
+
+### 3. Update `src/components/Header.tsx`
+- Add "Profile settings" menu item in the dropdown (both desktop and mobile) linking to `/profile`
+
+### 4. Update `src/App.tsx`
+- Add `/profile` route wrapped in `ProtectedRoute`
+
+## Files
+
+| File | Action |
 |---|---|
-| `src/components/Header.tsx` | Add avatar dropdown with profile data, replace bare LogOut button |
-
-No database or backend changes needed — profiles table and auth already exist.
+| Migration | Create `avatars` storage bucket + RLS policies |
+| `src/pages/Profile.tsx` | New profile settings page |
+| `src/components/Header.tsx` | Add profile link to dropdown |
+| `src/App.tsx` | Add `/profile` route |
 
