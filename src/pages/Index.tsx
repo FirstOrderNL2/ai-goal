@@ -4,7 +4,7 @@ import { MatchCard } from "@/components/MatchCard";
 import { LeagueFilter } from "@/components/LeagueFilter";
 import { useDashboardMatches, useCompletedMatches } from "@/hooks/useMatches";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Activity, Clock } from "lucide-react";
+import { Activity, Clock, Flame } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -83,6 +83,26 @@ const Index = () => {
             )}
           </section>
         )}
+
+        {/* Trending / Hot Matches */}
+        {(() => {
+          const hot = upcoming.filter((m) => (m.hotScore ?? 0) >= 10).sort((a, b) => (b.hotScore ?? 0) - (a.hotScore ?? 0)).slice(0, 6);
+          if (hot.length === 0) return null;
+          return (
+            <section className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Flame className="h-4 w-4 text-orange-400" />
+                <h2 className="text-lg font-semibold">Trending Matches</h2>
+                <span className="text-xs text-muted-foreground">({hot.length})</span>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {hot.map((m) => (
+                  <MatchCard key={m.id} match={m} />
+                ))}
+              </div>
+            </section>
+          );
+        })()}
 
         {/* Upcoming */}
         <section className="space-y-4">

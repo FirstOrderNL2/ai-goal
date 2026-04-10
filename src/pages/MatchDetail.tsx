@@ -17,6 +17,7 @@ import { CommunityVoteBar } from "@/components/CommunityVoteBar";
 import { CommentsSection } from "@/components/CommentsSection";
 import { AICommunityComparisonCard } from "@/components/AICommunityComparisonCard";
 import { ValueBetCard } from "@/components/ValueBetCard";
+import { ConfidenceEngineCard } from "@/components/ConfidenceEngineCard";
 import { LiveMatchCard } from "@/components/LiveMatchCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -226,7 +227,17 @@ export default function MatchDetail() {
           />
         ) : null}
 
-        {/* 3b. Pre-Match vs HT Comparison */}
+        {/* 3b. Confidence Engine 2.0 */}
+        {prediction && !isPredictionIncomplete && (
+          <ConfidenceEngineCard
+            prediction={prediction}
+            features={features}
+            matchContext={matchContext as any}
+            matchId={match.id}
+          />
+        )}
+
+        {/* 3c. Pre-Match vs HT Comparison */}
         {prediction && !isPredictionIncomplete && (
           <PredictionComparisonCard
             prediction={prediction}
