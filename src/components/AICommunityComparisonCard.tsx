@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Brain, Users, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Brain, Users, CheckCircle2, AlertTriangle, Shield } from "lucide-react";
 import { useEffect } from "react";
 
 interface AICommunityComparisonCardProps {
@@ -30,16 +30,48 @@ export function AICommunityComparisonCard({
     queryFn: async () => {
       const { data, error } = await supabase
         .from("prediction_votes")
-        .select("vote_type")
+        .select("vote_type, user_id")
         .eq("prediction_id", predictionId);
       if (error) throw error;
-      const likes = data.filter((v) => v.vote_type === "like").length;
-      const dislikes = data.filter((v) => v.vote_type === "dislike").length;
-      return { likes, dislikes, total: likes + dislikes };
+
+      // Fetch trust scores for voters
+      const userIds = [...new Set(data.map((v) => v.user_id))];
+      const { data: perfData } = userIds.length > 0
+        ? await supabase.from("user_performance").select("user_id, trust_score").in("user_id", userIds)
+        : { data: [] };
+
+      const trustMap = new Map<string, number>();
+      for (const p of perfData || []) {
+        trustMap.set(p.user_id, Number(p.trust_score));
+      }
+
+      let weightedLikes = 0;
+      let weightedTotal = 0;
+      let likes = 0;
+      let dislikes = 0;
+
+      for (const v of data) {
+        const trust = trustMap.get(v.user_id) ?? 0.5;
+        if (v.vote_type === "like") {
+          likes++;
+          weightedLikes += trust;
+        } else {
+          dislikes++;
+        }
+        weightedTotal += trust;
+      }
+
+      return {
+        likes,
+        dislikes,
+        total: likes + dislikes,
+        weightedPct: weightedTotal > 0 ? Math.round((weightedLikes / weightedTotal) * 100) : 0,
+        rawPct: (likes + dislikes) > 0 ? Math.round((likes / (likes + dislikes)) * 100) : 0,
+        hasWeights: (perfData || []).length > 0,
+      };
     },
   });
 
-  // Realtime subscription
   useEffect(() => {
     const channel = supabase
       .channel(`comparison-votes-${predictionId}`)
@@ -52,10 +84,9 @@ export function AICommunityComparisonCard({
 
   if (!votes || votes.total === 0) return null;
 
-  const communityPct = Math.round((votes.likes / votes.total) * 100);
+  const communityPct = votes.hasWeights ? votes.weightedPct : votes.rawPct;
   const isAligned = communityPct >= 50;
 
-  // AI prediction summary
   const hw = Number(prediction.home_win);
   const d = Number(prediction.draw);
   const aw = Number(prediction.away_win);
@@ -76,14 +107,20 @@ export function AICommunityComparisonCard({
             <Brain className="h-4 w-4 text-primary" />
             AI vs Community
           </CardTitle>
-          <Badge variant={isAligned ? "default" : "secondary"} className={isAligned ? "bg-green-500/20 text-green-500 border-green-500/30" : "bg-amber-500/20 text-amber-500 border-amber-500/30"}>
-            {isAligned ? <><CheckCircle2 className="h-3 w-3 mr-1" /> Aligned</> : <><AlertTriangle className="h-3 w-3 mr-1" /> Divergent</>}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {votes.hasWeights && (
+              <Badge variant="outline" className="text-[10px] gap-1">
+                <Shield className="h-2.5 w-2.5" /> Weighted
+              </Badge>
+            )}
+            <Badge variant={isAligned ? "default" : "secondary"} className={isAligned ? "bg-green-500/20 text-green-500 border-green-500/30" : "bg-amber-500/20 text-amber-500 border-amber-500/30"}>
+              {isAligned ? <><CheckCircle2 className="h-3 w-3 mr-1" /> Aligned</> : <><AlertTriangle className="h-3 w-3 mr-1" /> Divergent</>}
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-3 gap-2 text-sm">
-          {/* Header row */}
           <div className="text-muted-foreground font-medium" />
           <div className="flex items-center gap-1 font-semibold text-primary justify-center">
             <Brain className="h-3 w-3" /> AI
@@ -92,28 +129,30 @@ export function AICommunityComparisonCard({
             <Users className="h-3 w-3" /> Community
           </div>
 
-          {/* Prediction */}
           <div className="text-muted-foreground py-2">Prediction</div>
           <div className="text-center py-2 font-medium">{aiOutcome} ({aiPct}%)</div>
           <div className="text-center py-2 font-medium">👍 {communityPct}% support</div>
 
-          {/* Confidence */}
           <div className="text-muted-foreground py-2 border-t border-border/50">Confidence</div>
           <div className="text-center py-2 border-t border-border/50">{confTier}</div>
           <div className="text-center py-2 border-t border-border/50">{communitySentiment}</div>
 
-          {/* Score */}
           <div className="text-muted-foreground py-2 border-t border-border/50">Predicted Score</div>
           <div className="text-center py-2 border-t border-border/50 font-mono font-semibold">
             {prediction.predicted_score_home ?? "?"} - {prediction.predicted_score_away ?? "?"}
           </div>
           <div className="text-center py-2 border-t border-border/50 text-muted-foreground">—</div>
 
-          {/* Votes */}
           <div className="text-muted-foreground py-2 border-t border-border/50">Sample Size</div>
           <div className="text-center py-2 border-t border-border/50 text-muted-foreground">—</div>
           <div className="text-center py-2 border-t border-border/50">{votes.total} vote{votes.total !== 1 ? "s" : ""}</div>
         </div>
+
+        {votes.hasWeights && votes.rawPct !== votes.weightedPct && (
+          <p className="text-[10px] text-muted-foreground text-center mt-2">
+            Raw: {votes.rawPct}% → Weighted: {votes.weightedPct}% (adjusted by user accuracy)
+          </p>
+        )}
       </CardContent>
     </Card>
   );
