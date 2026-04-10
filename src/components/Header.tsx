@@ -56,6 +56,9 @@ export function Header() {
           <Button variant="ghost" size="icon" onClick={toggleTheme} className="ml-1 h-8 w-8">
             {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
+          <Button variant="ghost" size="icon" onClick={signOut} className="h-8 w-8 text-muted-foreground hover:text-destructive">
+            <LogOut className="h-4 w-4" />
+          </Button>
         </nav>
 
         {/* Mobile controls */}
