@@ -1,48 +1,64 @@
 
 
-# GoalGPT Homepage & Rebrand Implementation
+# Phase 2: Confidence Engine 2.0 + Hot Match Detection
 
 ## Summary
-Create a new public landing page at `/` that markets GoalGPT to visitors, rebrand from "FootballAI" to "GoalGPT", and move the authenticated dashboard to `/dashboard`.
+Create a unified Confidence 2.0 score on the match detail page that blends statistical certainty, data quality, community alignment, and volatility. Add a "Hot Matches" section to the dashboard highlighting high-engagement or high-disagreement matches.
 
-## Routing Changes (`src/App.tsx`)
-- Add new public route: `/ → Landing` (no auth required)
-- Move current Index (dashboard) to `/dashboard` (protected)
-- Add new `Landing.tsx` page import
-- Update Login redirect to `/dashboard` after sign-in
+## Part A: Confidence Engine 2.0 Component
 
-## New File: `src/pages/Landing.tsx`
-A full marketing homepage with these sections, all in one file:
+### New: `src/components/ConfidenceEngineCard.tsx`
+A card displayed on `MatchDetail.tsx` (after the AI Verdict) showing a composite confidence score broken into 4 pillars:
 
-1. **Hero** — Bold headline "Why gamble... when you can predict with intelligence?", subheadline, two CTA buttons (Create Free Account links to `/login`, View Predictions links to `/login`), animated gradient background with subtle grid pattern
-2. **Value Explanation** — "Stop guessing. Start understanding." with 4 icon cards (Historical data, Trends, AI engine, Live insights)
-3. **How It Works** — 5-step vertical timeline with numbered steps and icons
-4. **Features** — "Why GoalGPT is different" with 4 feature cards (AI + Stats, Transparent, Smart Insights, Community)
-5. **Example Insight** — Mock prediction card showing Bayern vs Real Madrid example with probability bars
-6. **Trust & Disclaimer** — Clear, professional notice about predictions being informational only
-7. **Final CTA** — "Ready to stop guessing?" with signup buttons
-8. **Footer** — Links, disclaimer repeat, copyright
+| Pillar | Weight | Source | Calculation |
+|---|---|---|---|
+| Statistical Certainty | 40% | `prediction` | Gap between top probability and second-highest (stronger gap = higher certainty) |
+| Data Quality | 20% | `features`, `matchContext` | Completeness score: has lineups, h2h, form, injuries, referee data |
+| Community Alignment | 20% | `prediction_votes` + `user_performance` | Weighted agreement between AI pick and community weighted sentiment |
+| Volatility Adjustment | 20% | `match_features.volatility_score` | Inverse of volatility (low volatility = higher confidence) |
 
-Design: Uses existing dark theme CSS variables. Green neon accent (already `--primary`). Glassmorphism cards, subtle animations via Tailwind.
+**Formula**: `confidence_2 = (stat * 0.4) + (quality * 0.2) + (alignment * 0.2) + ((1 - volatility) * 0.2)`
 
-## Rebrand Updates
-- **`src/components/Header.tsx`**: Change "FootballAI" → "GoalGPT" in logo text
-- **`src/pages/Login.tsx`**: Change "FootballAI" → "GoalGPT" in card header
-- **`index.html`**: Update `<title>` to "GoalGPT"
+**UI**: Circular or segmented gauge showing overall score (0-100%), with a breakdown showing each pillar's contribution. Color-coded: Green (70%+), Yellow (40-69%), Red (<40%).
 
-## Updated: `src/pages/Login.tsx`
-- Redirect authenticated users to `/dashboard` instead of `/`
-- Update branding text
+### Updated: `src/pages/MatchDetail.tsx`
+- Insert `ConfidenceEngineCard` after the AI Verdict section
+- Pass `prediction`, `features`, `matchContext`, and match ID as props
+
+## Part B: Hot Match Detection on Dashboard
+
+### New: `src/components/HotMatchBadge.tsx`
+A small flame badge component that renders on `MatchCard` when a match qualifies as "hot".
+
+### Updated: `src/hooks/useMatches.ts`
+- In `enrichMatches`, also fetch `prediction_votes` counts and `match_features.volatility_score` for upcoming matches
+- Compute a `hotScore` per match based on:
+  - Vote count (engagement)
+  - Like/dislike ratio divergence (disagreement)
+  - Volatility score
+- Attach `hotScore` to the enriched match object
+
+### Updated: `src/lib/types.ts`
+- Add optional `hotScore?: number` to the `Match` type
+
+### Updated: `src/components/MatchCard.tsx`
+- Show `HotMatchBadge` (flame icon + "Hot") when `match.hotScore` exceeds threshold
+
+### Updated: `src/pages/Index.tsx`
+- Add a new "Trending Matches" section before Upcoming, showing matches sorted by hotScore (top 3-6)
+- Only renders if there are hot matches
 
 ## Files
 
 | File | Action |
 |---|---|
-| `src/pages/Landing.tsx` | New public marketing homepage |
-| `src/App.tsx` | Add `/` landing route, move dashboard to `/dashboard` |
-| `src/components/Header.tsx` | Rebrand to GoalGPT |
-| `src/pages/Login.tsx` | Rebrand + redirect to `/dashboard` |
-| `index.html` | Update page title |
+| `src/components/ConfidenceEngineCard.tsx` | New composite confidence card |
+| `src/components/HotMatchBadge.tsx` | New flame badge component |
+| `src/pages/MatchDetail.tsx` | Add ConfidenceEngineCard |
+| `src/hooks/useMatches.ts` | Enrich with vote counts + hotScore |
+| `src/lib/types.ts` | Add hotScore field |
+| `src/components/MatchCard.tsx` | Show hot badge |
+| `src/pages/Index.tsx` | Add Trending Matches section |
 
-No database changes needed.
+No database changes needed — all data already exists in `prediction_votes`, `match_features`, `match_context`, and `predictions`.
 
