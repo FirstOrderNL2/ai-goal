@@ -1,8 +1,18 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Activity, BarChart3, Shield, Users, Database, Trophy, Menu, X, Moon, Sun, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: Activity },
@@ -14,9 +24,25 @@ const navItems = [
 
 export function Header() {
   const location = useLocation();
-  const { signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dark, setDark] = useState(() => !document.documentElement.classList.contains("light"));
+  const [profile, setProfile] = useState<{ display_name: string | null; avatar_url: string | null }>({
+    display_name: null,
+    avatar_url: null,
+  });
+
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from("profiles")
+      .select("display_name, avatar_url")
+      .eq("user_id", user.id)
+      .single()
+      .then(({ data }) => {
+        if (data) setProfile(data);
+      });
+  }, [user]);
 
   const toggleTheme = () => {
     if (dark) {
@@ -26,6 +52,14 @@ export function Header() {
     }
     setDark(!dark);
   };
+
+  const displayName = profile.display_name || user?.email?.split("@")[0] || "User";
+  const initials = displayName
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
@@ -53,12 +87,37 @@ export function Header() {
               <span>{label}</span>
             </Link>
           ))}
-          <Button variant="ghost" size="icon" onClick={toggleTheme} className="ml-1 h-8 w-8">
-            {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </Button>
-          <Button variant="ghost" size="icon" onClick={signOut} className="h-8 w-8 text-muted-foreground hover:text-destructive">
-            <LogOut className="h-4 w-4" />
-          </Button>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="relative ml-1 h-8 w-8 rounded-full p-0">
+                <Avatar className="h-8 w-8">
+                  {profile.avatar_url && <AvatarImage src={profile.avatar_url} alt={displayName} />}
+                  <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+                </Avatar>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel className="font-normal">
+                <div className="flex flex-col gap-1">
+                  <p className="text-sm font-medium leading-none">{displayName}</p>
+                  {user?.email && (
+                    <p className="text-xs leading-none text-muted-foreground">{user.email}</p>
+                  )}
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={toggleTheme}>
+                {dark ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
+                {dark ? "Light mode" : "Dark mode"}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={signOut} className="text-destructive focus:text-destructive">
+                <LogOut className="mr-2 h-4 w-4" />
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </nav>
 
         {/* Mobile controls */}
@@ -75,6 +134,18 @@ export function Header() {
       {/* Mobile menu */}
       {mobileOpen && (
         <nav className="sm:hidden border-t border-border bg-background px-4 pb-4 pt-2 space-y-1">
+          {/* User info */}
+          <div className="flex items-center gap-3 px-3 py-2.5">
+            <Avatar className="h-8 w-8">
+              {profile.avatar_url && <AvatarImage src={profile.avatar_url} alt={displayName} />}
+              <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+            </Avatar>
+            <div className="flex flex-col">
+              <span className="text-sm font-medium">{displayName}</span>
+              {user?.email && <span className="text-xs text-muted-foreground">{user.email}</span>}
+            </div>
+          </div>
+          <div className="h-px bg-border my-1" />
           {navItems.map(({ to, label, icon: Icon }) => (
             <Link
               key={to}
@@ -90,6 +161,14 @@ export function Header() {
               {label}
             </Link>
           ))}
+          <div className="h-px bg-border my-1" />
+          <button
+            onClick={() => { setMobileOpen(false); signOut(); }}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors"
+          >
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </button>
         </nav>
       )}
     </header>
