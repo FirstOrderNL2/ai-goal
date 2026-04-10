@@ -15,6 +15,7 @@ import { VolatilityCard } from "@/components/VolatilityCard";
 import { PredictionHistoryCard } from "@/components/PredictionHistoryCard";
 import { CommunityVoteBar } from "@/components/CommunityVoteBar";
 import { CommentsSection } from "@/components/CommentsSection";
+import { AICommunityComparisonCard } from "@/components/AICommunityComparisonCard";
 import { LiveMatchCard } from "@/components/LiveMatchCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
