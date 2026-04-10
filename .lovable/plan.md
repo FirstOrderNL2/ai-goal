@@ -1,153 +1,141 @@
 
 
-# Referee & Card-Based Volatility Model
+# AI Learning & Improvement Evaluation — Findings + Implementation Plan
 
-## Approach
+## Diagnosis: Is the AI Actually Learning?
 
-Since API-Football's free/standard tier doesn't provide a dedicated referee statistics endpoint, we'll **derive referee and team discipline data from completed match fixtures** already in our database, supplemented by the referee name from the fixture response (which API-Football includes as `fixture.referee`).
+### What EXISTS today
 
-## Changes
+| Component | Status | Verdict |
+|---|---|---|
+| Past predictions stored | ✅ 131 completed matches with predictions | Working |
+| Performance metrics computed | ✅ 17 `model_performance` rows spanning Jan–Apr 2026 | Working |
+| Calibration data tracked | ✅ Bucket-level predicted vs actual rates | Working |
+| Weak areas identified | ✅ Championship flagged at 26%, overconfidence detected | Working |
+| AI reads performance data | ✅ `generate-ai-prediction` injects calibration warnings into prompt | Partial |
+| Statistical model reads performance data | ❌ `generate-statistical-prediction` never queries `model_performance` | **BROKEN** |
+| Feature weights applied to Poisson | ❌ Weights are text descriptions, never numeric adjustments | **BROKEN** |
+| Accuracy improves over time | ⚠️ First-half: 7.8% → Second-half: 43.1% (but first half was stale AI-override data) | Inconclusive |
+| Confidence calibration | ❌ High-confidence (≥70%) hits 50%, Medium (40-69%) hits 24%, Low (<40%) hits 40% — inverted | **BROKEN** |
 
-### 1. Database: Two new tables + one column on matches
+### Root Problems
 
-**Migration:**
+1. **The statistical engine is blind to its own mistakes.** `generate-statistical-prediction` never reads `model_performance`. It uses the same Poisson lambdas regardless of historical accuracy. The "learning loop" only exists as text injected into the AI prompt — the AI can read it but cannot change the math.
+
+2. **Feature weights are descriptive, not actionable.** They say things like "Home wins 40% — moderate advantage" but are never converted into numeric adjustments applied to the Poisson model.
+
+3. **Confidence is uncalibrated.** The 50-60% predicted probability bucket has a 41% actual hit rate, and the 80-90% bucket has 0% actual hits (2 matches). Medium-confidence predictions (the bulk) hit only 24%.
+
+4. **No per-match learning log exists.** There's no record of "what we predicted vs what happened vs what went wrong" at the individual match level.
+
+5. **No automatic feedback trigger.** `compute-model-performance` must be called manually — it's not triggered after match completion.
+
+### Answer: The system is **NOT learning**. It collects data but never acts on it.
+
+---
+
+## Implementation Plan
+
+### Step 1: Create `prediction_reviews` table (learning log)
+**Migration**: New table that stores per-match post-prediction analysis.
 
 ```sql
--- Store referee name on each match
-ALTER TABLE matches ADD COLUMN referee text;
-
--- Referee aggregate stats (computed, not fetched)
-CREATE TABLE referees (
+CREATE TABLE prediction_reviews (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name text UNIQUE NOT NULL,
-  matches_officiated integer DEFAULT 0,
-  yellow_avg numeric DEFAULT 0,
-  red_avg numeric DEFAULT 0,
-  foul_avg numeric DEFAULT 0,
-  penalty_avg numeric DEFAULT 0,
-  updated_at timestamptz DEFAULT now()
+  match_id uuid NOT NULL,
+  predicted_outcome text,
+  actual_outcome text,
+  outcome_correct boolean,
+  ou_correct boolean,
+  btts_correct boolean,
+  score_correct boolean,
+  confidence_at_prediction numeric,
+  error_type text, -- 'overconfident_home', 'missed_draw', 'goals_overestimated', etc.
+  goals_error numeric, -- MAE for this match
+  league text,
+  created_at timestamptz DEFAULT now(),
+  UNIQUE(match_id)
 );
-ALTER TABLE referees ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Anyone can view referees" ON referees FOR SELECT TO public USING (true);
-
--- Team discipline stats (computed from match events)
-CREATE TABLE team_discipline (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  team_id uuid NOT NULL,
-  season integer NOT NULL,
-  yellow_avg numeric DEFAULT 0,
-  red_avg numeric DEFAULT 0,
-  foul_avg numeric DEFAULT 0,
-  matches_counted integer DEFAULT 0,
-  updated_at timestamptz DEFAULT now(),
-  UNIQUE(team_id, season)
-);
-ALTER TABLE team_discipline ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Anyone can view team discipline" ON team_discipline FOR SELECT TO public USING (true);
+ALTER TABLE prediction_reviews ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Anyone can view reviews" ON prediction_reviews FOR SELECT TO public USING (true);
 ```
 
-### 2. Sync: Capture referee name + card events from fixtures
-**File**: `supabase/functions/sync-football-data/index.ts`
+### Step 2: Auto-populate `prediction_reviews` after match completion
+**File**: `supabase/functions/batch-review-matches/index.ts`
 
-- When upserting upcoming/recent matches, extract `f.fixture.referee` and store in the new `referee` column.
-- In `full` mode, for completed matches, fetch `/fixtures/statistics` (already partially done for team stats) and extract yellow/red card totals per team.
-- Aggregate into `referees` and `team_discipline` tables.
+After syncing completed matches, for each match with a prediction:
+- Compare predicted outcome vs actual
+- Classify error type (overconfident, missed draw, goals overestimated, etc.)
+- Insert into `prediction_reviews`
 
-### 3. New Edge Function: `compute-volatility`
-**File**: `supabase/functions/compute-volatility/index.ts`
+### Step 3: Make `feature_weights` numeric and actionable
+**Migration**: Add `numeric_weights` jsonb column to `model_performance`.
 
-Computes referee and discipline aggregates from completed matches:
-- Query completed matches with referee names, join with events/statistics to count cards.
-- Upsert into `referees` table (avg yellow, avg red per referee).
-- Upsert into `team_discipline` table (avg yellow, avg red per team per season).
-- Called periodically (daily) or after each sync.
+**File**: `supabase/functions/compute-model-performance/index.ts`
 
-### 4. Integrate volatility into statistical prediction
+Compute numeric adjustments from historical accuracy:
+- `home_bias_adjustment`: if home win predictions are systematically wrong → output a -0.03 to +0.03 multiplier
+- `draw_calibration`: if draws are under/over-predicted → output adjustment
+- `ou_calibration`: if O/U 2.5 is biased → adjust lambda scaling
+- `confidence_deflator`: if high-confidence predictions hit <55% → apply a confidence penalty factor
+
+### Step 4: Statistical engine reads and applies calibration
 **File**: `supabase/functions/generate-statistical-prediction/index.ts`
 
-After computing Poisson lambdas, fetch:
-- Referee stats for this match's referee
-- Team discipline for both teams
+Before computing final probabilities:
+1. Query latest `model_performance` row
+2. Read `numeric_weights`
+3. Apply adjustments:
+   - Shift Poisson HW/DR/AW probabilities by the calibration deltas
+   - Scale confidence by `confidence_deflator`
+   - Apply league-specific accuracy penalty (e.g., Championship → widen confidence interval)
 
-Compute volatility score:
-```
-volatility = (referee_strictness * 0.4) + (team_aggression * 0.4) + (match_importance * 0.2)
-```
+### Step 5: Automatic feedback trigger
+**File**: `supabase/functions/auto-sync/index.ts`
 
-Where:
-- `referee_strictness` = normalized (referee yellow_avg / league avg yellow per match)
-- `team_aggression` = normalized avg of both teams' yellow_avg
-- `match_importance` = 1.0 for knockout/cup, 0.7 for top-of-table, 0.5 otherwise
+After syncing completed matches, automatically call:
+1. `batch-review-matches` (populate prediction_reviews)
+2. `compute-model-performance` (recalculate metrics with new data)
 
-Apply subtle adjustments (capped at ±5%):
-- **Over/Under**: High volatility → +2-3% over probability
-- **BTTS**: High volatility → +2% BTTS probability  
-- **1X2**: High volatility → reduce favorite margin by 1-2%, increase draw
-- **Confidence**: High volatility → -3-5% confidence
+This closes the loop: sync → review → recalibrate → predict.
 
-Store volatility score in `match_features` (new column `volatility_score`).
+### Step 6: Enhanced Accuracy Dashboard
+**File**: `src/pages/Accuracy.tsx`
 
-### 5. AI Reasoning Integration
+Add:
+- **Learning trend chart**: Plot outcome accuracy by week to show if it's improving
+- **Confidence calibration scatter**: Predicted confidence vs actual hit rate (should be diagonal)
+- **Error pattern table**: Most common error types from `prediction_reviews`
+- **Per-league breakdown**: Accuracy by competition with sample sizes
+- **Learning status indicator**: "Learning ✅" or "Static ⚠️" based on whether accuracy trend is positive
+
+### Step 7: AI Self-Reflection in reasoning
 **File**: `supabase/functions/generate-ai-prediction/index.ts`
 
-Pass referee stats and volatility score to AI prompt so it can explain:
-- "Strict referee (4.2 yellows/game avg) increases chaos risk"
-- "Both teams aggressive (combined 5.1 yellows/game), expect a heated match"
+When predicting a match, also query recent `prediction_reviews` for:
+- Same teams (did we get their last match wrong?)
+- Same league (systematic league bias?)
 
-### 6. UI: Volatility & Referee Card on Match Detail
-**File**: `src/components/VolatilityCard.tsx` (new)
+Inject this as "RECENT ERRORS" context so AI can reference specific past mistakes in its reasoning.
 
-Display:
-- Referee name + stats (avg yellows, avg reds)
-- Expected yellow cards for this match
-- Red card probability (low/medium/high)
-- Volatility indicator: 🟢 Low / 🟡 Medium / 🔴 High
-- High-risk match flag (⚠️) if volatility > 0.75
-
-**File**: `src/pages/MatchDetail.tsx` — add VolatilityCard to the match detail page.
-
-### 7. Types update
-**File**: `src/lib/types.ts` — add `referee` to Match type, add Referee and TeamDiscipline interfaces.
-
-## Data Flow
-
-```text
-API-Football fixture.referee ──► matches.referee column
-                                      │
-compute-volatility (daily) ◄──────────┘
-   │
-   ├──► referees table (aggregated stats)
-   └──► team_discipline table (aggregated stats)
-                │
-generate-statistical-prediction
-   │  reads referee + discipline data
-   │  computes volatility_score
-   │  applies ±3-5% adjustments to O/U, BTTS, 1X2
-   └──► predictions (adjusted probabilities)
-                │
-generate-ai-prediction
-   │  reads volatility context
-   └──► ai_reasoning (explains volatility impact)
-```
+---
 
 ## Files Summary
 
 | File | Action |
 |---|---|
-| Migration | Add `referee` column to matches, create `referees` + `team_discipline` tables |
-| `sync-football-data/index.ts` | Extract `fixture.referee` into matches |
-| `supabase/functions/compute-volatility/index.ts` | **New** — aggregate referee/discipline stats |
-| `generate-statistical-prediction/index.ts` | Fetch volatility data, apply ±3-5% adjustments |
-| `generate-ai-prediction/index.ts` | Pass volatility context to AI prompt |
-| `src/components/VolatilityCard.tsx` | **New** — referee stats + volatility display |
-| `src/pages/MatchDetail.tsx` | Add VolatilityCard |
-| `src/lib/types.ts` | Add referee field + new interfaces |
-| `match_features` migration | Add `volatility_score` column |
+| Migration | Create `prediction_reviews` table, add `numeric_weights` to `model_performance` |
+| `batch-review-matches/index.ts` | Auto-populate prediction_reviews for completed matches |
+| `compute-model-performance/index.ts` | Add numeric weight computation |
+| `generate-statistical-prediction/index.ts` | Read and apply calibration from model_performance |
+| `generate-ai-prediction/index.ts` | Inject recent errors context |
+| `auto-sync/index.ts` | Trigger review + recalibrate after sync |
+| `src/pages/Accuracy.tsx` | Add learning trend, calibration scatter, error patterns |
 
-## Constraints Enforced
-
-- Adjustments capped at ±5% — no over-influence
-- Statistical backbone remains source of truth
-- Volatility only adjusts probabilities marginally, never overrides
-- Referee data derived from own database (no extra API calls needed beyond what sync already does)
+## Expected Outcome
+- Statistical model **actually adjusts** based on past accuracy (not just AI prompt text)
+- Confidence scores become meaningful (calibrated to real hit rates)
+- Per-match learning log enables error pattern detection
+- Automatic feedback loop: no manual intervention needed
+- Dashboard proves whether learning is happening with data
 
