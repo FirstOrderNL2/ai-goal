@@ -100,8 +100,8 @@ export function ConfidenceEngineCard({ prediction, features, matchContext, match
     },
   });
 
-  // Fetch referee name from match context (already passed or from match)
-  const refereeName = matchContext?.h2h_summary ? null : null; // We'll get it from match
+  const volRaw = features?.volatility_score;
+  const volatilityRaw = volRaw != null ? Number(volRaw) : 0;
 
   const statCertainty = computeStatCertainty(prediction);
   const dataQuality = computeDataQuality(features, matchContext, refereeName);
