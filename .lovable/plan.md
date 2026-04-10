@@ -1,80 +1,48 @@
 
 
-# AI vs Crowd Intelligence System — Phased Implementation Plan
+# GoalGPT Homepage & Rebrand Implementation
 
-This is a large initiative. I recommend breaking it into 3 focused phases, implementing Phase 1 first.
+## Summary
+Create a new public landing page at `/` that markets GoalGPT to visitors, rebrand from "FootballAI" to "GoalGPT", and move the authenticated dashboard to `/dashboard`.
 
-## Phase 1: User Performance Tracking + Smart Community Score (this approval)
+## Routing Changes (`src/App.tsx`)
+- Add new public route: `/ → Landing` (no auth required)
+- Move current Index (dashboard) to `/dashboard` (protected)
+- Add new `Landing.tsx` page import
+- Update Login redirect to `/dashboard` after sign-in
 
-### 1A. Database: `user_performance` table
+## New File: `src/pages/Landing.tsx`
+A full marketing homepage with these sections, all in one file:
 
-New table tracking each user's voting accuracy:
+1. **Hero** — Bold headline "Why gamble... when you can predict with intelligence?", subheadline, two CTA buttons (Create Free Account links to `/login`, View Predictions links to `/login`), animated gradient background with subtle grid pattern
+2. **Value Explanation** — "Stop guessing. Start understanding." with 4 icon cards (Historical data, Trends, AI engine, Live insights)
+3. **How It Works** — 5-step vertical timeline with numbered steps and icons
+4. **Features** — "Why GoalGPT is different" with 4 feature cards (AI + Stats, Transparent, Smart Insights, Community)
+5. **Example Insight** — Mock prediction card showing Bayern vs Real Madrid example with probability bars
+6. **Trust & Disclaimer** — Clear, professional notice about predictions being informational only
+7. **Final CTA** — "Ready to stop guessing?" with signup buttons
+8. **Footer** — Links, disclaimer repeat, copyright
 
-| Column | Type | Notes |
-|---|---|---|
-| id | uuid PK | |
-| user_id | uuid NOT NULL UNIQUE | references auth.users |
-| total_votes | integer | default 0 |
-| correct_votes | integer | default 0 |
-| accuracy_score | numeric | 0-1, default 0 |
-| trust_score | numeric | weighted metric, default 0.5 |
-| tier | text | 'pro' / 'average' / 'low', default 'low' |
-| last_updated | timestamptz | default now() |
+Design: Uses existing dark theme CSS variables. Green neon accent (already `--primary`). Glassmorphism cards, subtle animations via Tailwind.
 
-RLS: public SELECT, authenticated INSERT/UPDATE on own row.
+## Rebrand Updates
+- **`src/components/Header.tsx`**: Change "FootballAI" → "GoalGPT" in logo text
+- **`src/pages/Login.tsx`**: Change "FootballAI" → "GoalGPT" in card header
+- **`index.html`**: Update `<title>` to "GoalGPT"
 
-### 1B. Edge Function: `compute-user-performance`
+## Updated: `src/pages/Login.tsx`
+- Redirect authenticated users to `/dashboard` instead of `/`
+- Update branding text
 
-Batch job that runs after match reviews are computed:
-- For each user with votes on completed matches, check if the prediction they liked/disliked was correct
-- Calculate accuracy_score = correct_votes / total_votes
-- Calculate trust_score using the weighted formula (60% accuracy, 20% volume, 20% consistency)
-- Set tier based on accuracy thresholds
-
-### 1C. Weighted Community Score in `AICommunityComparisonCard`
-
-Replace the simple like-ratio with a trust-weighted score:
-- Fetch voter trust_scores alongside votes
-- Compute: `weighted_score = sum(vote * trust_score) / sum(trust_score)`
-- Display the weighted community confidence instead of raw percentage
-- Show "Weighted by user accuracy" label
-
-### 1D. User Performance Badge on Comments
-
-In `CommentsSection.tsx`, show a small colored badge next to usernames:
-- 🟢 Pro (70%+), 🟡 Average (50-70%), 🔴 New/Low (<50%)
-- Fetched via a join on `user_performance` when loading comments
-
-### 1E. Value Bet Detection Card
-
-New `ValueBetCard.tsx` component on the match detail page:
-- Compare AI model probabilities vs bookmaker implied probabilities (already partially shown in Odds section)
-- Calculate: `value = model_probability - implied_probability`
-- Display value picks with labels: 🔥 High Value (>10%), ⚠️ Marginal (5-10%), ❌ No Value (<5%)
-- Include community agreement indicator
-
-## Phase 2 (future): Confidence Engine 2.0 + Hot Match Detection
-- Blend statistical confidence, community alignment, data quality, and volatility into a unified score
-- Hot/trending match badges on dashboard based on engagement + disagreement
-
-## Phase 3 (future): Leaderboard + Comment Intelligence + Experiment System
-- User leaderboard page showing top predictors
-- AI-generated comment summaries
-- A/B model testing framework
-
-## Files for Phase 1
+## Files
 
 | File | Action |
 |---|---|
-| Migration SQL | Create `user_performance` table with RLS |
-| `supabase/functions/compute-user-performance/index.ts` | New edge function for batch accuracy computation |
-| `src/components/AICommunityComparisonCard.tsx` | Add weighted community score logic |
-| `src/components/CommentsSection.tsx` | Add user tier badges next to usernames |
-| `src/components/ValueBetCard.tsx` | New value bet detection card |
-| `src/pages/MatchDetail.tsx` | Add ValueBetCard to layout |
+| `src/pages/Landing.tsx` | New public marketing homepage |
+| `src/App.tsx` | Add `/` landing route, move dashboard to `/dashboard` |
+| `src/components/Header.tsx` | Rebrand to GoalGPT |
+| `src/pages/Login.tsx` | Rebrand + redirect to `/dashboard` |
+| `index.html` | Update page title |
 
-## Technical Notes
-- The `compute-user-performance` function reuses the existing `prediction_reviews` table to determine if predictions were correct
-- Trust scores default to 0.5 for new users so they still contribute to weighted scores
-- The value bet card leverages existing `odds` data already fetched on the match detail page
+No database changes needed.
 
