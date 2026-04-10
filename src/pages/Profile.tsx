@@ -10,6 +10,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Header } from "@/components/Header";
+import { Badge } from "@/components/ui/badge";
+import { Link } from "react-router-dom";
+import { Trophy, Target, TrendingUp, CheckCircle } from "lucide-react";
 
 export default function Profile() {
   const { user } = useAuth();
@@ -21,6 +24,9 @@ export default function Profile() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [perf, setPerf] = useState<{
+    total_votes: number; correct_votes: number; accuracy_score: number; trust_score: number; tier: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -35,6 +41,12 @@ export default function Profile() {
           setAvatarUrl(data.avatar_url);
         }
       });
+    supabase
+      .from("user_performance")
+      .select("total_votes, correct_votes, accuracy_score, trust_score, tier")
+      .eq("user_id", user.id)
+      .single()
+      .then(({ data }) => { if (data) setPerf(data); });
   }, [user]);
 
   const initials = (displayName || user?.email?.split("@")[0] || "U")
@@ -124,6 +136,53 @@ export default function Profile() {
               {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               Save Changes
             </Button>
+          </CardContent>
+        </Card>
+
+        {/* Prediction Stats */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Target className="h-5 w-5 text-primary" />
+              My Prediction Stats
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {perf ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="rounded-lg bg-muted p-3 text-center">
+                    <p className="text-2xl font-bold">{perf.total_votes}</p>
+                    <p className="text-xs text-muted-foreground">Total Votes</p>
+                  </div>
+                  <div className="rounded-lg bg-muted p-3 text-center">
+                    <p className="text-2xl font-bold">{perf.correct_votes}</p>
+                    <p className="text-xs text-muted-foreground">Correct</p>
+                  </div>
+                  <div className="rounded-lg bg-muted p-3 text-center">
+                    <p className="text-2xl font-bold">
+                      {perf.total_votes > 0 ? Math.round((perf.correct_votes / perf.total_votes) * 100) : 0}%
+                    </p>
+                    <p className="text-xs text-muted-foreground">Accuracy</p>
+                  </div>
+                  <div className="rounded-lg bg-muted p-3 text-center">
+                    <p className="text-2xl font-bold">{Number(perf.trust_score).toFixed(2)}</p>
+                    <p className="text-xs text-muted-foreground">Trust Score</p>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <Badge variant="outline" className="capitalize">{perf.tier} tier</Badge>
+                  <Link to="/leaderboard" className="text-sm text-primary hover:underline flex items-center gap-1">
+                    <Trophy className="h-3.5 w-3.5" /> View Leaderboard
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-6 text-muted-foreground">
+                <CheckCircle className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">Start voting on predictions to track your stats.</p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

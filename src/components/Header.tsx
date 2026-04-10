@@ -17,6 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: Activity },
   { to: "/standings", label: "Standings", icon: Trophy },
+  { to: "/leaderboard", label: "Leaderboard", icon: Shield },
   { to: "/accuracy", label: "Accuracy", icon: BarChart3 },
   { to: "/teams", label: "Teams", icon: Users },
   { to: "/statsbomb", label: "StatsBomb", icon: Database },

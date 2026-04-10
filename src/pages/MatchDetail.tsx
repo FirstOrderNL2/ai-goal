@@ -15,6 +15,7 @@ import { VolatilityCard } from "@/components/VolatilityCard";
 import { PredictionHistoryCard } from "@/components/PredictionHistoryCard";
 import { CommunityVoteBar } from "@/components/CommunityVoteBar";
 import { CommentsSection } from "@/components/CommentsSection";
+import { CommentSummaryCard } from "@/components/CommentSummaryCard";
 import { AICommunityComparisonCard } from "@/components/AICommunityComparisonCard";
 import { ValueBetCard } from "@/components/ValueBetCard";
 import { ConfidenceEngineCard } from "@/components/ConfidenceEngineCard";
@@ -274,9 +275,12 @@ export default function MatchDetail() {
           />
         )}
 
-        {/* 3g. Discussion */}
+        {/* 3g. Community Pulse + Discussion */}
         {prediction && !isPredictionIncomplete && (
-          <CommentsSection predictionId={prediction.id} />
+          <>
+            <CommentSummaryCard predictionId={prediction.id} />
+            <CommentsSection predictionId={prediction.id} />
+          </>
         )}
 
         {/* 4. Team Comparison */}
