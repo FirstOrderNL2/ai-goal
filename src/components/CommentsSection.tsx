@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { MessageSquare, Send, Trash2, Reply, Heart } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -16,6 +17,7 @@ interface Comment {
   created_at: string;
   parent_id: string | null;
   profile?: { display_name: string | null; avatar_url: string | null };
+  tier?: string;
   replies?: Comment[];
   likeCount: number;
   likedByMe: boolean;
@@ -23,6 +25,22 @@ interface Comment {
 
 interface CommentsSectionProps {
   predictionId: string;
+}
+
+const TIER_CONFIG: Record<string, { label: string; emoji: string; className: string }> = {
+  pro: { label: "Pro", emoji: "🟢", className: "bg-green-500/20 text-green-500 border-green-500/30" },
+  average: { label: "Avg", emoji: "🟡", className: "bg-yellow-500/20 text-yellow-500 border-yellow-500/30" },
+  low: { label: "New", emoji: "🔴", className: "bg-muted text-muted-foreground" },
+};
+
+function TierBadge({ tier }: { tier?: string }) {
+  const config = TIER_CONFIG[tier || ""] || null;
+  if (!config) return null;
+  return (
+    <Badge variant="outline" className={`text-[9px] px-1 py-0 h-4 ${config.className}`}>
+      {config.emoji} {config.label}
+    </Badge>
+  );
 }
 
 export function CommentsSection({ predictionId }: CommentsSectionProps) {
@@ -48,17 +66,19 @@ export function CommentsSection({ predictionId }: CommentsSectionProps) {
     const userIds = [...new Set(data.map((c) => c.user_id))];
     const commentIds = data.map((c) => c.id);
 
-    // Fetch profiles and likes in parallel
-    const [profilesRes, likesRes] = await Promise.all([
+    const [profilesRes, likesRes, perfRes] = await Promise.all([
       supabase.from("profiles").select("user_id, display_name, avatar_url").in("user_id", userIds),
       commentIds.length > 0
         ? supabase.from("comment_likes").select("comment_id, user_id").in("comment_id", commentIds)
         : Promise.resolve({ data: [] as { comment_id: string; user_id: string }[] }),
+      userIds.length > 0
+        ? supabase.from("user_performance").select("user_id, tier").in("user_id", userIds)
+        : Promise.resolve({ data: [] as { user_id: string; tier: string }[] }),
     ]);
 
     const profileMap = new Map(profilesRes.data?.map((p) => [p.user_id, p]) ?? []);
+    const tierMap = new Map((perfRes.data || []).map((p) => [p.user_id, p.tier]));
 
-    // Build like counts map
     const likeCountMap = new Map<string, number>();
     const likedByMeSet = new Set<string>();
     const likesData = likesRes.data ?? [];
@@ -70,6 +90,7 @@ export function CommentsSection({ predictionId }: CommentsSectionProps) {
     const enriched = data.map((c) => ({
       ...c,
       profile: profileMap.get(c.user_id) ?? undefined,
+      tier: tierMap.get(c.user_id) ?? undefined,
       likeCount: likeCountMap.get(c.id) || 0,
       likedByMe: likedByMeSet.has(c.id),
     }));
@@ -173,7 +194,10 @@ export function CommentsSection({ predictionId }: CommentsSectionProps) {
       </Avatar>
       <div className="flex-1 min-w-0 space-y-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium truncate">{c.profile?.display_name || "Anonymous"}</span>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-sm font-medium truncate">{c.profile?.display_name || "Anonymous"}</span>
+            <TierBadge tier={c.tier} />
+          </div>
           <span className="text-[10px] text-muted-foreground shrink-0">
             {formatDistanceToNow(new Date(c.created_at), { addSuffix: true })}
           </span>
