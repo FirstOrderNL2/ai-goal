@@ -1,26 +1,39 @@
 
 
-# Threaded Replies for Comments
+# AI vs Community Comparison Panel
 
-## Database Change
+## Summary
+Add a new `AICommunityComparisonCard` component that visually compares the AI prediction outcome with community voting sentiment, highlighting agreement or disagreement.
 
-Add a nullable `parent_id` column to `prediction_comments` that self-references the same table. This enables one level of nesting (replies to top-level comments).
+## Implementation
 
-**Migration SQL:**
-- `ALTER TABLE prediction_comments ADD COLUMN parent_id uuid REFERENCES prediction_comments(id) ON DELETE CASCADE DEFAULT NULL;`
+### New Component: `src/components/AICommunityComparisonCard.tsx`
+- Accepts `predictionId`, `prediction` (AI data), `homeTeamName`, `awayTeamName`
+- Fetches votes from `prediction_votes` table (reuses same query pattern as `CommunityVoteBar`)
+- Displays a side-by-side comparison table:
 
-## Frontend Changes (`CommentsSection.tsx`)
+| Metric | AI | Community |
+|---|---|---|
+| Winner prediction | e.g. "Home Win (65%)" | "👍 72% support" or "👎 28% against" |
+| Confidence | Model confidence % with tier label | Community confidence % with sentiment label |
+| Predicted Score | "2 - 1" | N/A (—) |
+| Sentiment | Neutral (derived from confidence tier) | Green/Yellow/Red indicator |
+| Agreement | Colspan badge: "✅ Aligned" or "⚠️ Divergent" |
 
-1. **Data model**: Add `parent_id` and `replies` to the `Comment` interface.
-2. **Fetch logic**: Fetch all comments (including `parent_id`), then build a tree client-side — group replies under their parent. Top-level comments have `parent_id = null`.
-3. **Reply UI**: Add a "Reply" button on each top-level comment. When clicked, show an inline reply input below that comment. Insert with `parent_id` set.
-4. **Rendering**: Render top-level comments first, then indented replies beneath each one (single nesting level). Replies are visually indented with a left border.
-5. **Count**: Discussion count reflects total comments (top-level + replies).
+- Agreement logic: if community confidence ≥ 50% (majority likes), AI and community agree; if < 50%, they diverge
+- Visual: green glow border when aligned, amber when divergent
+- Subscribes to realtime votes channel for live updates
+
+### Updated: `src/pages/MatchDetail.tsx`
+- Insert `AICommunityComparisonCard` after the `CommunityVoteBar` section (before the Discussion section)
+- Only renders when prediction exists and there are votes (total > 0)
 
 ## Files
 
 | File | Action |
 |---|---|
-| Migration SQL | Add `parent_id` column to `prediction_comments` |
-| `src/components/CommentsSection.tsx` | Add reply button, inline reply input, nested rendering |
+| `src/components/AICommunityComparisonCard.tsx` | New comparison panel |
+| `src/pages/MatchDetail.tsx` | Add component after community vote bar |
+
+No database changes needed — reads existing `prediction_votes` table.
 
