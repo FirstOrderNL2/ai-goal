@@ -43,14 +43,14 @@ export default function Landing() {
         {
           "@type": "WebSite",
           "name": "GoalGPT",
-          "url": "https://ai-goal.lovable.app",
+          "url": "https://goalgpt.io",
           "inLanguage": lang || "en",
           "description": t("seo.landing_description"),
         },
         {
           "@type": "Organization",
           "name": "GoalGPT",
-          "url": "https://ai-goal.lovable.app",
+          "url": "https://goalgpt.io",
           "description": "AI-powered football prediction platform",
         },
       ],

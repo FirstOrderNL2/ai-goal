@@ -70,7 +70,8 @@
     "cta_button_secondary": "Explore Predictions",
     "footer_disclaimer": "GoalGPT provides AI-generated predictions for informational purposes only. Predictions are not guaranteed and do not constitute financial or betting advice. Users are responsible for their own decisions.",
     "footer_copyright": "© {{year}} GoalGPT. All rights reserved.",
-    "create_account": "Create Account"
+    "create_account": "Create Account",
+    "sign_up": "Sign Up"
   },
   "login": {
     "title": "GoalGPT",

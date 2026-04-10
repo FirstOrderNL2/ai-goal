@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
 
-const BASE_URL = "https://ai-goal.lovable.app";
+const BASE_URL = "https://goalgpt.io";
 
 interface SEOHeadProps {
   titleKey: string;

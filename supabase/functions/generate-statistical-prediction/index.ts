@@ -261,6 +261,10 @@ Deno.serve(async (req) => {
       (refStrictness * 0.4 + teamAggression * 0.4 + matchImportance * 0.2) * 1000
     ) / 1000;
 
+    // Goal lines & distribution (computed before volatility adjustments)
+    const goalLines = computeGoalLines(lambdaHome, lambdaAway);
+    const goalDist = computeGoalDistribution(lambdaHome, lambdaAway);
+
     // Apply volatility adjustments (capped at ±5%)
     if (volatilityScore > 0.6) {
       const volAdjust = Math.min(0.05, (volatilityScore - 0.5) * 0.10);
@@ -313,9 +317,7 @@ Deno.serve(async (req) => {
     const awayScoringRate = 1 - poissonPMF(lambdaAway, 0);
     const poissonBtts = homeScoringRate * awayScoringRate;
 
-    // Goal lines & distribution
-    const goalLines = computeGoalLines(lambdaHome, lambdaAway);
-    const goalDist = computeGoalDistribution(lambdaHome, lambdaAway);
+    // (goalLines & goalDist already computed above, before volatility adjustments)
 
     // Predicted score = most probable scoreline, enforcing consistency with 1X2
     let bestScore = { h: 1, a: 1, p: 0 };
