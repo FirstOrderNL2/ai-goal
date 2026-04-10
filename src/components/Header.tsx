@@ -14,6 +14,7 @@ const navItems = [
 
 export function Header() {
   const location = useLocation();
+  const { signOut } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dark, setDark] = useState(() => !document.documentElement.classList.contains("light"));
 
