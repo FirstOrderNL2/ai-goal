@@ -100,16 +100,14 @@ export function ConfidenceEngineCard({ prediction, features, matchContext, match
     },
   });
 
-  const volRaw = features?.volatility_score;
-  const volatilityRaw = volRaw != null ? Number(volRaw) : 0;
+  const volatilityRaw = features?.volatility_score != null ? Number(features.volatility_score) : 0;
 
   const statCertainty = computeStatCertainty(prediction);
-  const dataQuality = computeDataQuality(features, matchContext, refereeName);
+  const dataQuality = computeDataQuality(features, matchContext, null);
   const communityAlign = computeCommunityAlignment(
     getAiPick(prediction),
     voteCounts ?? { agree: 0, disagree: 0 }
   );
-  const volatilityRaw = features?.volatility_score != null ? Number(features.volatility_score) : 0;
   const volatilityAdj = 1 - Math.min(volatilityRaw, 1);
 
   const pillars = {
