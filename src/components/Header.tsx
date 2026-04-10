@@ -67,7 +67,7 @@ export function Header() {
         <Link to="/" className="flex items-center gap-2">
           <Shield className="h-6 w-6 text-primary" />
           <span className="text-lg font-bold tracking-tight">
-            Football<span className="text-primary">AI</span>
+            Goal<span className="text-primary">GPT</span>
           </span>
         </Link>
 
