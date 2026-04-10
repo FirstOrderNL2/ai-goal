@@ -236,6 +236,16 @@ export default function MatchDetail() {
         {/* 3c. Prediction History */}
         {prediction && !isPredictionIncomplete && <PredictionHistoryCard prediction={prediction} />}
 
+        {/* 3d. Community Feedback */}
+        {prediction && !isPredictionIncomplete && (
+          <CommunityVoteBar predictionId={prediction.id} />
+        )}
+
+        {/* 3e. Discussion */}
+        {prediction && !isPredictionIncomplete && (
+          <CommentsSection predictionId={prediction.id} />
+        )}
+
         {/* 4. Team Comparison */}
         {features && (
           <TeamComparisonCard features={features} homeTeam={home_team} awayTeam={away_team} />
