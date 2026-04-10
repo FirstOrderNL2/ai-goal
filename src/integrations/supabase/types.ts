@@ -414,6 +414,7 @@ export type Database = {
           comment: string
           created_at: string
           id: string
+          parent_id: string | null
           prediction_id: string
           user_id: string
         }
@@ -421,6 +422,7 @@ export type Database = {
           comment: string
           created_at?: string
           id?: string
+          parent_id?: string | null
           prediction_id: string
           user_id: string
         }
@@ -428,10 +430,18 @@ export type Database = {
           comment?: string
           created_at?: string
           id?: string
+          parent_id?: string | null
           prediction_id?: string
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "prediction_comments_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "prediction_comments"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "prediction_comments_prediction_id_fkey"
             columns: ["prediction_id"]
