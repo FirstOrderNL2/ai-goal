@@ -21,8 +21,8 @@ export function LanguageSwitcher({ className = "" }: { className?: string }) {
   };
 
   return (
-    <Button variant="ghost" size="sm" onClick={switchLang} className={`gap-1.5 ${className}`}>
-      <Globe className="h-4 w-4" />
+    <Button variant="ghost" size="icon" onClick={switchLang} className={`h-8 w-8 sm:w-auto sm:px-3 sm:gap-1.5 ${className}`}>
+      <Globe className="h-4 w-4 hidden sm:inline" />
       <span className="text-xs font-semibold uppercase">{nextLang}</span>
     </Button>
   );
