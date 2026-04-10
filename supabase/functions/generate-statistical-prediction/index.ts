@@ -384,7 +384,7 @@ Deno.serve(async (req) => {
 
     // Apply confidence deflator from learning loop + league penalty
     const totalConfPenalty = volPenalty + Math.abs(confDeflator) + Math.abs(leaguePenalty);
-    const confidence = Math.round(Math.max(0.05, (dataQuality * 0.6 + marketAgreement * 0.4) - totalConfPenalty) * 1000) / 1000;
+    const confidence = Math.round(Math.max(0.10, (dataQuality * 0.6 + marketAgreement * 0.4) - totalConfPenalty) * 1000) / 1000;
 
     // Store volatility_score in match_features
     if (features) {
