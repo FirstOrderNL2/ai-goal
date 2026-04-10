@@ -153,6 +153,16 @@ Deno.serve(async (req) => {
     await callFunction("pre-match-predictions");
   }
 
+  // Step 8: Batch review completed matches (populate prediction_reviews)
+  if (effectiveMode === "full" || effectiveMode === "idle") {
+    await callFunction("batch-review-matches");
+  }
+
+  // Step 9: Recompute model performance (recalibrate weights)
+  if (effectiveMode === "full") {
+    await callFunction("compute-model-performance");
+  }
+
   return new Response(
     JSON.stringify({
       success: errors.length === 0,
