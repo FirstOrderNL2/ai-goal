@@ -13,6 +13,8 @@ import { LineupsCard } from "@/components/LineupsCard";
 import { PredictionComparisonCard } from "@/components/PredictionComparisonCard";
 import { VolatilityCard } from "@/components/VolatilityCard";
 import { PredictionHistoryCard } from "@/components/PredictionHistoryCard";
+import { CommunityVoteBar } from "@/components/CommunityVoteBar";
+import { CommentsSection } from "@/components/CommentsSection";
 import { LiveMatchCard } from "@/components/LiveMatchCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -233,6 +235,16 @@ export default function MatchDetail() {
 
         {/* 3c. Prediction History */}
         {prediction && !isPredictionIncomplete && <PredictionHistoryCard prediction={prediction} />}
+
+        {/* 3d. Community Feedback */}
+        {prediction && !isPredictionIncomplete && (
+          <CommunityVoteBar predictionId={prediction.id} />
+        )}
+
+        {/* 3e. Discussion */}
+        {prediction && !isPredictionIncomplete && (
+          <CommentsSection predictionId={prediction.id} />
+        )}
 
         {/* 4. Team Comparison */}
         {features && (
