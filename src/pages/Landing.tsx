@@ -26,6 +26,31 @@ const features = [
 ];
 
 export default function Landing() {
+  useEffect(() => {
+    const jsonLd = {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "name": "GoalGPT",
+          "url": "https://ai-goal.lovable.app",
+          "description": "GoalGPT combines AI, statistics, and real match data to help you understand football outcomes — not guess them."
+        },
+        {
+          "@type": "Organization",
+          "name": "GoalGPT",
+          "url": "https://ai-goal.lovable.app",
+          "description": "AI-powered football prediction platform"
+        }
+      ]
+    };
+    const script = document.createElement("script");
+    script.type = "application/ld+json";
+    script.textContent = JSON.stringify(jsonLd);
+    document.head.appendChild(script);
+    return () => { document.head.removeChild(script); };
+  }, []);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       {/* Nav */}
