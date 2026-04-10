@@ -13,6 +13,7 @@ import TeamDetail from "./pages/TeamDetail";
 import StatsBomb from "./pages/StatsBomb";
 import Standings from "./pages/Standings";
 import Profile from "./pages/Profile";
+import Leaderboard from "./pages/Leaderboard";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
@@ -52,6 +53,7 @@ const App = () => (
             <Route path="/teams/:id" element={<ProtectedRoute><TeamDetail /></ProtectedRoute>} />
             <Route path="/statsbomb" element={<ProtectedRoute><StatsBomb /></ProtectedRoute>} />
             <Route path="/standings" element={<ProtectedRoute><Standings /></ProtectedRoute>} />
+            <Route path="/leaderboard" element={<ProtectedRoute><Leaderboard /></ProtectedRoute>} />
             <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
