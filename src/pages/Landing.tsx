@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Shield, BarChart3, Brain, Zap, TrendingUp, Eye, Users, ChevronRight, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
