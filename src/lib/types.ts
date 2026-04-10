@@ -31,6 +31,7 @@ export interface Match {
   away_team?: Team;
   prediction?: Prediction;
   odds?: Odds;
+  hotScore?: number;
 }
 
 export interface Referee {
@@ -152,6 +153,7 @@ export interface MatchFeatures {
   away_btts_pct: number;
   poisson_xg_home: number;
   poisson_xg_away: number;
+  volatility_score: number | null;
   computed_at: string;
 }
 

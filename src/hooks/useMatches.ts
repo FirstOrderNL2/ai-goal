@@ -153,21 +153,54 @@ async function enrichMatches(matches: Match[]): Promise<Match[]> {
   const teamIds = [...new Set(matches.flatMap((m) => [m.team_home_id, m.team_away_id]))];
   const matchIds = matches.map((m) => m.id);
 
-  const [teamsRes, predsRes, oddsRes] = await Promise.all([
+  const [teamsRes, predsRes, oddsRes, votesRes, featuresRes] = await Promise.all([
     supabase.from("teams").select("*").in("id", teamIds),
     supabase.from("predictions").select("*").in("match_id", matchIds),
     supabase.from("odds").select("*").in("match_id", matchIds),
+    supabase.from("prediction_votes").select("prediction_id, vote_type").in(
+      "prediction_id",
+      // We'll filter after we have predictions
+      matchIds // placeholder — we filter below
+    ),
+    supabase.from("match_features").select("match_id, volatility_score").in("match_id", matchIds),
   ]);
 
   const teamsMap = new Map((teamsRes.data as Team[])?.map((t) => [t.id, t]));
   const predsMap = new Map((predsRes.data as unknown as Prediction[])?.map((p) => [p.match_id, p]));
   const oddsMap = new Map((oddsRes.data as Odds[])?.map((o) => [o.match_id, o]));
 
-  return matches.map((m) => ({
-    ...m,
-    home_team: teamsMap.get(m.team_home_id),
-    away_team: teamsMap.get(m.team_away_id),
-    prediction: predsMap.get(m.id),
-    odds: oddsMap.get(m.id),
-  }));
+  // Build vote counts per prediction
+  const votesByPred = new Map<string, { agree: number; disagree: number }>();
+  for (const v of (votesRes.data ?? []) as { prediction_id: string; vote_type: string }[]) {
+    const existing = votesByPred.get(v.prediction_id) ?? { agree: 0, disagree: 0 };
+    if (v.vote_type === "agree") existing.agree++;
+    else existing.disagree++;
+    votesByPred.set(v.prediction_id, existing);
+  }
+
+  // Volatility by match
+  const volMap = new Map<string, number>();
+  for (const f of (featuresRes.data ?? []) as { match_id: string; volatility_score: number | null }[]) {
+    if (f.volatility_score != null) volMap.set(f.match_id, Number(f.volatility_score));
+  }
+
+  return matches.map((m) => {
+    const pred = predsMap.get(m.id);
+    const votes = pred ? votesByPred.get(pred.id) : undefined;
+    const totalVotes = votes ? votes.agree + votes.disagree : 0;
+    const disagreement = votes && totalVotes > 0 ? Math.min(votes.agree, votes.disagree) / totalVotes : 0;
+    const vol = volMap.get(m.id) ?? 0;
+
+    // Hot score: engagement + disagreement + volatility
+    const hotScore = (totalVotes * 0.4) + (disagreement * 30) + (vol * 30);
+
+    return {
+      ...m,
+      home_team: teamsMap.get(m.team_home_id),
+      away_team: teamsMap.get(m.team_away_id),
+      prediction: pred,
+      odds: oddsMap.get(m.id),
+      hotScore,
+    };
+  });
 }
