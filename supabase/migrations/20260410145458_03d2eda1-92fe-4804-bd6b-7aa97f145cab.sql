@@ -1,0 +1,1 @@
+ALTER TABLE public.prediction_comments ADD COLUMN parent_id uuid REFERENCES public.prediction_comments(id) ON DELETE CASCADE DEFAULT NULL;
