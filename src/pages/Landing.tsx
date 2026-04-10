@@ -75,7 +75,7 @@ export default function Landing() {
               Goal<span className="text-primary">GPT</span>
             </span>
           </Link>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
             <LanguageSwitcher />
             {session ? (
               <Button size="sm" asChild>
@@ -83,11 +83,14 @@ export default function Landing() {
               </Button>
             ) : (
               <>
-                <Button variant="ghost" size="sm" asChild>
+                <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex">
                   <Link to={`${prefix}/login`}>{t("landing.sign_in")}</Link>
                 </Button>
                 <Button size="sm" asChild>
-                  <Link to={`${prefix}/login`}>{t("landing.create_free_account")}</Link>
+                  <Link to={`${prefix}/login`}>
+                    <span className="sm:hidden">{t("landing.sign_up", "Sign Up")}</span>
+                    <span className="hidden sm:inline">{t("landing.create_free_account")}</span>
+                  </Link>
                 </Button>
               </>
             )}
