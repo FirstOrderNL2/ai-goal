@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { Link } from "react-router-dom";
-import { Shield, BarChart3, Brain, Zap, TrendingUp, Eye, Users, ChevronRight, AlertTriangle } from "lucide-react";
+import { BarChart3, Brain, Zap, TrendingUp, Eye, Users, ChevronRight, AlertTriangle, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import logoImg from "@/assets/logo.png";
 
 const valueCards = [
   { icon: BarChart3, title: "Historical Match Data", desc: "Years of match results, scores, and statistics analyzed" },
@@ -57,7 +58,7 @@ export default function Landing() {
       <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
         <div className="container flex h-14 items-center justify-between">
           <Link to="/" className="flex items-center gap-2">
-            <Shield className="h-6 w-6 text-primary" />
+            <img src={logoImg} alt="GoalGPT logo" className="h-8 w-8 rounded" />
             <span className="text-lg font-bold tracking-tight">
               Goal<span className="text-primary">GPT</span>
             </span>
@@ -257,7 +258,7 @@ export default function Landing() {
         <div className="container space-y-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <Shield className="h-5 w-5 text-primary" />
+              <img src={logoImg} alt="GoalGPT logo" className="h-6 w-6 rounded" />
               <span className="font-bold">Goal<span className="text-primary">GPT</span></span>
             </div>
             <div className="flex gap-6 text-sm text-muted-foreground">
