@@ -242,7 +242,17 @@ export default function MatchDetail() {
           <CommunityVoteBar predictionId={prediction.id} />
         )}
 
-        {/* 3e. Discussion */}
+        {/* 3e. AI vs Community Comparison */}
+        {prediction && !isPredictionIncomplete && (
+          <AICommunityComparisonCard
+            predictionId={prediction.id}
+            prediction={prediction}
+            homeTeamName={home_team?.name || "Home"}
+            awayTeamName={away_team?.name || "Away"}
+          />
+        )}
+
+        {/* 3f. Discussion */}
         {prediction && !isPredictionIncomplete && (
           <CommentsSection predictionId={prediction.id} />
         )}
