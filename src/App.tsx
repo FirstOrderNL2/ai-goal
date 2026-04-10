@@ -20,6 +20,7 @@ import Standings from "./pages/Standings";
 import Profile from "./pages/Profile";
 import Leaderboard from "./pages/Leaderboard";
 import Login from "./pages/Login";
+import AuthCallback from "./pages/AuthCallback";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -37,9 +38,14 @@ const queryClient = new QueryClient({
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();
   const { lang } = useParams<{ lang: string }>();
+  const location = useLocation();
   const prefix = lang && supportedLangs.includes(lang as SupportedLang) ? `/${lang}` : "/en";
+
   if (loading) return <div className="min-h-screen bg-background" />;
-  if (!session) return <Navigate to={`${prefix}/login`} replace />;
+  if (!session) {
+    const currentPath = location.pathname + location.search;
+    return <Navigate to={`${prefix}/login?redirect=${encodeURIComponent(currentPath)}`} replace />;
+  }
   return <>{children}</>;
 }
 
@@ -58,12 +64,19 @@ function LocaleSync({ children }: { children: React.ReactNode }) {
 }
 
 function RootRedirect() {
+  const { session, loading } = useAuth();
+
+  if (loading) return <div className="min-h-screen bg-background" />;
+
   const stored = localStorage.getItem("goalgpt-lang");
-  if (stored && supportedLangs.includes(stored as SupportedLang)) {
-    return <Navigate to={`/${stored}`} replace />;
-  }
   const browserLang = navigator.language?.split("-")[0];
-  const target = supportedLangs.includes(browserLang as SupportedLang) ? browserLang : "en";
+  const target = stored && supportedLangs.includes(stored as SupportedLang)
+    ? stored
+    : supportedLangs.includes(browserLang as SupportedLang) ? browserLang : "en";
+
+  if (session) {
+    return <Navigate to={`/${target}/dashboard`} replace />;
+  }
   return <Navigate to={`/${target}`} replace />;
 }
 
@@ -102,6 +115,7 @@ function LangRoutes() {
       <Routes>
         <Route index element={<Landing />} />
         <Route path="login" element={<Login />} />
+        <Route path="auth/callback" element={<AuthCallback />} />
         <Route path="dashboard" element={<ProtectedRoute><Index /></ProtectedRoute>} />
         <Route path="match/:id" element={<ProtectedRoute><MatchDetail /></ProtectedRoute>} />
         <Route path="accuracy" element={<ProtectedRoute><Accuracy /></ProtectedRoute>} />

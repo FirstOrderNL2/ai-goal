@@ -6,11 +6,13 @@ import logoImg from "@/assets/logo.png";
 import { useTranslation, Trans } from "react-i18next";
 import { SEOHead } from "@/components/SEOHead";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function Landing() {
   const { t } = useTranslation();
   const { lang } = useParams<{ lang: string }>();
   const prefix = `/${lang || "en"}`;
+  const { session } = useAuth();
 
   const valueCards = [
     { icon: BarChart3, title: t("landing.value_card_1_title"), desc: t("landing.value_card_1_desc") },
@@ -75,12 +77,20 @@ export default function Landing() {
           </Link>
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
-            <Button variant="ghost" size="sm" asChild>
-              <Link to={`${prefix}/login`}>{t("landing.sign_in")}</Link>
-            </Button>
-            <Button size="sm" asChild>
-              <Link to={`${prefix}/login`}>{t("landing.create_free_account")}</Link>
-            </Button>
+            {session ? (
+              <Button size="sm" asChild>
+                <Link to={`${prefix}/dashboard`}>{t("landing.dashboard", "Dashboard")}</Link>
+              </Button>
+            ) : (
+              <>
+                <Button variant="ghost" size="sm" asChild>
+                  <Link to={`${prefix}/login`}>{t("landing.sign_in")}</Link>
+                </Button>
+                <Button size="sm" asChild>
+                  <Link to={`${prefix}/login`}>{t("landing.create_free_account")}</Link>
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -98,12 +108,20 @@ export default function Landing() {
             {t("landing.hero_subtitle")}
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
-            <Button size="lg" className="text-base px-8 h-12" asChild>
-              <Link to={`${prefix}/login`}>{t("landing.hero_cta")} <ChevronRight className="ml-1 h-4 w-4" /></Link>
-            </Button>
-            <Button size="lg" variant="outline" className="text-base px-8 h-12" asChild>
-              <Link to={`${prefix}/login`}>{t("landing.hero_cta_secondary")}</Link>
-            </Button>
+            {session ? (
+              <Button size="lg" className="text-base px-8 h-12" asChild>
+                <Link to={`${prefix}/dashboard`}>{t("landing.dashboard", "Dashboard")} <ChevronRight className="ml-1 h-4 w-4" /></Link>
+              </Button>
+            ) : (
+              <>
+                <Button size="lg" className="text-base px-8 h-12" asChild>
+                  <Link to={`${prefix}/login`}>{t("landing.hero_cta")} <ChevronRight className="ml-1 h-4 w-4" /></Link>
+                </Button>
+                <Button size="lg" variant="outline" className="text-base px-8 h-12" asChild>
+                  <Link to={`${prefix}/login`}>{t("landing.hero_cta_secondary")}</Link>
+                </Button>
+              </>
+            )}
           </div>
           <p className="text-sm text-muted-foreground pt-2">{t("landing.hero_tagline")}</p>
         </div>
