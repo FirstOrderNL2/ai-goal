@@ -107,6 +107,12 @@ export function Header() {
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link to="/profile" className="cursor-pointer">
+                  <Shield className="mr-2 h-4 w-4" />
+                  Profile settings
+                </Link>
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={toggleTheme}>
                 {dark ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
                 {dark ? "Light mode" : "Dark mode"}
@@ -161,6 +167,14 @@ export function Header() {
               {label}
             </Link>
           ))}
+          <Link
+            to="/profile"
+            onClick={() => setMobileOpen(false)}
+            className="flex items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Shield className="h-4 w-4" />
+            Profile settings
+          </Link>
           <div className="h-px bg-border my-1" />
           <button
             onClick={() => { setMobileOpen(false); signOut(); }}
