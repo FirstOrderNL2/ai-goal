@@ -6,11 +6,13 @@ import logoImg from "@/assets/logo.png";
 import { useTranslation, Trans } from "react-i18next";
 import { SEOHead } from "@/components/SEOHead";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function Landing() {
   const { t } = useTranslation();
   const { lang } = useParams<{ lang: string }>();
   const prefix = `/${lang || "en"}`;
+  const { session } = useAuth();
 
   const valueCards = [
     { icon: BarChart3, title: t("landing.value_card_1_title"), desc: t("landing.value_card_1_desc") },
@@ -75,12 +77,20 @@ export default function Landing() {
           </Link>
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
-            <Button variant="ghost" size="sm" asChild>
-              <Link to={`${prefix}/login`}>{t("landing.sign_in")}</Link>
-            </Button>
-            <Button size="sm" asChild>
-              <Link to={`${prefix}/login`}>{t("landing.create_free_account")}</Link>
-            </Button>
+            {session ? (
+              <Button size="sm" asChild>
+                <Link to={`${prefix}/dashboard`}>{t("landing.dashboard", "Dashboard")}</Link>
+              </Button>
+            ) : (
+              <>
+                <Button variant="ghost" size="sm" asChild>
+                  <Link to={`${prefix}/login`}>{t("landing.sign_in")}</Link>
+                </Button>
+                <Button size="sm" asChild>
+                  <Link to={`${prefix}/login`}>{t("landing.create_free_account")}</Link>
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </header>

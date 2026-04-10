@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import logoImg from "@/assets/logo.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,10 +24,12 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [searchParams] = useSearchParams();
+  const redirectTarget = searchParams.get("redirect") || `${prefix}/dashboard`;
 
   useEffect(() => {
-    if (session) navigate(`${prefix}/dashboard`, { replace: true });
-  }, [session, navigate, prefix]);
+    if (session) navigate(redirectTarget, { replace: true });
+  }, [session, navigate, redirectTarget]);
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,10 +42,11 @@ export default function Login() {
   const handleEmailSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    const callbackUrl = `${window.location.origin}${prefix}/auth/callback?redirect=${encodeURIComponent(redirectTarget)}`;
     const { error } = await supabase.auth.signUp({
       email,
       password,
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: callbackUrl },
     });
     if (error) {
       toast.error(error.message);
@@ -55,8 +58,9 @@ export default function Login() {
 
   const handleOAuthSignIn = async (provider: "apple" | "google") => {
     setLoading(true);
+    const callbackUrl = `${window.location.origin}${prefix}/auth/callback?redirect=${encodeURIComponent(redirectTarget)}`;
     const result = await lovable.auth.signInWithOAuth(provider, {
-      redirect_uri: window.location.origin,
+      redirect_uri: callbackUrl,
     });
     if (result.error) {
       toast.error(`${provider.charAt(0).toUpperCase() + provider.slice(1)} sign-in failed`);
