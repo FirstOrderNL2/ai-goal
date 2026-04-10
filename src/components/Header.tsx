@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Activity, BarChart3, Shield, Users, Database, Trophy, Menu, X, Moon, Sun } from "lucide-react";
+import { Activity, BarChart3, Shield, Users, Database, Trophy, Menu, X, Moon, Sun, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: Activity },
@@ -13,6 +14,7 @@ const navItems = [
 
 export function Header() {
   const location = useLocation();
+  const { signOut } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dark, setDark] = useState(() => !document.documentElement.classList.contains("light"));
 
@@ -53,6 +55,9 @@ export function Header() {
           ))}
           <Button variant="ghost" size="icon" onClick={toggleTheme} className="ml-1 h-8 w-8">
             {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
+          <Button variant="ghost" size="icon" onClick={signOut} className="h-8 w-8 text-muted-foreground hover:text-destructive">
+            <LogOut className="h-4 w-4" />
           </Button>
         </nav>
 
