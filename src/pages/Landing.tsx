@@ -163,12 +163,12 @@ export default function Landing() {
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs font-medium">
                 <span className="text-primary">52%</span>
-                <span className="text-yellow-400">20%</span>
+                <span className="text-draw">20%</span>
                 <span className="text-destructive">28%</span>
               </div>
               <div className="flex h-2.5 overflow-hidden rounded-full bg-muted">
                 <div className="bg-primary transition-all" style={{ width: "52%" }} />
-                <div className="bg-yellow-400 transition-all" style={{ width: "20%" }} />
+                <div className="bg-draw transition-all" style={{ width: "20%" }} />
                 <div className="bg-destructive transition-all" style={{ width: "28%" }} />
               </div>
               <div className="flex justify-between text-[10px] text-muted-foreground">
@@ -192,7 +192,7 @@ export default function Landing() {
         <div className="container max-w-2xl">
           <div className="rounded-xl border border-border bg-card p-8 space-y-4">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-yellow-400" />
+              <AlertTriangle className="h-5 w-5 text-draw" />
               <h2 className="text-xl font-bold">Important Notice</h2>
             </div>
             <ul className="text-sm text-muted-foreground space-y-2 leading-relaxed">
