@@ -20,7 +20,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (session) navigate("/", { replace: true });
+    if (session) navigate("/dashboard", { replace: true });
   }, [session, navigate]);
 
   const handleEmailLogin = async (e: React.FormEvent) => {
@@ -68,7 +68,7 @@ export default function Login() {
           <div className="flex items-center justify-center gap-2">
             <Shield className="h-8 w-8 text-primary" />
             <CardTitle className="text-2xl font-bold tracking-tight">
-              Football<span className="text-primary">AI</span>
+              Goal<span className="text-primary">GPT</span>
             </CardTitle>
           </div>
           <CardDescription>Sign in to access predictions & insights</CardDescription>

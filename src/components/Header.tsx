@@ -15,7 +15,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 
 const navItems = [
-  { to: "/", label: "Dashboard", icon: Activity },
+  { to: "/dashboard", label: "Dashboard", icon: Activity },
   { to: "/standings", label: "Standings", icon: Trophy },
   { to: "/accuracy", label: "Accuracy", icon: BarChart3 },
   { to: "/teams", label: "Teams", icon: Users },
@@ -64,10 +64,10 @@ export function Header() {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
       <div className="container flex h-14 items-center justify-between">
-        <Link to="/" className="flex items-center gap-2">
+        <Link to="/dashboard" className="flex items-center gap-2">
           <Shield className="h-6 w-6 text-primary" />
           <span className="text-lg font-bold tracking-tight">
-            Football<span className="text-primary">AI</span>
+            Goal<span className="text-primary">GPT</span>
           </span>
         </Link>
 
