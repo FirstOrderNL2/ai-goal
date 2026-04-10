@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Activity, BarChart3, Shield, Users, Database, Trophy, Menu, X, Moon, Sun } from "lucide-react";
+import { Activity, BarChart3, Shield, Users, Database, Trophy, Menu, X, Moon, Sun, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: Activity },
