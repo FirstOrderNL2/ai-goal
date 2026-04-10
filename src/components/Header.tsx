@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Activity, BarChart3, Shield, Users, Database, Trophy, Menu, X, Moon, Sun, LogOut } from "lucide-react";
+import { Activity, BarChart3, Users, Database, Trophy, Menu, X, Moon, Sun, LogOut, Shield } from "lucide-react";
+import logoImg from "@/assets/logo.png";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -66,7 +67,7 @@ export function Header() {
     <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
       <div className="container flex h-14 items-center justify-between">
         <Link to="/dashboard" className="flex items-center gap-2">
-          <Shield className="h-6 w-6 text-primary" />
+          <img src={logoImg} alt="GoalGPT logo" className="h-8 w-8 rounded" />
           <span className="text-lg font-bold tracking-tight">
             Goal<span className="text-primary">GPT</span>
           </span>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield } from "lucide-react";
+import logoImg from "@/assets/logo.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -65,8 +65,8 @@ export default function Login() {
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center space-y-2">
-          <div className="flex items-center justify-center gap-2">
-            <Shield className="h-8 w-8 text-primary" />
+          <div className="flex items-center justify-center gap-3">
+            <img src={logoImg} alt="GoalGPT logo" className="h-10 w-10 rounded" />
             <CardTitle className="text-2xl font-bold tracking-tight">
               Goal<span className="text-primary">GPT</span>
             </CardTitle>
