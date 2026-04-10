@@ -253,7 +253,17 @@ export default function MatchDetail() {
           />
         )}
 
-        {/* 3f. Discussion */}
+        {/* 3f. Value Bet Detection */}
+        {prediction && !isPredictionIncomplete && odds && (
+          <ValueBetCard
+            prediction={prediction}
+            odds={odds}
+            homeTeamName={home_team?.name || "Home"}
+            awayTeamName={away_team?.name || "Away"}
+          />
+        )}
+
+        {/* 3g. Discussion */}
         {prediction && !isPredictionIncomplete && (
           <CommentsSection predictionId={prediction.id} />
         )}
