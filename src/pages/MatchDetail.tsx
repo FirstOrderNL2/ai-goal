@@ -15,6 +15,7 @@ import { VolatilityCard } from "@/components/VolatilityCard";
 import { PredictionHistoryCard } from "@/components/PredictionHistoryCard";
 import { CommunityVoteBar } from "@/components/CommunityVoteBar";
 import { CommentsSection } from "@/components/CommentsSection";
+import { AICommunityComparisonCard } from "@/components/AICommunityComparisonCard";
 import { LiveMatchCard } from "@/components/LiveMatchCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -241,7 +242,17 @@ export default function MatchDetail() {
           <CommunityVoteBar predictionId={prediction.id} />
         )}
 
-        {/* 3e. Discussion */}
+        {/* 3e. AI vs Community Comparison */}
+        {prediction && !isPredictionIncomplete && (
+          <AICommunityComparisonCard
+            predictionId={prediction.id}
+            prediction={prediction}
+            homeTeamName={home_team?.name || "Home"}
+            awayTeamName={away_team?.name || "Away"}
+          />
+        )}
+
+        {/* 3f. Discussion */}
         {prediction && !isPredictionIncomplete && (
           <CommentsSection predictionId={prediction.id} />
         )}
