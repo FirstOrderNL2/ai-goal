@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import logoImg from "@/assets/logo.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,17 +11,23 @@ import { lovable } from "@/integrations/lovable/index";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
+import { SEOHead } from "@/components/SEOHead";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 export default function Login() {
   const navigate = useNavigate();
+  const { lang } = useParams<{ lang: string }>();
+  const prefix = `/${lang || "en"}`;
   const { session } = useAuth();
+  const { t } = useTranslation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (session) navigate("/dashboard", { replace: true });
-  }, [session, navigate]);
+    if (session) navigate(`${prefix}/dashboard`, { replace: true });
+  }, [session, navigate, prefix]);
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,7 +48,7 @@ export default function Login() {
     if (error) {
       toast.error(error.message);
     } else {
-      toast.success("Check your email to confirm your account");
+      toast.success(t("login.check_email"));
     }
     setLoading(false);
   };
@@ -63,6 +69,10 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <SEOHead titleKey="seo.login_title" descriptionKey="seo.login_description" path="/login" />
+      <div className="absolute top-4 right-4">
+        <LanguageSwitcher />
+      </div>
       <Card className="w-full max-w-md">
         <CardHeader className="text-center space-y-2">
           <div className="flex items-center justify-center gap-3">
@@ -71,7 +81,7 @@ export default function Login() {
               Goal<span className="text-primary">GPT</span>
             </CardTitle>
           </div>
-          <CardDescription>Sign in to access predictions & insights</CardDescription>
+          <CardDescription>{t("login.subtitle")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <Button
@@ -86,7 +96,7 @@ export default function Login() {
               <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
               <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
             </svg>
-            Sign in with Google
+            {t("login.google")}
           </Button>
 
           <Button
@@ -98,7 +108,7 @@ export default function Login() {
             <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
               <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" />
             </svg>
-            Sign in with Apple
+            {t("login.apple")}
           </Button>
 
           <div className="relative">
@@ -106,42 +116,42 @@ export default function Login() {
               <span className="w-full border-t border-border" />
             </div>
             <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-muted-foreground">or</span>
+              <span className="bg-card px-2 text-muted-foreground">{t("login.or")}</span>
             </div>
           </div>
 
           <Tabs defaultValue="login" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="login">Login</TabsTrigger>
-              <TabsTrigger value="signup">Sign Up</TabsTrigger>
+              <TabsTrigger value="login">{t("login.login_tab")}</TabsTrigger>
+              <TabsTrigger value="signup">{t("login.signup_tab")}</TabsTrigger>
             </TabsList>
             <TabsContent value="login">
               <form onSubmit={handleEmailLogin} className="space-y-3 pt-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="login-email">Email</Label>
+                  <Label htmlFor="login-email">{t("login.email")}</Label>
                   <Input id="login-email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="login-password">Password</Label>
+                  <Label htmlFor="login-password">{t("login.password")}</Label>
                   <Input id="login-password" type="password" value={password} onChange={e => setPassword(e.target.value)} required />
                 </div>
                 <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? "Signing in…" : "Sign In"}
+                  {loading ? t("login.signing_in") : t("login.sign_in_button")}
                 </Button>
               </form>
             </TabsContent>
             <TabsContent value="signup">
               <form onSubmit={handleEmailSignup} className="space-y-3 pt-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="signup-email">Email</Label>
+                  <Label htmlFor="signup-email">{t("login.email")}</Label>
                   <Input id="signup-email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="signup-password">Password</Label>
+                  <Label htmlFor="signup-password">{t("login.password")}</Label>
                   <Input id="signup-password" type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={6} />
                 </div>
                 <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? "Creating account…" : "Create Account"}
+                  {loading ? t("login.creating_account") : t("login.create_account_button")}
                 </Button>
               </form>
             </TabsContent>
