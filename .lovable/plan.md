@@ -1,64 +1,77 @@
 
 
-# Phase 2: Confidence Engine 2.0 + Hot Match Detection
+# Phase 3: Leaderboard + Comment Intelligence
 
 ## Summary
-Create a unified Confidence 2.0 score on the match detail page that blends statistical certainty, data quality, community alignment, and volatility. Add a "Hot Matches" section to the dashboard highlighting high-engagement or high-disagreement matches.
+Add a public Leaderboard page showing top predictors ranked by accuracy, and an AI-powered comment summary on match detail pages that distills community sentiment from user comments.
 
-## Part A: Confidence Engine 2.0 Component
+The A/B model testing framework from the original outline is deferred — it requires significant backend infrastructure and is better addressed separately.
 
-### New: `src/components/ConfidenceEngineCard.tsx`
-A card displayed on `MatchDetail.tsx` (after the AI Verdict) showing a composite confidence score broken into 4 pillars:
+## Part A: Leaderboard Page
 
-| Pillar | Weight | Source | Calculation |
-|---|---|---|---|
-| Statistical Certainty | 40% | `prediction` | Gap between top probability and second-highest (stronger gap = higher certainty) |
-| Data Quality | 20% | `features`, `matchContext` | Completeness score: has lineups, h2h, form, injuries, referee data |
-| Community Alignment | 20% | `prediction_votes` + `user_performance` | Weighted agreement between AI pick and community weighted sentiment |
-| Volatility Adjustment | 20% | `match_features.volatility_score` | Inverse of volatility (low volatility = higher confidence) |
+### New: `src/pages/Leaderboard.tsx`
+A new protected page at `/leaderboard` showing a ranked table of users from the `user_performance` table.
 
-**Formula**: `confidence_2 = (stat * 0.4) + (quality * 0.2) + (alignment * 0.2) + ((1 - volatility) * 0.2)`
+- Columns: Rank, Avatar + Display Name, Tier Badge, Total Votes, Correct Votes, Accuracy %, Trust Score
+- Sorted by `trust_score` descending, then `accuracy_score`
+- Top 3 users get gold/silver/bronze styling
+- Current logged-in user's row is highlighted
+- Fetches from `user_performance` joined with `profiles` for display names and avatars
+- Shows "No data yet" state when table is empty
+- Minimum 5 votes required to appear on the leaderboard (prevents gaming)
 
-**UI**: Circular or segmented gauge showing overall score (0-100%), with a breakdown showing each pillar's contribution. Color-coded: Green (70%+), Yellow (40-69%), Red (<40%).
+### Updated: `src/App.tsx`
+- Add route: `/leaderboard` -> `Leaderboard` (protected)
+
+### Updated: `src/components/Header.tsx`
+- Add "Leaderboard" nav item with Trophy icon linking to `/leaderboard`
+
+## Part B: AI Comment Summary on Match Detail
+
+### New: `supabase/functions/summarize-comments/index.ts`
+An edge function that takes a `prediction_id`, fetches all comments for that prediction, and uses Lovable AI (Gemini Flash) to generate a 2-3 sentence summary of community sentiment.
+
+- Input: `{ prediction_id: string }`
+- Fetches comments from `prediction_comments` table
+- If fewer than 3 comments, returns null (not enough to summarize)
+- Sends comments to Lovable AI Gateway with a prompt: "Summarize the community sentiment about this football prediction in 2-3 sentences. Focus on what fans agree/disagree about."
+- Returns `{ summary: string }` or `{ summary: null }`
+- Uses `LOVABLE_API_KEY` (already configured)
+
+### New: `src/components/CommentSummaryCard.tsx`
+A small card displayed above the comments section showing the AI-generated summary.
+
+- Calls the `summarize-comments` edge function on mount
+- Shows a sparkle/brain icon with "Community Pulse" title
+- Displays the AI summary text
+- Includes a "Refresh" button to regenerate
+- Shows skeleton while loading, hides if no summary available
+- Caches result in react-query with 5-minute stale time
 
 ### Updated: `src/pages/MatchDetail.tsx`
-- Insert `ConfidenceEngineCard` after the AI Verdict section
-- Pass `prediction`, `features`, `matchContext`, and match ID as props
+- Insert `CommentSummaryCard` above the `CommentsSection` component
+- Pass `predictionId` as prop
 
-## Part B: Hot Match Detection on Dashboard
+## Part C: User Stats on Profile Page
 
-### New: `src/components/HotMatchBadge.tsx`
-A small flame badge component that renders on `MatchCard` when a match qualifies as "hot".
-
-### Updated: `src/hooks/useMatches.ts`
-- In `enrichMatches`, also fetch `prediction_votes` counts and `match_features.volatility_score` for upcoming matches
-- Compute a `hotScore` per match based on:
-  - Vote count (engagement)
-  - Like/dislike ratio divergence (disagreement)
-  - Volatility score
-- Attach `hotScore` to the enriched match object
-
-### Updated: `src/lib/types.ts`
-- Add optional `hotScore?: number` to the `Match` type
-
-### Updated: `src/components/MatchCard.tsx`
-- Show `HotMatchBadge` (flame icon + "Hot") when `match.hotScore` exceeds threshold
-
-### Updated: `src/pages/Index.tsx`
-- Add a new "Trending Matches" section before Upcoming, showing matches sorted by hotScore (top 3-6)
-- Only renders if there are hot matches
+### Updated: `src/pages/Profile.tsx`
+- Add a "My Prediction Stats" section showing the user's own `user_performance` data
+- Display: Total Votes, Correct Votes, Accuracy %, Trust Score, Tier badge
+- Fetched from `user_performance` where `user_id` = current user
+- Links to the leaderboard with "View Leaderboard" button
 
 ## Files
 
 | File | Action |
 |---|---|
-| `src/components/ConfidenceEngineCard.tsx` | New composite confidence card |
-| `src/components/HotMatchBadge.tsx` | New flame badge component |
-| `src/pages/MatchDetail.tsx` | Add ConfidenceEngineCard |
-| `src/hooks/useMatches.ts` | Enrich with vote counts + hotScore |
-| `src/lib/types.ts` | Add hotScore field |
-| `src/components/MatchCard.tsx` | Show hot badge |
-| `src/pages/Index.tsx` | Add Trending Matches section |
+| `src/pages/Leaderboard.tsx` | New leaderboard page |
+| `src/components/CommentSummaryCard.tsx` | New AI comment summary card |
+| `supabase/functions/summarize-comments/index.ts` | New edge function for AI summaries |
+| `src/App.tsx` | Add `/leaderboard` route |
+| `src/components/Header.tsx` | Add Leaderboard nav link |
+| `src/pages/MatchDetail.tsx` | Add CommentSummaryCard |
+| `src/pages/Profile.tsx` | Add prediction stats section |
+| `.lovable/plan.md` | Update plan to Phase 3 |
 
-No database changes needed — all data already exists in `prediction_votes`, `match_features`, `match_context`, and `predictions`.
+No database changes needed — `user_performance` and `profiles` tables already exist with public SELECT policies.
 
