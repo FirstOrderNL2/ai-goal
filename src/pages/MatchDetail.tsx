@@ -6,6 +6,7 @@ import { ProbabilityBar } from "@/components/ProbabilityBar";
 import { AIInsightsCard } from "@/components/AIInsightsCard";
 import { AIVerdictCard, AIVerdictGenerating } from "@/components/AIVerdictCard";
 import { MatchContextCard } from "@/components/MatchContextCard";
+import { FootballIntelligenceCard } from "@/components/FootballIntelligenceCard";
 import { TeamComparisonCard } from "@/components/TeamComparisonCard";
 import { H2HCard } from "@/components/H2HCard";
 import { OverUnderCard } from "@/components/OverUnderCard";
@@ -375,7 +376,14 @@ export default function MatchDetail() {
           league={match.league}
         />
 
-        {/* 10. Match Intelligence */}
+        {/* 10. Football Intelligence */}
+        <FootballIntelligenceCard
+          matchId={match.id}
+          homeTeamName={home_team?.name}
+          awayTeamName={away_team?.name}
+        />
+
+        {/* 10b. Match Intelligence (Enrichment Signals) */}
         <MatchContextCard
           matchId={match.id}
           homeTeamName={home_team?.name}
