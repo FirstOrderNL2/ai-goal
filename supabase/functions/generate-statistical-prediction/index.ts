@@ -116,7 +116,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch data in parallel (including model_performance for calibration)
+    // Fetch data in parallel (including model_performance for calibration + enrichment)
     const [
       { data: odds },
       { data: features },
@@ -127,6 +127,7 @@ Deno.serve(async (req) => {
       { data: homeDiscipline },
       { data: awayDiscipline },
       { data: perfData },
+      { data: enrichment },
     ] = await Promise.all([
       supabase.from("odds").select("*").eq("match_id", match_id).single(),
       supabase.from("match_features").select("*").eq("match_id", match_id).single(),
@@ -146,6 +147,7 @@ Deno.serve(async (req) => {
       supabase.from("team_discipline").select("*").eq("team_id", match.team_home_id).order("season", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("team_discipline").select("*").eq("team_id", match.team_away_id).order("season", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("model_performance").select("numeric_weights").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("match_enrichment").select("*").eq("match_id", match_id).maybeSingle(),
     ]);
 
     // Extract numeric calibration weights
@@ -256,6 +258,38 @@ Deno.serve(async (req) => {
     // Apply O/U calibration adjustment to lambdas
     lambdaHome = lambdaHome + ouLambdaAdj;
     lambdaAway = lambdaAway + ouLambdaAdj;
+
+    // ── Enrichment layer adjustments (additive, graceful fallback) ──
+    let enrichmentApplied = false;
+    if (enrichment) {
+      enrichmentApplied = true;
+      const enr = enrichment as any;
+
+      // Key player absences: reduce lambda by 5% per missing player (capped at 15%)
+      if (enr.key_player_missing_home >= 2) {
+        const penalty = Math.min(0.15, enr.key_player_missing_home * 0.05);
+        lambdaHome *= (1 - penalty);
+      }
+      if (enr.key_player_missing_away >= 2) {
+        const penalty = Math.min(0.15, enr.key_player_missing_away * 0.05);
+        lambdaAway *= (1 - penalty);
+      }
+
+      // News sentiment: strongly negative (< -0.5) reduces lambda by 3%
+      if (enr.news_sentiment_home < -0.5) {
+        lambdaHome *= 0.97;
+      }
+      if (enr.news_sentiment_away < -0.5) {
+        lambdaAway *= 0.97;
+      }
+
+      // Weather impact: high impact reduces both lambdas (defensive conditions)
+      if (enr.weather_impact > 0.7) {
+        const weatherPenalty = enr.weather_impact * 0.05; // up to 5%
+        lambdaHome *= (1 - weatherPenalty);
+        lambdaAway *= (1 - weatherPenalty);
+      }
+    }
 
     // Ensure reasonable bounds
     lambdaHome = Math.max(0.3, Math.min(lambdaHome, 4.0));

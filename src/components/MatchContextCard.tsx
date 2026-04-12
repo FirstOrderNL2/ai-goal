@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShieldAlert, Users, CloudSun, Newspaper } from "lucide-react";
+import { ShieldAlert, Users, CloudSun, Newspaper, TrendingUp, TrendingDown, Minus, UserX, Swords } from "lucide-react";
 import type { MatchContext } from "@/lib/types";
 
 interface MatchContextCardProps {
@@ -27,15 +27,36 @@ export function MatchContextCard({ matchId, homeTeamName, awayTeamName }: MatchC
     enabled: !!matchId,
   });
 
+  const { data: enrichment } = useQuery({
+    queryKey: ["match-enrichment", matchId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("match_enrichment")
+        .select("*")
+        .eq("match_id", matchId)
+        .single();
+      if (error) return null;
+      return data as any;
+    },
+    enabled: !!matchId,
+  });
+
   if (isLoading) return <Skeleton className="h-32" />;
-  if (!ctx) return null;
+  if (!ctx && !enrichment) return null;
 
-  const hasInjuries = (ctx.injuries_home?.length ?? 0) > 0 || (ctx.injuries_away?.length ?? 0) > 0;
-  const hasSuspensions = (ctx.suspensions as any[])?.length > 0;
-  const hasNews = (ctx.news_items as any[])?.length > 0;
-  const hasWeather = !!ctx.weather;
+  const hasInjuries = (ctx?.injuries_home?.length ?? 0) > 0 || (ctx?.injuries_away?.length ?? 0) > 0;
+  const hasSuspensions = (ctx?.suspensions as any[])?.length > 0;
+  const hasNews = (ctx?.news_items as any[])?.length > 0;
+  const hasWeather = !!ctx?.weather;
+  const hasEnrichment = !!enrichment;
 
-  if (!hasInjuries && !hasSuspensions && !hasNews && !hasWeather) return null;
+  if (!hasInjuries && !hasSuspensions && !hasNews && !hasWeather && !hasEnrichment) return null;
+
+  const SentimentIcon = ({ value }: { value: number }) => {
+    if (value > 0.3) return <TrendingUp className="h-3 w-3 text-green-500" />;
+    if (value < -0.3) return <TrendingDown className="h-3 w-3 text-destructive" />;
+    return <Minus className="h-3 w-3 text-muted-foreground" />;
+  };
 
   return (
     <Card className="border-border/50">
@@ -46,6 +67,65 @@ export function MatchContextCard({ matchId, homeTeamName, awayTeamName }: MatchC
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Enrichment Signals */}
+        {hasEnrichment && (
+          <div className="space-y-2">
+            {/* Key Player Absences */}
+            {(enrichment.key_player_missing_home > 0 || enrichment.key_player_missing_away > 0) && (
+              <div className="flex items-center gap-3">
+                <UserX className="h-3.5 w-3.5 text-destructive shrink-0" />
+                <div className="flex gap-3 text-xs">
+                  {enrichment.key_player_missing_home > 0 && (
+                    <Badge variant="outline" className="text-[10px] text-destructive border-destructive/30">
+                      {homeTeamName || "Home"}: {enrichment.key_player_missing_home} absent
+                    </Badge>
+                  )}
+                  {enrichment.key_player_missing_away > 0 && (
+                    <Badge variant="outline" className="text-[10px] text-destructive border-destructive/30">
+                      {awayTeamName || "Away"}: {enrichment.key_player_missing_away} absent
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Sentiment */}
+            {(enrichment.news_sentiment_home !== 0 || enrichment.news_sentiment_away !== 0) && (
+              <div className="flex items-center gap-3">
+                <Newspaper className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <div className="flex gap-3 text-xs">
+                  <span className="flex items-center gap-1">
+                    <SentimentIcon value={enrichment.news_sentiment_home} />
+                    <span className="text-muted-foreground">{homeTeamName || "Home"}</span>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <SentimentIcon value={enrichment.news_sentiment_away} />
+                    <span className="text-muted-foreground">{awayTeamName || "Away"}</span>
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Formations */}
+            {(enrichment.formation_home || enrichment.formation_away) && (
+              <div className="flex items-center gap-3">
+                <Swords className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <div className="flex gap-3 text-xs text-muted-foreground">
+                  {enrichment.formation_home && <span>{homeTeamName}: {enrichment.formation_home}</span>}
+                  {enrichment.formation_away && <span>{awayTeamName}: {enrichment.formation_away}</span>}
+                </div>
+              </div>
+            )}
+
+            {/* Lineup confirmed badge */}
+            {enrichment.lineup_confirmed && (
+              <Badge variant="outline" className="text-[10px] text-green-500 border-green-500/30">
+                ✓ Lineups confirmed
+              </Badge>
+            )}
+          </div>
+        )}
+
         {/* Injuries */}
         {hasInjuries && (
           <div className="space-y-2">
@@ -54,20 +134,20 @@ export function MatchContextCard({ matchId, homeTeamName, awayTeamName }: MatchC
               Injuries & Absences
             </p>
             <div className="grid grid-cols-2 gap-3">
-              {(ctx.injuries_home?.length ?? 0) > 0 && (
+              {(ctx!.injuries_home?.length ?? 0) > 0 && (
                 <div className="space-y-1">
                   <p className="text-[10px] font-medium text-muted-foreground">{homeTeamName || "Home"}</p>
-                  {(ctx.injuries_home as any[])!.map((inj: any, i: number) => (
+                  {(ctx!.injuries_home as any[])!.map((inj: any, i: number) => (
                     <Badge key={i} variant="outline" className="text-[10px] mr-1 mb-1 text-destructive border-destructive/30">
                       {typeof inj === "string" ? inj : inj.player || inj.name || JSON.stringify(inj)}
                     </Badge>
                   ))}
                 </div>
               )}
-              {(ctx.injuries_away?.length ?? 0) > 0 && (
+              {(ctx!.injuries_away?.length ?? 0) > 0 && (
                 <div className="space-y-1">
                   <p className="text-[10px] font-medium text-muted-foreground">{awayTeamName || "Away"}</p>
-                  {(ctx.injuries_away as any[])!.map((inj: any, i: number) => (
+                  {(ctx!.injuries_away as any[])!.map((inj: any, i: number) => (
                     <Badge key={i} variant="outline" className="text-[10px] mr-1 mb-1 text-destructive border-destructive/30">
                       {typeof inj === "string" ? inj : inj.player || inj.name || JSON.stringify(inj)}
                     </Badge>
@@ -86,7 +166,7 @@ export function MatchContextCard({ matchId, homeTeamName, awayTeamName }: MatchC
               Suspensions
             </p>
             <div className="flex flex-wrap gap-1">
-              {(ctx.suspensions as any[])!.map((s: any, i: number) => (
+              {(ctx!.suspensions as any[])!.map((s: any, i: number) => (
                 <Badge key={i} variant="outline" className="text-[10px] text-yellow-500 border-yellow-500/30">
                   {typeof s === "string" ? s : s.player || s.name || JSON.stringify(s)}
                 </Badge>
@@ -99,7 +179,14 @@ export function MatchContextCard({ matchId, homeTeamName, awayTeamName }: MatchC
         {hasWeather && (
           <div className="flex items-center gap-2">
             <CloudSun className="h-3.5 w-3.5 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground">{ctx.weather}</p>
+            <p className="text-xs text-muted-foreground">
+              {ctx!.weather}
+              {hasEnrichment && enrichment.weather_impact > 0.5 && (
+                <Badge variant="outline" className="ml-2 text-[9px] text-yellow-500 border-yellow-500/30">
+                  High impact
+                </Badge>
+              )}
+            </p>
           </div>
         )}
 
@@ -111,7 +198,7 @@ export function MatchContextCard({ matchId, homeTeamName, awayTeamName }: MatchC
               Latest News
             </p>
             <div className="space-y-1">
-              {(ctx.news_items as any[])!.slice(0, 3).map((item: any, i: number) => (
+              {(ctx!.news_items as any[])!.slice(0, 3).map((item: any, i: number) => (
                 <p key={i} className="text-[11px] text-muted-foreground leading-snug">
                   • {typeof item === "string" ? item : item.title || item.headline || JSON.stringify(item)}
                 </p>

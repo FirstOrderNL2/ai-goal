@@ -132,6 +132,71 @@ export type Database = {
           },
         ]
       }
+      match_enrichment: {
+        Row: {
+          enriched_at: string
+          formation_away: string | null
+          formation_home: string | null
+          id: string
+          key_player_missing_away: number | null
+          key_player_missing_home: number | null
+          lineup_confirmed: boolean | null
+          match_id: string
+          news_sentiment_away: number | null
+          news_sentiment_home: number | null
+          odds_movement_away: number | null
+          odds_movement_home: number | null
+          referee_cards_avg: number | null
+          social_sentiment: number | null
+          sources: Json | null
+          weather_impact: number | null
+        }
+        Insert: {
+          enriched_at?: string
+          formation_away?: string | null
+          formation_home?: string | null
+          id?: string
+          key_player_missing_away?: number | null
+          key_player_missing_home?: number | null
+          lineup_confirmed?: boolean | null
+          match_id: string
+          news_sentiment_away?: number | null
+          news_sentiment_home?: number | null
+          odds_movement_away?: number | null
+          odds_movement_home?: number | null
+          referee_cards_avg?: number | null
+          social_sentiment?: number | null
+          sources?: Json | null
+          weather_impact?: number | null
+        }
+        Update: {
+          enriched_at?: string
+          formation_away?: string | null
+          formation_home?: string | null
+          id?: string
+          key_player_missing_away?: number | null
+          key_player_missing_home?: number | null
+          lineup_confirmed?: boolean | null
+          match_id?: string
+          news_sentiment_away?: number | null
+          news_sentiment_home?: number | null
+          odds_movement_away?: number | null
+          odds_movement_home?: number | null
+          referee_cards_avg?: number | null
+          social_sentiment?: number | null
+          sources?: Json | null
+          weather_impact?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_enrichment_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: true
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       match_features: {
         Row: {
           away_avg_conceded: number | null

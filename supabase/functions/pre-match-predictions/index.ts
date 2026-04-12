@@ -19,6 +19,23 @@ Deno.serve(async (req) => {
   const log: string[] = [];
   let totalProcessed = 0;
 
+  // Call enrichment layer (scrapes + signals)
+  async function callEnrich(matchId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${supabaseUrl}/functions/v1/enrich-match-context`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({ match_id: matchId }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   // Call statistical prediction (AI-free, fast)
   async function callStatisticalPredict(matchId: string): Promise<boolean> {
     try {
@@ -83,8 +100,10 @@ Deno.serve(async (req) => {
         return pred && !pred.ai_reasoning;
       }).slice(0, 5);
 
-      // Phase A1: Generate statistical predictions (fast, no AI cost)
+      // Phase A1: Enrich + generate statistical predictions
       for (const match of needsInitialPrediction) {
+        // Run enrichment first (non-blocking failure)
+        await callEnrich(match.id).catch(() => {});
         const ok = await callStatisticalPredict(match.id);
         log.push(`phase-a-stats: ${match.id} → ${ok ? "OK" : "FAIL"}`);
         if (ok) totalProcessed++;
@@ -154,6 +173,9 @@ Deno.serve(async (req) => {
         if (pred?.last_prediction_at && pred.last_prediction_at > nineMinAgo) {
           continue;
         }
+
+        // Enrich before refreshing (captures latest lineups/news)
+        await callEnrich(match.id).catch(() => {});
 
         // Use statistical refresh (free) — AI enrichment only for first prediction
         const ok = await callStatisticalPredict(match.id);
