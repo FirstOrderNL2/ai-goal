@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
     }
 
     // Fetch match + context in parallel
-    const [{ data: match }, { data: ctx }, { data: odds }, { data: refereeData }] = await Promise.all([
+    const [{ data: match }, { data: ctx }, { data: odds }] = await Promise.all([
       supabase
         .from("matches")
         .select("*, home_team:teams!matches_team_home_id_fkey(name), away_team:teams!matches_team_away_id_fkey(name)")
@@ -50,7 +50,6 @@ Deno.serve(async (req) => {
         .single(),
       supabase.from("match_context").select("*").eq("match_id", match_id).maybeSingle(),
       supabase.from("odds").select("*").eq("match_id", match_id).maybeSingle(),
-      null as any, // placeholder, filled below
     ]);
 
     if (!match) {
