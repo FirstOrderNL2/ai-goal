@@ -1,177 +1,139 @@
 
 
-# GoalGPT Full System Audit Report — April 12, 2026
+# GoalGPT Full System Audit — April 12, 2026
 
-## AI Learning Verdict: **Partially Learning**
+## AI Learning Verdict: **Partially Learning** (improving)
 
-The model IS updating weights and applying calibration adjustments. Performance has improved measurably over 8 days. However, critical data gaps (zero odds data, low feature coverage) severely limit what the model can learn from.
+The model is updating weights and accuracy is trending upward across all metrics. However, critical data gaps (near-zero odds data, no referee data) still limit learning depth.
 
 ---
 
-## Phase 1: Data Pipeline & Integrity
+## Phase 1: Data Pipeline
 
 | Dataset | Records | Status |
 |---------|---------|--------|
-| Matches | 4,423 | Healthy, no duplicates |
+| Matches | 4,423 | Healthy |
 | Teams | 836 | Good |
-| Team Statistics | 147 | Low — only 17.6% of teams have stats |
-| Odds | **0** | **CRITICAL: Completely empty** |
-| Referees | **0** | Empty — volatility model uses defaults |
-| Match Features | 232 (58 upcoming) | Only 12.4% of upcoming matches have features |
-| Match Context | 201 (26 upcoming) | Only 5.6% of upcoming matches have context |
-| Players | Present | Not used in predictions |
-| Cancelled matches | 8 | Properly marked, no issue |
+| Team Statistics | 161 | Low (19.3% coverage) |
+| Odds | **10** | Was 0, now populating — still critically low |
+| Referees | **0** | Empty |
+| Match Features | **641** | Major improvement (was 232) |
+| Match Context | 201 | Low |
+| Predictions | 418 | +88 since last check |
+| Prediction Reviews | 173 | +10 since last check |
+| Model Performance | 9 | Clean (deduplication worked) |
+| Players | 161 | Not used in predictions |
 
-**Critical Finding**: The odds table has zero rows. The prediction engine's "value detection" (Best Pick edge-based selection, market agreement confidence boost) is completely non-functional. Every prediction runs with `impliedHome = null`, meaning:
-- Best Pick never detects market edges
-- Market agreement defaults to 0.5 (neutral), reducing confidence accuracy
-- 20% of the data quality score is always 0
-
----
-
-## Phase 2: Feature Engineering & Utilization
-
-### Features the model uses:
-- Team form (last 20 matches, exponentially weighted at 0.85 decay) ✅
-- League averages (home/away goals from last 200 league matches) ✅
-- Poisson xG from match_features ✅
-- Referee strictness → volatility score ❌ (no referee data)
-- Team discipline → volatility score (partial — data exists)
-- Odds → implied probabilities ❌ (no odds data)
-- Model performance weights (draw_calibration, confidence_deflator, league penalties) ✅
-
-### Underutilized data:
-- **H2H results** exist in match_features but are NOT used by the statistical engine
-- **League position** (home/away) exists in match_features but NOT used
-- **Position difference** exists but NOT used
-- **Clean sheet %** and **BTTS %** from features are NOT used (engine computes its own)
-- **xG data** (xg_home, xg_away on matches table) is NOT fed back into learning
+Feature coverage for upcoming matches: **466/466 (100%)** — fixed from 12.4%. Odds remain critically low at 10 records.
 
 ---
 
-## Phase 3: Model Learning Verification
+## Phase 2: Feature Utilization
 
-### Weight evolution (April 4 → April 12):
+**Now used** (new since last audit):
+- H2H results from match_features (+/-5% lambda adjustment)
+- League position differential (+/-5% lambda adjustment)
+
+**Still unused:**
+- xG data from completed matches (not fed back into learning)
+- Clean sheet % and BTTS % from features (engine computes its own)
+- Player data (161 players, ignored)
+- Referee data (0 records anyway)
+
+---
+
+## Phase 3: Model Learning — Weight Evolution
+
 ```text
-Date       | Matches | 1X2 Acc | O/U Acc | BTTS Acc | MAE
-Apr 4      |   60    |  55.0%  |  43.3%  |  50.0%   | 2.60
-Apr 5      |   44    |  34.1%  |  59.1%  |  54.5%   | 1.85
-Apr 11     |  150    |  44.7%  |  56.7%  |  56.7%   | 1.95
-Apr 12     |  164    |  43.9%  |  57.3%  |  56.1%   | 1.92
+Date    | N   | 1X2   | O/U   | BTTS  | MAE  | Exact
+Apr 4   |  60 | 55.0% | 43.3% | 50.0% | 2.60 |  —
+Apr 5   |  44 | 34.1% | 59.1% | 54.5% | 1.85 |  —
+Apr 10  | 106 | 41.5% | 54.7% | 52.8% | 2.00 | 11.3%
+Apr 11  | 150 | 44.7% | 56.7% | 56.7% | 1.95 | 14.7%
+Apr 12  | 174 | 44.8% | 56.9% | 55.2% | 1.92 | 13.8%
 ```
 
-**Verdict**: O/U improved +14pp, BTTS improved +6pp, MAE improved -0.68. However, 1X2 accuracy DROPPED from 55% to 43.9% as the sample grew — the early high was likely noise from a small sample. The model IS learning (weights update, calibration adjustments flow through), but the learning is shallow because:
+**Trends**: 1X2 recovering (+3.3pp from trough), O/U +13.6pp, BTTS +5.2pp, MAE -0.68. Model IS learning.
 
-1. No odds data means no market signal
-2. 409 of 467 upcoming matches lack computed features
-3. The confidence-accuracy relationship is partially inverted (0.5 conf = 32.3% acc, 0.6 conf = 55.3% acc) — confidence bands below 0.6 are unreliable
-
-### Current active weights:
-- `draw_calibration: +0.03` (boosting draws — correct, draws were underpredicted)
-- `confidence_deflator: -0.086` (deflating overconfident predictions — correct)
-- `league_penalty_championship: -0.093` (penalizing Championship — correct, 25.7% acc)
-- `home_bias_adjustment: 0` (neutral)
-- `ou_lambda_adjustment: 0` (neutral)
+Active weights: `draw_calibration: +0.03`, `confidence_deflator: -0.086`, `league_penalty_championship: -0.093`
 
 ---
 
-## Phase 4: Prediction Accuracy by League
+## Phase 4: Accuracy by League (173 reviews)
 
-| League | N | 1X2 Acc | O/U Acc | Goals Err |
-|--------|---|---------|---------|-----------|
-| Serie A | 16 | **62.5%** | 56.3% | 1.80 |
-| Women's CL | 9 | 55.6% | **88.9%** | 2.44 |
-| Bundesliga | 15 | 53.3% | **73.3%** | 1.57 |
+| League | N | 1X2 | O/U | MAE |
+|--------|---|-----|-----|-----|
+| Serie A | 17 | **58.8%** | 58.8% | 1.77 |
+| Bundesliga | 16 | **56.3%** | 68.8% | 1.56 |
+| Champions League | 4 | **75.0%** | 25.0% | 2.18 |
+| Conference League | 4 | **75.0%** | 25.0% | 2.60 |
+| Premier League | 8 | **62.5%** | 50.0% | 1.88 |
 | Ligue 1 | 13 | 53.8% | **84.6%** | 1.85 |
-| Keuken Kampioen | 25 | 44.0% | 56.0% | 2.36 |
-| Eredivisie | 17 | 41.2% | 47.1% | 2.00 |
-| Premier League | 5 | 40.0% | 40.0% | 2.46 |
-| La Liga | 16 | 37.5% | **68.8%** | 1.65 |
+| La Liga | 17 | 41.2% | **64.7%** | 1.72 |
+| Keuken Kampioen | 26 | 42.3% | 57.7% | 2.33 |
 | **Championship** | **35** | **25.7%** | 45.7% | 1.63 |
 | Europa League | 4 | **0.0%** | 25.0% | 1.98 |
 
-### Error patterns:
-- `false_draw`: 31 — model predicts a winner but result is a draw
-- `missed_draw`: 24 — model predicts draw but there was a winner
-- `wrong_winner`: 13 — predicted the wrong team
+Error patterns: `false_draw: 32`, `missed_draw: 24`, `wrong_winner: 15`
 
 ---
 
-## Phase 5: Feedback Loop Validation
+## Phase 5: Feedback Loop
 
 ```text
-Match played → status='completed' → batch-review-matches → prediction_reviews
-  → compute-model-performance → model_performance.numeric_weights
-    → generate-statistical-prediction reads weights → applies adjustments
+Match → completed → batch-review (28 unreviewed remain) → prediction_reviews
+  → compute-model-performance → numeric_weights → generate-statistical-prediction
 ```
 
-**Loop status**: WORKING but with gaps:
-- 35 completed matches with predictions remain unreviewed (backlog)
-- 31 duplicate `model_performance` records (upsert uses INSERT, not true upsert by period)
-- The loop has no mechanism to RE-PREDICT old matches with new weights — it only affects future predictions
+Loop is **working**. Unique index on model_performance prevents duplicates (9 clean records, was 31).
 
 ---
 
-## Phase 6: Backend Health
+## Phase 6-7: Backend & Frontend
 
-- Edge functions: All operational, no errors in recent logs
-- `generate-statistical-prediction`: Fixed and deployed, running clean
-- `sync-football-data`: Active, 6,963 API calls remaining
-- 8 matches currently live (legitimate)
-- No crashes or timeouts detected
+- All edge functions: operational, clean shutdown logs (no crashes)
+- Confidence range: 0.10–0.78 (floor working, no more 0.01 outliers)
+- 196/418 predictions have AI reasoning (47%)
+- Console: LanguageSwitcher ref warning + React Router deprecation warnings
+- 259 upcoming matches still need predictions (backfill ongoing)
 
 ---
 
-## Phase 7: Frontend Validation
+## Issues Summary
 
-- SEO URLs: Corrected to goalgpt.io ✅
-- i18n: All keys present ✅
-- Console: No errors (only React Router deprecation warnings) ✅
-- Mobile header: Fixed ✅
+### CRITICAL
+1. **Odds data still near-empty (10 records)** — The sync was added but has only populated 10 rows. The odds ingestion may be failing silently or hitting API limits. Need to investigate `sync-football-data` odds fetching logic and logs.
+
+### MEDIUM
+2. **259 upcoming matches lack predictions** — Backfill progressing but slow (~15/batch). Need to accelerate.
+3. **28 completed matches unreviewed** — Trigger `batch-review-matches`.
+4. **Championship at 25.7%** — Apply stronger lambda regression (20% instead of 10%).
+5. **Draw prediction weakness** — 32 false draws + 24 missed draws = 56 draw-related errors out of 96 total errors (58%). The `draw_calibration: +0.03` is too small.
+
+### MINOR
+6. **LanguageSwitcher ref warning** — Wrap component with `React.forwardRef`.
+7. **React Router v6 deprecation warnings** — Add future flags.
+8. **47% AI reasoning coverage** — Consider triggering AI enrichment for predictions that lack it.
 
 ---
 
 ## Implementation Plan
 
-### CRITICAL (Must Fix)
+### Step 1: Fix odds ingestion
+Investigate why only 10 odds records were inserted. Check the `sync-football-data` odds fetching code for errors, API response parsing, and league coverage. Fix and re-run to populate odds for all upcoming matches.
 
-**1. Populate the odds table** — The entire value detection and market agreement system is dead without odds data.
-- In `sync-football-data`, add odds fetching from API-Football's `/odds` endpoint
-- Store in the existing `odds` table
-- This alone could improve 1X2 accuracy by 5-10pp
+### Step 2: Accelerate prediction backfill
+Trigger `pre-match-predictions` multiple times to cover the 259 gap, or increase batch size.
 
-**2. Fix feature coverage gap** — 409/467 upcoming matches lack computed features.
-- In `compute-features`, increase the scan range and ensure it processes ALL upcoming matches, not just a limited batch
-- Features (poisson_xg, form, league position) are critical inputs
+### Step 3: Process 28 unreviewed matches
+Trigger `batch-review-matches` then `compute-model-performance` to update weights.
 
-### MEDIUM (Should Fix)
+### Step 4: Strengthen draw calibration
+Increase `draw_calibration` adjustment or add a draw-specific Poisson boost in `generate-statistical-prediction` (e.g., boost draw probability by 5-8% when lambdas are close).
 
-**3. Use H2H and league position data** — These exist in `match_features` but the statistical engine ignores them.
-- Add H2H adjustment: if team A beat team B in 3 of last 5, boost team A's lambda by ~5%
-- Add position differential: larger gaps = higher favorite confidence
+### Step 5: Fix LanguageSwitcher ref warning
+Wrap `LanguageSwitcher` component with `React.forwardRef`.
 
-**4. Clean up model_performance duplicates** — 31 records exist, many duplicates per day. The upsert doesn't have a unique constraint on (period_start, period_end).
-- Add a unique index or deduplicate before inserting
-
-**5. Fix confidence calibration** — The 0.5 confidence band has only 32.3% accuracy (should be ~50%). 
-- The confidence formula overweights `dataQuality` (which is always low because odds=0 and features are sparse)
-- After populating odds, confidence should auto-correct
-
-**6. Review 35 unreviewed completed matches** — Trigger `batch-review-matches` to process the backlog.
-
-### MINOR (Nice to Fix)
-
-**7. Use xG data from completed matches** — `matches.xg_home` and `matches.xg_away` are stored but never used for learning or feature computation.
-
-**8. Feed player data into predictions** — 836 players exist but are unused.
-
-**9. React Router v6 deprecation warnings** — Set future flags.
-
-### Step-by-step implementation:
-
-1. **Fix `compute-features`** to process all upcoming matches (increase batch limit)
-2. **Add odds ingestion** to `sync-football-data` using API-Football `/odds` endpoint
-3. **Add H2H and position adjustments** to `generate-statistical-prediction`
-4. **Add unique constraint** on `model_performance` to prevent duplicates
-5. **Trigger batch-review + compute-model-performance + pre-match-predictions** to refresh the pipeline
+### Step 6: Add React Router future flags
+Set `v7_startTransition` and `v7_relativeSplatPath` in the BrowserRouter.
 
