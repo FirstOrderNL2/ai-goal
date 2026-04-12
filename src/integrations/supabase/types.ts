@@ -277,6 +277,56 @@ export type Database = {
           },
         ]
       }
+      match_intelligence: {
+        Row: {
+          confidence_adjustment: number | null
+          context_summary: string | null
+          generated_at: string
+          id: string
+          market_signal: Json | null
+          match_id: string
+          match_narrative: string | null
+          momentum_away: number | null
+          momentum_home: number | null
+          player_impacts: Json | null
+          tactical_analysis: Json | null
+        }
+        Insert: {
+          confidence_adjustment?: number | null
+          context_summary?: string | null
+          generated_at?: string
+          id?: string
+          market_signal?: Json | null
+          match_id: string
+          match_narrative?: string | null
+          momentum_away?: number | null
+          momentum_home?: number | null
+          player_impacts?: Json | null
+          tactical_analysis?: Json | null
+        }
+        Update: {
+          confidence_adjustment?: number | null
+          context_summary?: string | null
+          generated_at?: string
+          id?: string
+          market_signal?: Json | null
+          match_id?: string
+          match_narrative?: string | null
+          momentum_away?: number | null
+          momentum_home?: number | null
+          player_impacts?: Json | null
+          tactical_analysis?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_intelligence_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: true
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       matches: {
         Row: {
           ai_accuracy_score: number | null
