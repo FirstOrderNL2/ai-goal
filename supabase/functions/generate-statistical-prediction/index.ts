@@ -128,6 +128,7 @@ Deno.serve(async (req) => {
       { data: awayDiscipline },
       { data: perfData },
       { data: enrichment },
+      { data: intelligence },
     ] = await Promise.all([
       supabase.from("odds").select("*").eq("match_id", match_id).single(),
       supabase.from("match_features").select("*").eq("match_id", match_id).single(),
@@ -148,6 +149,7 @@ Deno.serve(async (req) => {
       supabase.from("team_discipline").select("*").eq("team_id", match.team_away_id).order("season", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("model_performance").select("numeric_weights").order("created_at", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("match_enrichment").select("*").eq("match_id", match_id).maybeSingle(),
+      supabase.from("match_intelligence").select("confidence_adjustment").eq("match_id", match_id).maybeSingle(),
     ]);
 
     // Extract numeric calibration weights
@@ -468,7 +470,13 @@ Deno.serve(async (req) => {
 
     // Apply confidence deflator from learning loop + league penalty
     const totalConfPenalty = volPenalty + Math.abs(confDeflator) + Math.abs(leaguePenalty);
-    const confidence = Math.round(Math.max(0.10, (dataQuality * 0.6 + marketAgreement * 0.4) - totalConfPenalty) * 1000) / 1000;
+    let confidence = Math.round(Math.max(0.10, (dataQuality * 0.6 + marketAgreement * 0.4) - totalConfPenalty) * 1000) / 1000;
+
+    // ── Football Intelligence Layer: apply confidence adjustment ──
+    if (intelligence && typeof (intelligence as any).confidence_adjustment === "number") {
+      const filAdj = Math.max(-0.1, Math.min(0.1, Number((intelligence as any).confidence_adjustment)));
+      confidence = Math.round(Math.max(0.10, Math.min(0.95, confidence + filAdj)) * 1000) / 1000;
+    }
 
     // Store volatility_score in match_features
     if (features) {

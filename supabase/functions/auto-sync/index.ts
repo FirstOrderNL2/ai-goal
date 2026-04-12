@@ -158,6 +158,7 @@ Deno.serve(async (req) => {
     if (enrichTargets?.length) {
       for (const m of enrichTargets) {
         await callFunction("enrich-match-context", { match_id: m.id });
+        await callFunction("football-intelligence", { match_id: m.id });
       }
     }
   }
