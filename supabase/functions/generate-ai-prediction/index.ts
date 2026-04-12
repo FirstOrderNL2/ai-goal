@@ -422,6 +422,7 @@ Deno.serve(async (req) => {
       { data: homePlayers },
       { data: awayPlayers },
       { data: leagueMatches },
+      { data: filData },
     ] = await Promise.all([
       supabase.from("predictions").select("*").eq("match_id", match_id).single(),
       supabase.from("odds").select("*").eq("match_id", match_id).single(),
@@ -469,6 +470,10 @@ Deno.serve(async (req) => {
         .select("goals_home, goals_away, league")
         .eq("league", match.league).eq("status", "completed")
         .order("match_date", { ascending: false }).limit(200),
+      // Football Intelligence Layer
+      supabase.from("match_intelligence")
+        .select("match_narrative, tactical_analysis, player_impacts, momentum_home, momentum_away, context_summary")
+        .eq("match_id", match_id).maybeSingle(),
     ]);
 
     const homeName = match.home_team?.name ?? "Home";
@@ -877,6 +882,12 @@ ${contextBlock}
 ${newsSignals}
 ${liveContext ? `\nLIVE CONTEXT (injuries, suspensions, lineups, news):\n${liveContext}` : ""}
 ${match.referee ? `\nREFEREE: ${match.referee}` : ""}
+${filData ? `\nFOOTBALL INTELLIGENCE LAYER:
+Narrative: ${(filData as any).match_narrative || "N/A"}
+Tactical: ${JSON.stringify((filData as any).tactical_analysis || {})}
+Player Impacts: ${((filData as any).player_impacts || []).slice(0, 5).map((p: any) => `${p.name} (${p.status}, importance ${p.importance}): ${p.impact_description}`).join("; ")}
+Momentum: ${(filData as any).match_narrative ? `Home ${(filData as any).momentum_home}/100, Away ${(filData as any).momentum_away}/100` : "N/A"}
+Summary: ${(filData as any).context_summary || "N/A"}` : ""}
 ${learningBlock}
 \nVOLATILITY NOTE: If the referee is known to be strict or both teams are aggressive, factor this into your reasoning about match tempo and card risk. This may affect Over/Under and BTTS assessments.
 
