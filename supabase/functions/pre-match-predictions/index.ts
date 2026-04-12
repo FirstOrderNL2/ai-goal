@@ -174,6 +174,9 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // Enrich before refreshing (captures latest lineups/news)
+        await callEnrich(match.id).catch(() => {});
+
         // Use statistical refresh (free) — AI enrichment only for first prediction
         const ok = await callStatisticalPredict(match.id);
         if (ok) {

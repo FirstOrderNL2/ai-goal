@@ -143,6 +143,25 @@ Deno.serve(async (req) => {
     await callFunction("compute-features");
   }
 
+  // Step 5b: Enrichment layer — pre_match and live modes
+  if (effectiveMode === "pre_match" || effectiveMode === "live") {
+    // Enrich imminent matches (within 60 min)
+    const oneHrLater = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const { data: enrichTargets } = await supabase
+      .from("matches")
+      .select("id")
+      .eq("status", "upcoming")
+      .lte("match_date", oneHrLater)
+      .order("match_date", { ascending: true })
+      .limit(10);
+
+    if (enrichTargets?.length) {
+      for (const m of enrichTargets) {
+        await callFunction("enrich-match-context", { match_id: m.id });
+      }
+    }
+  }
+
   // Step 6: Batch predictions — full mode only
   if (effectiveMode === "full") {
     await callFunction("batch-generate-predictions");
