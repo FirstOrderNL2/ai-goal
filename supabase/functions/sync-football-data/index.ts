@@ -685,7 +685,7 @@ Deno.serve(async (req) => {
     // Fetch pre-match odds from API-Football and store in odds table
     // ════════════════════════════════════════════
     if (mode === "full" || mode === "pre_match") {
-      const oddsLimit = mode === "full" ? 10 : 5;
+      const oddsLimit = mode === "full" ? 50 : 15;
       // Get upcoming matches that don't have odds yet
       const upcomingForOdds = allUpcomingFixtures
         .filter((f: any) => mapStatus(f.fixture.status.short) === "upcoming")

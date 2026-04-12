@@ -323,6 +323,21 @@ Deno.serve(async (req) => {
       poissonAW -= shift;
     }
 
+    // ── Enhanced draw boost when lambdas are close ──
+    // When expected goals are similar, draws are more likely than raw Poisson suggests
+    const lambdaDiff = Math.abs(lambdaHome - lambdaAway);
+    if (lambdaDiff < 0.3) {
+      const drawBoost = 0.06 * (1 - lambdaDiff / 0.3); // up to +6% when lambdas are equal
+      poissonDR += drawBoost;
+      poissonHW -= drawBoost * 0.5;
+      poissonAW -= drawBoost * 0.5;
+    } else if (lambdaDiff < 0.5) {
+      const drawBoost = 0.03 * (1 - (lambdaDiff - 0.3) / 0.2); // up to +3%
+      poissonDR += drawBoost;
+      poissonHW -= drawBoost * 0.5;
+      poissonAW -= drawBoost * 0.5;
+    }
+
     // Competition-specific adjustments (cup draw boost)
     if (isCup) {
       const boost = 0.03;
