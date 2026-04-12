@@ -410,7 +410,7 @@ Deno.serve(async (req) => {
         feature_weights: featureWeights,
         weak_areas: weaknesses,
         numeric_weights: numericWeights,
-      });
+      }, { onConflict: "period_start,period_end" });
 
     if (upsertErr) throw upsertErr;
 

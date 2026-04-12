@@ -218,6 +218,41 @@ Deno.serve(async (req) => {
       lambdaAway = leagueAwayAvg;
     }
 
+    // ── H2H adjustment ──
+    // If features contain h2h_results, adjust lambdas based on historical dominance
+    if (features?.h2h_results && Array.isArray(features.h2h_results) && features.h2h_results.length >= 2) {
+      const h2h = features.h2h_results as any[];
+      let homeWins = 0, awayWins = 0;
+      for (const r of h2h) {
+        if (r.score_home > r.score_away) {
+          // Check if the current home team was also home in this H2H match
+          const homeTeamName = match.home_team?.name?.toLowerCase() || "";
+          if (r.home?.toLowerCase().includes(homeTeamName.slice(0, 5))) homeWins++;
+          else awayWins++;
+        } else if (r.score_away > r.score_home) {
+          const homeTeamName = match.home_team?.name?.toLowerCase() || "";
+          if (r.away?.toLowerCase().includes(homeTeamName.slice(0, 5))) homeWins++;
+          else awayWins++;
+        }
+      }
+      const totalH2H = h2h.length;
+      const h2hDominance = (homeWins - awayWins) / totalH2H; // -1 to +1
+      // Apply ±5% lambda adjustment based on H2H dominance
+      const h2hAdj = h2hDominance * 0.05;
+      lambdaHome = lambdaHome * (1 + h2hAdj);
+      lambdaAway = lambdaAway * (1 - h2hAdj);
+    }
+
+    // ── League position adjustment ──
+    // Larger position gaps = boost favorite's lambda slightly
+    if (features?.position_diff != null && features.position_diff !== 0) {
+      const posDiff = Number(features.position_diff); // negative = home team higher (better)
+      // Cap effect at ±5% for a 10+ position gap
+      const posAdj = Math.max(-0.05, Math.min(0.05, -posDiff * 0.005));
+      lambdaHome = lambdaHome * (1 + posAdj);
+      lambdaAway = lambdaAway * (1 - posAdj);
+    }
+
     // Apply O/U calibration adjustment to lambdas
     lambdaHome = lambdaHome + ouLambdaAdj;
     lambdaAway = lambdaAway + ouLambdaAdj;
