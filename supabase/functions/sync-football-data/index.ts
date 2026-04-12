@@ -681,6 +681,58 @@ Deno.serve(async (req) => {
     }
 
     // ════════════════════════════════════════════
+    // P2.5: Odds — FULL and PRE_MATCH modes
+    // Fetch pre-match odds from API-Football and store in odds table
+    // ════════════════════════════════════════════
+    if (mode === "full" || mode === "pre_match") {
+      const oddsLimit = mode === "full" ? 10 : 5;
+      // Get upcoming matches that don't have odds yet
+      const upcomingForOdds = allUpcomingFixtures
+        .filter((f: any) => mapStatus(f.fixture.status.short) === "upcoming")
+        .slice(0, oddsLimit * 3);
+
+      const oddsMatchIds = upcomingForOdds.map(f => matchUuidMap.get(f.fixture.id)).filter(Boolean) as string[];
+      const { data: existingOdds } = await supabase.from("odds")
+        .select("match_id").in("match_id", oddsMatchIds.slice(0, 50));
+      const existingOddsSet = new Set((existingOdds ?? []).map(r => r.match_id));
+
+      let oddsFetched = 0;
+      for (const f of upcomingForOdds) {
+        if (apiCallCount >= callBudget || oddsFetched >= oddsLimit) break;
+        const matchId = matchUuidMap.get(f.fixture.id);
+        if (!matchId || existingOddsSet.has(matchId)) continue;
+        try {
+          const oddsData = await apiFetch(`/odds?fixture=${f.fixture.id}&bookmaker=8`, apiKey); // bookmaker 8 = Bet365
+          await delay(400);
+          if (oddsData.length > 0) {
+            const bookmakers = oddsData[0]?.bookmakers ?? [];
+            // Try Bet365 first, then any available bookmaker
+            let bets = bookmakers[0]?.bets ?? [];
+            const matchWinner = bets.find((b: any) => b.id === 1 || b.name === "Match Winner");
+            if (matchWinner) {
+              const values = matchWinner.values;
+              const homeOdds = values.find((v: any) => v.value === "Home")?.odd;
+              const drawOdds = values.find((v: any) => v.value === "Draw")?.odd;
+              const awayOdds = values.find((v: any) => v.value === "Away")?.odd;
+              if (homeOdds && drawOdds && awayOdds) {
+                await supabase.from("odds").upsert({
+                  match_id: matchId,
+                  home_win_odds: parseFloat(homeOdds),
+                  draw_odds: parseFloat(drawOdds),
+                  away_win_odds: parseFloat(awayOdds),
+                }, { onConflict: "match_id" });
+                oddsFetched++;
+                summary.odds = (summary.odds || 0) + 1;
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`Odds error for fixture ${f.fixture.id}:`, e);
+        }
+      }
+    }
+
+    // ════════════════════════════════════════════
     // P3: Predictions — FULL mode only, use our own Poisson model
     // Skip API predictions endpoint entirely to save calls
     // ════════════════════════════════════════════

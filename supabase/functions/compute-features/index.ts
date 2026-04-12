@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
       .select("id, team_home_id, team_away_id, league")
       .eq("status", "upcoming")
       .order("match_date", { ascending: true })
-      .limit(50);
+      .limit(500);
 
     if (matchErr) throw matchErr;
     if (!upcomingMatches || upcomingMatches.length === 0) {
