@@ -525,10 +525,18 @@ Deno.serve(async (req) => {
     let volPenalty = 0;
     if (volatilityScore > 0.65) volPenalty = Math.min(0.05, (volatilityScore - 0.65) * 0.15);
 
-    // Apply confidence deflator from learning loop + league penalty + league reliability
-    const strengthenedDeflator = Math.min(confDeflator, -0.12); // enforce minimum -0.12
-    const totalConfPenalty = volPenalty + Math.abs(strengthenedDeflator) + Math.abs(leaguePenalty);
-    let confidence = Math.round(Math.max(0.10, (dataQuality * 0.6 + marketAgreement * 0.4) * leagueRelFactor - totalConfPenalty) * 1000) / 1000;
+    // Apply confidence deflator from learning loop + error-based penalty + league penalty + league reliability
+    // Use learned deflator with safety floor of -0.15 (no hardcoded override)
+    const safeDeflator = Math.max(confDeflator - overconfPenalty, -0.15);
+    const totalConfPenalty = volPenalty + Math.abs(safeDeflator) + Math.abs(leaguePenalty);
+    let rawConfidence = Math.round(Math.max(0.10, (dataQuality * 0.6 + marketAgreement * 0.4) * leagueRelFactor - totalConfPenalty) * 1000) / 1000;
+
+    // ── Per-bucket calibration correction ──
+    // Apply bucket-specific correction based on where the raw confidence falls
+    const confPct = Math.floor(rawConfidence * 100);
+    const bucketKey = `${Math.floor(confPct / 10) * 10}-${Math.floor(confPct / 10) * 10 + 10}`;
+    const bucketCorrection = calCorrections[bucketKey] || 0;
+    let confidence = Math.round(Math.max(0.10, Math.min(0.95, rawConfidence + bucketCorrection)) * 1000) / 1000;
 
     // ── Football Intelligence Layer: apply confidence adjustment ──
     if (intelligence && typeof (intelligence as any).confidence_adjustment === "number") {
