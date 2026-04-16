@@ -1,0 +1,1 @@
+DELETE FROM public.model_performance WHERE id IN ('68a5c85c-bd4d-4942-8bc6-9603682d46df', '7a4718a9-c59f-4adf-ae8f-6b2a3bb73ad3');
