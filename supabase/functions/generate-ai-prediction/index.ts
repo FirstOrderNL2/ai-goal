@@ -13,6 +13,8 @@ async function fetchMatchContext(
   matchId?: string
 ): Promise<string> {
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000); // 30s max
     const res = await fetch(`${supabaseUrl}/functions/v1/fetch-match-context`, {
       method: "POST",
       headers: {
@@ -26,12 +28,14 @@ async function fetchMatchContext(
         away_team_api_id: awayTeamApiId ?? undefined,
         match_id: matchId,
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
     if (!res.ok) return "";
     const data = await res.json();
     return data.context || "";
   } catch (e) {
-    console.error("Failed to fetch match context:", e);
+    console.error("Failed to fetch match context (timeout or error):", e);
     return "";
   }
 }
@@ -482,12 +486,26 @@ Deno.serve(async (req) => {
     // Compute league-specific averages
     const leagueAvg = computeLeagueAvg(leagueMatches || [], match.league);
 
-    // Fetch live web context
-    const liveContext = await fetchMatchContext(
-      homeName, awayName, match.league, match.match_date, supabaseUrl, serviceKey,
-      match.api_football_id, match.home_team?.api_football_id, match.away_team?.api_football_id,
-      match_id
-    );
+    // Fetch live web context (with 30s timeout) in parallel with other DB queries
+    const [liveContext, { data: recentErrors }, { data: perfData }] = await Promise.all([
+      fetchMatchContext(
+        homeName, awayName, match.league, match.match_date, supabaseUrl, serviceKey,
+        match.api_football_id, match.home_team?.api_football_id, match.away_team?.api_football_id,
+        match_id
+      ),
+      supabase
+        .from("prediction_reviews")
+        .select("*")
+        .or(`league.eq.${match.league}`)
+        .eq("outcome_correct", false)
+        .order("created_at", { ascending: false })
+        .limit(20),
+      supabase
+        .from("model_performance")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(1),
+    ]);
 
     // Build form strings (expanded to last 10 for trend detection)
     const homeFormStr = (homeFormAll || []).map((m: any) => {
@@ -713,14 +731,7 @@ ${relevantReviews.length > 0
 Apply the lessons above. Avoid repeating the same mistakes.`;
     }
 
-    // ── RECENT ERRORS: query prediction_reviews for same teams/league ──
-    const { data: recentErrors } = await supabase
-      .from("prediction_reviews")
-      .select("*")
-      .or(`league.eq.${match.league}`)
-      .eq("outcome_correct", false)
-      .order("created_at", { ascending: false })
-      .limit(20);
+    // recentErrors already fetched above in parallel
 
     let recentErrorsBlock = "";
     if (recentErrors && recentErrors.length > 0) {
@@ -746,12 +757,7 @@ ${teamErrors.length > 0 ? `Recent ${match.league} mistakes: ${teamErrors.slice(0
     }
     learningBlock += recentErrorsBlock;
 
-    // Fetch model_performance for calibration awareness
-    const { data: perfData } = await supabase
-      .from("model_performance")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(1);
+    // perfData already fetched above in parallel
 
     let performanceBlock = "";
     let featureWeights: any = null;
@@ -905,14 +911,21 @@ IMPORTANT:
     if (!lovableApiKey) throw new Error("LOVABLE_API_KEY not set");
 
     // ── Step 0: Ensure statistical prediction exists first (AI-free base) ──
+    // Use a timeout to prevent this from blocking too long
     try {
+      const statController = new AbortController();
+      const statTimeout = setTimeout(() => statController.abort(), 20000); // 20s max
       await fetch(`${supabaseUrl}/functions/v1/generate-statistical-prediction`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
         body: JSON.stringify({ match_id }),
+        signal: statController.signal,
       });
+      clearTimeout(statTimeout);
     } catch (_) { /* statistical prediction is best-effort */ }
 
+    const aiController = new AbortController();
+    const aiTimeout = setTimeout(() => aiController.abort(), 60000); // 60s max for AI
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -920,12 +933,12 @@ IMPORTANT:
         Authorization: `Bearer ${lovableApiKey}`,
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "google/gemini-2.5-flash-lite",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        max_tokens: 5000,
+        max_tokens: 3000,
         tools: [{
           type: "function",
           function: {
@@ -937,16 +950,16 @@ IMPORTANT:
                 predicted_score_home: { type: "integer", description: "Predicted exact goals for home team" },
                 predicted_score_away: { type: "integer", description: "Predicted exact goals for away team" },
                 btts: { type: "string", enum: ["yes", "no"], description: "Both teams to score" },
-                confidence_adjustment: { type: "number", description: "Small adjustment to model confidence, between -0.10 and +0.10. Positive if context supports the stats, negative if injuries/context weaken confidence." },
-                winner_reasoning: { type: "string", description: "3-4 bullet points citing specific stats for why this team wins/draws. Reference Poisson probabilities, form, H2H, and momentum." },
+                confidence_adjustment: { type: "number", description: "Small adjustment to model confidence, between -0.10 and +0.10." },
+                winner_reasoning: { type: "string", description: "3-4 bullet points citing specific stats for why this team wins/draws." },
                 btts_reasoning: { type: "string", description: "2 bullet points with specific scoring/conceding rates justifying BTTS verdict." },
-                over_under_reasoning: { type: "string", description: "2 bullet points with combined goal averages, Poisson Over 2.5 probability justifying verdict." },
-                key_factors: { type: "string", description: "3-4 bullet points about injuries, suspensions, tactical factors, match importance, momentum, lineup quality." },
-                contrarian_check: { type: "string", description: "1-2 bullet points arguing AGAINST the statistical prediction." },
-                contrarian_note: { type: "string", description: "Optional: If you believe the statistical model is significantly wrong, explain why here." },
-                highlight_key_factors: { type: "array", items: { type: "string" }, description: "3-5 most impactful factors affecting this match (e.g. 'Striker injured, missing top scorer', 'On a 5-match winning streak')" },
-                live_data_sources: { type: "array", items: { type: "string" }, description: "List of data sources referenced: form stats, H2H data, injury reports, news articles, lineup confirmations, etc." },
-                anomalies: { type: "array", items: { type: "string" }, description: "List of anomalies: data gaps, model-vs-odds conflicts >5%, or insufficient data warnings. Empty array if none." },
+                over_under_reasoning: { type: "string", description: "2 bullet points justifying O/U verdict." },
+                key_factors: { type: "string", description: "3-4 bullet points about injuries, suspensions, tactical factors." },
+                contrarian_check: { type: "string", description: "1-2 bullet points arguing AGAINST the prediction." },
+                contrarian_note: { type: "string", description: "Optional: explain if the statistical model is significantly wrong." },
+                highlight_key_factors: { type: "array", items: { type: "string" }, description: "3-5 most impactful factors" },
+                live_data_sources: { type: "array", items: { type: "string" }, description: "List of data sources referenced" },
+                anomalies: { type: "array", items: { type: "string" }, description: "List of anomalies or data gaps" },
               },
               required: [
                 "predicted_score_home", "predicted_score_away", "btts",
@@ -959,7 +972,9 @@ IMPORTANT:
         }],
         tool_choice: { type: "function", function: { name: "predict_match" } },
       }),
+      signal: aiController.signal,
     });
+    clearTimeout(aiTimeout);
 
     if (!aiResponse.ok) {
       const status = aiResponse.status;
