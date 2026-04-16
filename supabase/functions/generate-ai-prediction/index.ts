@@ -731,14 +731,7 @@ ${relevantReviews.length > 0
 Apply the lessons above. Avoid repeating the same mistakes.`;
     }
 
-    // ── RECENT ERRORS: query prediction_reviews for same teams/league ──
-    const { data: recentErrors } = await supabase
-      .from("prediction_reviews")
-      .select("*")
-      .or(`league.eq.${match.league}`)
-      .eq("outcome_correct", false)
-      .order("created_at", { ascending: false })
-      .limit(20);
+    // recentErrors already fetched above in parallel
 
     let recentErrorsBlock = "";
     if (recentErrors && recentErrors.length > 0) {
@@ -764,12 +757,7 @@ ${teamErrors.length > 0 ? `Recent ${match.league} mistakes: ${teamErrors.slice(0
     }
     learningBlock += recentErrorsBlock;
 
-    // Fetch model_performance for calibration awareness
-    const { data: perfData } = await supabase
-      .from("model_performance")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(1);
+    // perfData already fetched above in parallel
 
     let performanceBlock = "";
     let featureWeights: any = null;
