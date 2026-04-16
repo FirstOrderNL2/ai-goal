@@ -27,6 +27,9 @@ export interface Match {
   ai_post_match_review: string | null;
   ai_accuracy_score: number | null;
   referee: string | null;
+  competition_type?: string | null;
+  match_stage?: string | null;
+  match_importance?: number | null;
   home_team?: Team;
   away_team?: Team;
   prediction?: Prediction;

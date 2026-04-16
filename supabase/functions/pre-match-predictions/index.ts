@@ -53,6 +53,23 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Call compute-match-importance
+  async function callImportance(matchId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${supabaseUrl}/functions/v1/compute-match-importance`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({ match_id: matchId }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   // Call statistical prediction (AI-free, fast)
   async function callStatisticalPredict(matchId: string): Promise<boolean> {
     try {
@@ -119,8 +136,9 @@ Deno.serve(async (req) => {
 
       // Phase A1: Enrich + generate statistical predictions
       for (const match of needsInitialPrediction) {
-        // Run enrichment + FIL first (non-blocking failure)
+        // Run enrichment + importance + FIL first (non-blocking failure)
         await callEnrich(match.id).catch(() => {});
+        await callImportance(match.id).catch(() => {});
         await callFIL(match.id).catch(() => {});
         const ok = await callStatisticalPredict(match.id);
         log.push(`phase-a-stats: ${match.id} → ${ok ? "OK" : "FAIL"}`);
@@ -192,8 +210,9 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // Enrich + FIL before refreshing (captures latest lineups/news)
+        // Enrich + importance + FIL before refreshing (captures latest lineups/news)
         await callEnrich(match.id).catch(() => {});
+        await callImportance(match.id).catch(() => {});
         await callFIL(match.id).catch(() => {});
 
         // Use statistical refresh (free) — AI enrichment only for first prediction

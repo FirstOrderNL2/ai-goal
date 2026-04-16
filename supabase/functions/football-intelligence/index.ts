@@ -144,6 +144,9 @@ Deno.serve(async (req) => {
     // Compile all available data into a context block
     let dataBlock = `Match: ${homeName} vs ${awayName}
 League: ${match.league}
+Competition Type: ${(match as any).competition_type || "league"}
+Match Stage: ${(match as any).match_stage || "regular"}
+Match Importance: ${(match as any).match_importance || 0.5}/1.0
 Date: ${match.match_date}
 Round: ${match.round || "N/A"}
 Referee: ${match.referee || "Unknown"}

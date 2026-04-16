@@ -148,21 +148,54 @@ export default function MatchDetail() {
         {/* 1. Match Header */}
         <Card className="border-border/50">
           <CardContent className="p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="uppercase tracking-wider text-xs">
-                  {match.league}
-                </Badge>
-                {isMatchLive && (
-                  <Badge className="bg-green-500/20 text-green-500 text-[10px] animate-pulse font-bold">
-                    LIVE {liveElapsed != null ? `${liveElapsed}'` : liveStatusShort || (getEstimatedElapsed() ? `~${getEstimatedElapsed()}'` : statusLabel[match.status] || "")}
-                  </Badge>
-                )}
-              </div>
-              <span className="text-sm text-muted-foreground">
-                {new Date(match.match_date).toLocaleString("en-GB", { timeZone: "Europe/Berlin", weekday: "long", month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })} CET
-              </span>
-            </div>
+             <div className="flex items-center justify-between">
+               <div className="flex items-center gap-2">
+                 <Badge variant="secondary" className="uppercase tracking-wider text-xs">
+                   {match.league}
+                 </Badge>
+                 {match.match_stage && ["final", "semi_final", "quarter_final"].includes(match.match_stage) && (
+                   <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-xs font-semibold">
+                     {match.match_stage === "final" ? "🏆 Final" : match.match_stage === "semi_final" ? "Semi-Final" : "Quarter-Final"}
+                   </Badge>
+                 )}
+                 {(match.match_importance ?? 0) >= 0.7 && match.match_stage === "regular" && (
+                   <Badge className="bg-red-500/15 text-red-400 border-red-500/30 text-xs font-semibold">
+                     🔥 High Stakes
+                   </Badge>
+                 )}
+                 {isMatchLive && (
+                   <Badge className="bg-green-500/20 text-green-500 text-[10px] animate-pulse font-bold">
+                     LIVE {liveElapsed != null ? `${liveElapsed}'` : liveStatusShort || (getEstimatedElapsed() ? `~${getEstimatedElapsed()}'` : statusLabel[match.status] || "")}
+                   </Badge>
+                 )}
+               </div>
+               <span className="text-sm text-muted-foreground">
+                 {new Date(match.match_date).toLocaleString("en-GB", { timeZone: "Europe/Berlin", weekday: "long", month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })} CET
+               </span>
+             </div>
+
+             {/* Match Importance Meter */}
+             {(match.match_importance ?? 0) > 0 && (
+               <div className="flex items-center gap-3 text-xs">
+                 <span className="text-muted-foreground shrink-0">Match Importance</span>
+                 <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                   <div
+                     className="h-full rounded-full transition-all"
+                     style={{
+                       width: `${Math.round((match.match_importance ?? 0.5) * 100)}%`,
+                       background: (match.match_importance ?? 0.5) >= 0.8
+                         ? "hsl(0 72% 51%)"
+                         : (match.match_importance ?? 0.5) >= 0.6
+                           ? "hsl(38 92% 50%)"
+                           : "hsl(var(--primary))",
+                     }}
+                   />
+                 </div>
+                 <span className="font-semibold tabular-nums shrink-0">
+                   {Math.round((match.match_importance ?? 0.5) * 100)}%
+                 </span>
+               </div>
+             )}
 
             <div className="flex items-center justify-center gap-6 py-4">
               <div className="text-center space-y-2 flex-1">

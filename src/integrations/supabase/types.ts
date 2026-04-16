@@ -333,6 +333,7 @@ export type Database = {
           ai_insights: string | null
           ai_post_match_review: string | null
           api_football_id: number | null
+          competition_type: string | null
           created_at: string
           fun_facts: string[] | null
           goals_away: number | null
@@ -340,6 +341,8 @@ export type Database = {
           id: string
           league: string
           match_date: string
+          match_importance: number | null
+          match_stage: string | null
           referee: string | null
           round: string | null
           sportradar_id: string | null
@@ -354,6 +357,7 @@ export type Database = {
           ai_insights?: string | null
           ai_post_match_review?: string | null
           api_football_id?: number | null
+          competition_type?: string | null
           created_at?: string
           fun_facts?: string[] | null
           goals_away?: number | null
@@ -361,6 +365,8 @@ export type Database = {
           id?: string
           league: string
           match_date: string
+          match_importance?: number | null
+          match_stage?: string | null
           referee?: string | null
           round?: string | null
           sportradar_id?: string | null
@@ -375,6 +381,7 @@ export type Database = {
           ai_insights?: string | null
           ai_post_match_review?: string | null
           api_football_id?: number | null
+          competition_type?: string | null
           created_at?: string
           fun_facts?: string[] | null
           goals_away?: number | null
@@ -382,6 +389,8 @@ export type Database = {
           id?: string
           league?: string
           match_date?: string
+          match_importance?: number | null
+          match_stage?: string | null
           referee?: string | null
           round?: string | null
           sportradar_id?: string | null
