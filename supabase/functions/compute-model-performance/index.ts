@@ -418,7 +418,10 @@ Deno.serve(async (req) => {
     let finalErrorWeights = errorWeights;
     let finalCalibrationCorrections = calibrationCorrections;
 
-    if (recentValid >= 10) {
+    // First enhanced cycle (no previous v2+ record): auto-pass to bootstrap the system
+    if (prevVersion <= 1) {
+      validationResult = "bootstrap";
+    } else if (recentValid >= 10) {
       const newAcc = newCorrect / recentValid;
       const oldAcc = oldCorrect / recentValid;
       const improvement = newAcc - oldAcc;
