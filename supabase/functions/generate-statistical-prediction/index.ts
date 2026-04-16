@@ -438,13 +438,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Global draw calibration boost (+0.05, up from +0.03 in learning weights)
-    {
-      const globalDrawBoost = 0.05;
-      poissonDR += globalDrawBoost;
-      poissonHW -= globalDrawBoost * 0.5;
-      poissonAW -= globalDrawBoost * 0.5;
-    }
+    // (Removed hardcoded globalDrawBoost — draw calibration is now fully learned via numeric_weights.draw_calibration + error_weights)
 
     // High volatility: reduce favorite margin slightly, increase draw
     if (volatilityScore > 0.65) {
