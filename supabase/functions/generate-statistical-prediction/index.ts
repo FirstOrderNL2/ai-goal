@@ -394,9 +394,11 @@ Deno.serve(async (req) => {
     }
 
     // Apply draw calibration from learning loop
-    if (drawCalAdj !== 0) {
-      poissonDR += drawCalAdj;
-      const shift = drawCalAdj / 2;
+    // Net draw adjustment = learned draw_calibration + error-based corrections
+    const netDrawAdj = drawCalAdj + drawUnderpredictBoost - drawOverpredictPenalty;
+    if (netDrawAdj !== 0) {
+      poissonDR += netDrawAdj;
+      const shift = netDrawAdj / 2;
       poissonHW -= shift;
       poissonAW -= shift;
     }
