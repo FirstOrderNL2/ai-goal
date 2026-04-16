@@ -486,12 +486,26 @@ Deno.serve(async (req) => {
     // Compute league-specific averages
     const leagueAvg = computeLeagueAvg(leagueMatches || [], match.league);
 
-    // Fetch live web context
-    const liveContext = await fetchMatchContext(
-      homeName, awayName, match.league, match.match_date, supabaseUrl, serviceKey,
-      match.api_football_id, match.home_team?.api_football_id, match.away_team?.api_football_id,
-      match_id
-    );
+    // Fetch live web context (with 30s timeout) in parallel with other DB queries
+    const [liveContext, { data: recentErrors }, { data: perfData }] = await Promise.all([
+      fetchMatchContext(
+        homeName, awayName, match.league, match.match_date, supabaseUrl, serviceKey,
+        match.api_football_id, match.home_team?.api_football_id, match.away_team?.api_football_id,
+        match_id
+      ),
+      supabase
+        .from("prediction_reviews")
+        .select("*")
+        .or(`league.eq.${match.league}`)
+        .eq("outcome_correct", false)
+        .order("created_at", { ascending: false })
+        .limit(20),
+      supabase
+        .from("model_performance")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(1),
+    ]);
 
     // Build form strings (expanded to last 10 for trend detection)
     const homeFormStr = (homeFormAll || []).map((m: any) => {
