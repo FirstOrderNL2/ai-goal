@@ -147,7 +147,7 @@ Deno.serve(async (req) => {
       match.referee ? supabase.from("referees").select("*").eq("name", match.referee).maybeSingle() : Promise.resolve({ data: null }),
       supabase.from("team_discipline").select("*").eq("team_id", match.team_home_id).order("season", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("team_discipline").select("*").eq("team_id", match.team_away_id).order("season", { ascending: false }).limit(1).maybeSingle(),
-      supabase.from("model_performance").select("numeric_weights").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("model_performance").select("numeric_weights, error_weights, calibration_corrections").order("created_at", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("match_enrichment").select("*").eq("match_id", match_id).maybeSingle(),
       supabase.from("match_intelligence").select("confidence_adjustment").eq("match_id", match_id).maybeSingle(),
     ]);
