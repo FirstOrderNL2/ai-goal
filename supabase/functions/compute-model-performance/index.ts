@@ -418,7 +418,11 @@ Deno.serve(async (req) => {
     let finalErrorWeights = errorWeights;
     let finalCalibrationCorrections = calibrationCorrections;
 
-    if (recentValid >= 10) {
+    // Bootstrap: auto-pass if previous record has no populated error_weights (i.e., no real v2+ baseline)
+    const prevHasLearnedWeights = Object.keys((latestPerf as any)?.error_weights || {}).length > 0;
+    if (!prevHasLearnedWeights) {
+      validationResult = "bootstrap";
+    } else if (recentValid >= 10) {
       const newAcc = newCorrect / recentValid;
       const oldAcc = oldCorrect / recentValid;
       const improvement = newAcc - oldAcc;
