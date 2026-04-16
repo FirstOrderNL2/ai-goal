@@ -104,14 +104,24 @@ export function MatchCard({ match }: MatchCardProps) {
           {/* League & Date */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
-                {match.league}
-              </Badge>
-              {roundLabel && (
-                <Badge variant="outline" className="text-[10px] font-medium text-foreground border-primary/30">
-                  {roundLabel}
-                </Badge>
-              )}
+               <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
+                 {match.league}
+               </Badge>
+               {roundLabel && (
+                 <Badge variant="outline" className="text-[10px] font-medium text-foreground border-primary/30">
+                   {roundLabel}
+                 </Badge>
+               )}
+               {match.match_stage && ["final", "semi_final", "quarter_final"].includes(match.match_stage) && (
+                 <Badge className="text-[10px] bg-amber-500/20 text-amber-400 border-amber-500/30 font-semibold">
+                   {match.match_stage === "final" ? "🏆 Final" : match.match_stage === "semi_final" ? "SF" : "QF"}
+                 </Badge>
+               )}
+               {(match.match_importance ?? 0) >= 0.7 && match.match_stage === "regular" && (
+                 <Badge className="text-[10px] bg-red-500/15 text-red-400 border-red-500/30 font-semibold">
+                   🔥 High Stakes
+                 </Badge>
+               )}
               {isLive && (
                 <Badge className="text-[10px] bg-green-500/20 text-green-500 border-green-500/30 font-bold gap-1">
                   <span className="relative flex h-2 w-2">
