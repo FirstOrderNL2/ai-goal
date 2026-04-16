@@ -152,12 +152,18 @@ Deno.serve(async (req) => {
       supabase.from("match_intelligence").select("confidence_adjustment").eq("match_id", match_id).maybeSingle(),
     ]);
 
-    // Extract numeric calibration weights
+    // Extract numeric calibration weights + error weights + calibration corrections
     const nw = (perfData as any)?.numeric_weights || {};
+    const errorW = (perfData as any)?.error_weights || {};
+    const calCorrections = (perfData as any)?.calibration_corrections || {};
     const homeBiasAdj: number = nw.home_bias_adjustment || 0;
     const drawCalAdj: number = nw.draw_calibration || 0;
     const ouLambdaAdj: number = nw.ou_lambda_adjustment || 0;
     const confDeflator: number = nw.confidence_deflator || 0;
+    // Error-based adjustments
+    const drawOverpredictPenalty: number = errorW.draw_overpredict_penalty || 0;
+    const drawUnderpredictBoost: number = errorW.draw_underpredict_boost || 0;
+    const overconfPenalty: number = errorW.overconfidence_penalty || 0;
     // League-specific penalty
     const leagueKey = `league_penalty_${match.league.replace(/\s/g, "_").toLowerCase()}`;
     const leaguePenalty: number = nw[leagueKey] || 0;
