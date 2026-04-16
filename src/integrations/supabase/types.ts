@@ -423,19 +423,24 @@ export type Database = {
           avg_brier_btts: number | null
           avg_brier_ou: number | null
           btts_accuracy: number | null
+          calibration_corrections: Json | null
           calibration_data: Json | null
           created_at: string | null
+          error_weights: Json | null
           exact_score_hits: number | null
           feature_weights: Json | null
           goal_line_accuracy: Json | null
           id: string
+          last_learning_match_count: number | null
           mae_goals: number | null
+          model_version: number | null
           numeric_weights: Json | null
           ou_25_accuracy: number | null
           outcome_accuracy: number | null
           period_end: string
           period_start: string
           total_matches: number | null
+          validation_result: string | null
           weak_areas: Json | null
         }
         Insert: {
@@ -443,19 +448,24 @@ export type Database = {
           avg_brier_btts?: number | null
           avg_brier_ou?: number | null
           btts_accuracy?: number | null
+          calibration_corrections?: Json | null
           calibration_data?: Json | null
           created_at?: string | null
+          error_weights?: Json | null
           exact_score_hits?: number | null
           feature_weights?: Json | null
           goal_line_accuracy?: Json | null
           id?: string
+          last_learning_match_count?: number | null
           mae_goals?: number | null
+          model_version?: number | null
           numeric_weights?: Json | null
           ou_25_accuracy?: number | null
           outcome_accuracy?: number | null
           period_end: string
           period_start: string
           total_matches?: number | null
+          validation_result?: string | null
           weak_areas?: Json | null
         }
         Update: {
@@ -463,19 +473,24 @@ export type Database = {
           avg_brier_btts?: number | null
           avg_brier_ou?: number | null
           btts_accuracy?: number | null
+          calibration_corrections?: Json | null
           calibration_data?: Json | null
           created_at?: string | null
+          error_weights?: Json | null
           exact_score_hits?: number | null
           feature_weights?: Json | null
           goal_line_accuracy?: Json | null
           id?: string
+          last_learning_match_count?: number | null
           mae_goals?: number | null
+          model_version?: number | null
           numeric_weights?: Json | null
           ou_25_accuracy?: number | null
           outcome_accuracy?: number | null
           period_end?: string
           period_start?: string
           total_matches?: number | null
+          validation_result?: string | null
           weak_areas?: Json | null
         }
         Relationships: []

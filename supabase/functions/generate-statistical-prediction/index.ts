@@ -147,17 +147,23 @@ Deno.serve(async (req) => {
       match.referee ? supabase.from("referees").select("*").eq("name", match.referee).maybeSingle() : Promise.resolve({ data: null }),
       supabase.from("team_discipline").select("*").eq("team_id", match.team_home_id).order("season", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("team_discipline").select("*").eq("team_id", match.team_away_id).order("season", { ascending: false }).limit(1).maybeSingle(),
-      supabase.from("model_performance").select("numeric_weights").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("model_performance").select("numeric_weights, error_weights, calibration_corrections").order("created_at", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("match_enrichment").select("*").eq("match_id", match_id).maybeSingle(),
       supabase.from("match_intelligence").select("confidence_adjustment").eq("match_id", match_id).maybeSingle(),
     ]);
 
-    // Extract numeric calibration weights
+    // Extract numeric calibration weights + error weights + calibration corrections
     const nw = (perfData as any)?.numeric_weights || {};
+    const errorW = (perfData as any)?.error_weights || {};
+    const calCorrections = (perfData as any)?.calibration_corrections || {};
     const homeBiasAdj: number = nw.home_bias_adjustment || 0;
     const drawCalAdj: number = nw.draw_calibration || 0;
     const ouLambdaAdj: number = nw.ou_lambda_adjustment || 0;
     const confDeflator: number = nw.confidence_deflator || 0;
+    // Error-based adjustments
+    const drawOverpredictPenalty: number = errorW.draw_overpredict_penalty || 0;
+    const drawUnderpredictBoost: number = errorW.draw_underpredict_boost || 0;
+    const overconfPenalty: number = errorW.overconfidence_penalty || 0;
     // League-specific penalty
     const leagueKey = `league_penalty_${match.league.replace(/\s/g, "_").toLowerCase()}`;
     const leaguePenalty: number = nw[leagueKey] || 0;
@@ -388,9 +394,11 @@ Deno.serve(async (req) => {
     }
 
     // Apply draw calibration from learning loop
-    if (drawCalAdj !== 0) {
-      poissonDR += drawCalAdj;
-      const shift = drawCalAdj / 2;
+    // Net draw adjustment = learned draw_calibration + error-based corrections
+    const netDrawAdj = drawCalAdj + drawUnderpredictBoost - drawOverpredictPenalty;
+    if (netDrawAdj !== 0) {
+      poissonDR += netDrawAdj;
+      const shift = netDrawAdj / 2;
       poissonHW -= shift;
       poissonAW -= shift;
     }
@@ -430,13 +438,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Global draw calibration boost (+0.05, up from +0.03 in learning weights)
-    {
-      const globalDrawBoost = 0.05;
-      poissonDR += globalDrawBoost;
-      poissonHW -= globalDrawBoost * 0.5;
-      poissonAW -= globalDrawBoost * 0.5;
-    }
+    // (Removed hardcoded globalDrawBoost — draw calibration is now fully learned via numeric_weights.draw_calibration + error_weights)
 
     // High volatility: reduce favorite margin slightly, increase draw
     if (volatilityScore > 0.65) {
@@ -523,10 +525,18 @@ Deno.serve(async (req) => {
     let volPenalty = 0;
     if (volatilityScore > 0.65) volPenalty = Math.min(0.05, (volatilityScore - 0.65) * 0.15);
 
-    // Apply confidence deflator from learning loop + league penalty + league reliability
-    const strengthenedDeflator = Math.min(confDeflator, -0.12); // enforce minimum -0.12
-    const totalConfPenalty = volPenalty + Math.abs(strengthenedDeflator) + Math.abs(leaguePenalty);
-    let confidence = Math.round(Math.max(0.10, (dataQuality * 0.6 + marketAgreement * 0.4) * leagueRelFactor - totalConfPenalty) * 1000) / 1000;
+    // Apply confidence deflator from learning loop + error-based penalty + league penalty + league reliability
+    // Use learned deflator with safety floor of -0.15 (no hardcoded override)
+    const safeDeflator = Math.max(confDeflator - overconfPenalty, -0.15);
+    const totalConfPenalty = volPenalty + Math.abs(safeDeflator) + Math.abs(leaguePenalty);
+    let rawConfidence = Math.round(Math.max(0.10, (dataQuality * 0.6 + marketAgreement * 0.4) * leagueRelFactor - totalConfPenalty) * 1000) / 1000;
+
+    // ── Per-bucket calibration correction ──
+    // Apply bucket-specific correction based on where the raw confidence falls
+    const confPct = Math.floor(rawConfidence * 100);
+    const bucketKey = `${Math.floor(confPct / 10) * 10}-${Math.floor(confPct / 10) * 10 + 10}`;
+    const bucketCorrection = calCorrections[bucketKey] || 0;
+    let confidence = Math.round(Math.max(0.10, Math.min(0.95, rawConfidence + bucketCorrection)) * 1000) / 1000;
 
     // ── Football Intelligence Layer: apply confidence adjustment ──
     if (intelligence && typeof (intelligence as any).confidence_adjustment === "number") {

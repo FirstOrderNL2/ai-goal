@@ -19,6 +19,11 @@ export interface ModelPerformance {
   feature_weights: Record<string, number>;
   weak_areas: string[];
   created_at: string;
+  model_version: number;
+  validation_result: string;
+  last_learning_match_count: number;
+  calibration_corrections: Record<string, number>;
+  error_weights: Record<string, number>;
 }
 
 export function useModelPerformance() {
