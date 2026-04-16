@@ -308,14 +308,51 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Volatility adjustments ──
+    // ── Graduated competition & stage adjustments ──
     const cupCompetitions = ["champions league", "europa league", "conference league", "world cup", "euro", "nations league"];
     const isCup = cupCompetitions.some(c => match.league.toLowerCase().includes(c));
+    const matchStage = (match as any).match_stage || "regular";
+    const matchImportanceVal = Number((match as any).match_importance) || 0.5;
+    const competitionType = (match as any).competition_type || "league";
+
+    // Stage-based lambda & draw adjustments (graduated, replaces binary isCup)
+    if (matchStage === "final" || matchStage === "semi_final") {
+      // Finals/semis: tighter, more defensive games
+      lambdaHome *= 0.95;
+      lambdaAway *= 0.95;
+    } else if (matchStage === "quarter_final") {
+      lambdaHome *= 0.97;
+      lambdaAway *= 0.97;
+    }
+
+    // League strength reliability factor (scales confidence later)
+    const leagueReliability: Record<string, number> = {
+      "premier league": 1.0, "bundesliga": 1.0, "la liga": 0.95,
+      "serie a": 0.95, "ligue 1": 0.9, "eredivisie": 0.85,
+      "championship": 0.75, "keuken kampioen divisie": 0.7,
+    };
+    const leagueRelFactor = leagueReliability[match.league.toLowerCase()] ?? 0.85;
+
+    // Championship special handling: 30% lambda regression toward league means
+    if (match.league.toLowerCase().includes("championship") || match.league.toLowerCase().includes("keuken kampioen")) {
+      const regressionFactor = 0.30;
+      lambdaHome = lambdaHome * (1 - regressionFactor) + leagueHomeAvg * regressionFactor;
+      lambdaAway = lambdaAway * (1 - regressionFactor) + leagueAwayAvg * regressionFactor;
+    }
+
+    // Relegation battle: more defensive
+    if (matchImportanceVal >= 0.65 && matchStage === "regular") {
+      const posH = features?.league_position_home;
+      const posA = features?.league_position_away;
+      if ((posH && posH >= 16) || (posA && posA >= 16)) {
+        lambdaHome *= 0.95;
+        lambdaAway *= 0.95;
+      }
+    }
 
     // Compute volatility score
-    let refStrictness = 0.5; // neutral default
+    let refStrictness = 0.5;
     if (refereeData) {
-      // Normalize: league avg ~3.5 yellows/match
       refStrictness = Math.min(1.0, (refereeData.yellow_avg || 3.5) / 5.0);
     }
 
@@ -327,9 +364,8 @@ Deno.serve(async (req) => {
       teamAggression = Math.min(1.0, combinedYellow / 5.0);
     }
 
-    const matchImportance = isCup ? 1.0 : 0.5;
     const volatilityScore = Math.round(
-      (refStrictness * 0.4 + teamAggression * 0.4 + matchImportance * 0.2) * 1000
+      (refStrictness * 0.4 + teamAggression * 0.4 + matchImportanceVal * 0.2) * 1000
     ) / 1000;
 
     // Goal lines & distribution (computed before volatility adjustments)
@@ -374,13 +410,32 @@ Deno.serve(async (req) => {
       poissonAW -= drawBoost * 0.5;
     }
 
-    // Competition-specific adjustments (cup draw boost)
-    if (isCup) {
-      const boost = 0.03;
-      const highest = poissonHW > poissonAW ? "home" : "away";
-      if (highest === "home") poissonHW -= boost;
-      else poissonAW -= boost;
-      poissonDR += boost;
+    // Graduated competition draw boost (replaces binary isCup +3%)
+    {
+      let stageDrawBoost = 0;
+      if (matchStage === "final" || matchStage === "semi_final") stageDrawBoost = 0.05;
+      else if (matchStage === "quarter_final") stageDrawBoost = 0.03;
+      else if (isCup) stageDrawBoost = 0.02; // generic cup
+      // Relegation battle draw boost
+      if (matchImportanceVal >= 0.65 && matchStage === "regular") {
+        const posH = features?.league_position_home;
+        const posA = features?.league_position_away;
+        if ((posH && posH >= 16) || (posA && posA >= 16)) stageDrawBoost += 0.03;
+      }
+      if (stageDrawBoost > 0) {
+        const highest = poissonHW > poissonAW ? "home" : "away";
+        if (highest === "home") poissonHW -= stageDrawBoost;
+        else poissonAW -= stageDrawBoost;
+        poissonDR += stageDrawBoost;
+      }
+    }
+
+    // Global draw calibration boost (+0.05, up from +0.03 in learning weights)
+    {
+      const globalDrawBoost = 0.05;
+      poissonDR += globalDrawBoost;
+      poissonHW -= globalDrawBoost * 0.5;
+      poissonAW -= globalDrawBoost * 0.5;
     }
 
     // High volatility: reduce favorite margin slightly, increase draw
@@ -468,9 +523,10 @@ Deno.serve(async (req) => {
     let volPenalty = 0;
     if (volatilityScore > 0.65) volPenalty = Math.min(0.05, (volatilityScore - 0.65) * 0.15);
 
-    // Apply confidence deflator from learning loop + league penalty
-    const totalConfPenalty = volPenalty + Math.abs(confDeflator) + Math.abs(leaguePenalty);
-    let confidence = Math.round(Math.max(0.10, (dataQuality * 0.6 + marketAgreement * 0.4) - totalConfPenalty) * 1000) / 1000;
+    // Apply confidence deflator from learning loop + league penalty + league reliability
+    const strengthenedDeflator = Math.min(confDeflator, -0.12); // enforce minimum -0.12
+    const totalConfPenalty = volPenalty + Math.abs(strengthenedDeflator) + Math.abs(leaguePenalty);
+    let confidence = Math.round(Math.max(0.10, (dataQuality * 0.6 + marketAgreement * 0.4) * leagueRelFactor - totalConfPenalty) * 1000) / 1000;
 
     // ── Football Intelligence Layer: apply confidence adjustment ──
     if (intelligence && typeof (intelligence as any).confidence_adjustment === "number") {
