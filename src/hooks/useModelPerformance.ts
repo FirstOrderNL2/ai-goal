@@ -24,6 +24,7 @@ export interface ModelPerformance {
   last_learning_match_count: number;
   calibration_corrections: Record<string, number>;
   error_weights: Record<string, number>;
+  numeric_weights: Record<string, number>;
 }
 
 export function useModelPerformance() {
