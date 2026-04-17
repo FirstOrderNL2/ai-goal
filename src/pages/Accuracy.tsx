@@ -26,11 +26,36 @@ function usePredictionReviews() {
   });
 }
 
+function useTotalReviewCount() {
+  return useQuery({
+    queryKey: ["prediction-reviews", "total-count"],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("prediction_reviews")
+        .select("*", { count: "exact", head: true });
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
+}
+
+function formatRelativeTime(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
 export default function Accuracy() {
   const { data: completed, isLoading } = useCompletedMatches();
   const { data: perf, isLoading: perfLoading } = useLatestPerformance();
   const { data: perfHistory } = useModelPerformance();
   const { data: reviews } = usePredictionReviews();
+  const { data: totalReviews } = useTotalReviewCount();
   const [computing, setComputing] = useState(false);
   const [reviewing, setReviewing] = useState(false);
 
@@ -208,10 +233,23 @@ export default function Accuracy() {
             <h1 className="text-2xl font-bold tracking-tight">
               AI <span className="text-primary">Performance</span>
             </h1>
-            <p className="text-sm text-muted-foreground">
-              {totalMatches} matches evaluated • {perf ? `Last computed ${new Date(perf.created_at).toLocaleDateString()}` : "Live computation from match data"}
+            <p className="text-sm text-muted-foreground" title="Metrics are computed from completed matches in the last 90 days. The full review history powers the next learning cycle.">
+              <span className="cursor-help underline decoration-dotted decoration-muted-foreground/40">{totalMatches} matches in 90-day window</span>
+              {totalReviews != null ? <> • <span className="font-mono text-foreground/80">{totalReviews.toLocaleString()}</span> total reviews on record</> : null}
+              {perf ? <> • Last computed {new Date(perf.created_at).toLocaleDateString()} <span className="text-muted-foreground/70">({formatRelativeTime(perf.created_at)})</span></> : <> • Live computation from match data</>}
               {perf?.model_version ? <> • <span className="text-primary font-semibold">Model v{perf.model_version}</span> active</> : null}
             </p>
+            {perf && (Date.now() - new Date(perf.created_at).getTime()) > 24 * 60 * 60 * 1000 && (() => {
+              const lastCount = perf.last_learning_match_count ?? 0;
+              const nextAt = lastCount + 50;
+              const current = totalReviews ?? totalMatches;
+              return (
+                <div className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full bg-draw/15 text-draw border border-draw/30 text-[10px]">
+                  <AlertTriangle className="h-3 w-3" />
+                  Stats refresh on next learning cycle (next at {nextAt} reviews, currently {current.toLocaleString()})
+                </div>
+              );
+            })()}
           </div>
           <div className="flex items-center gap-2">
             {trendData.length >= 3 && (
