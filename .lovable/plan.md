@@ -1,62 +1,52 @@
 
-Let me look at the current Accuracy page to plan enhancements.
-<lov-tool-use id="toolu_vrtx_01TuFEPXo5Q36AQ95cwpYC4T" name="code--view" integration-id="code" data="{\"file_path\": \"src/pages/Accuracy.tsx\"}">
-</lov-tool-use>
 
-<lov-tool-use id="toolu_vrtx_012gRJECMma81PiUEVCYprhF" name="code--view" integration-id="code" data="{\"file_path\": \"src/pages/Accuracy.tsx\"}">
-</lov-tool-use>
-<lov-plan>
+The user is asking whether "199 matches evaluated" on the Accuracy page is real/current data.
 
-## Plan: Enhance Accuracy Dashboard with Model Versioning & Active Weights
+**Investigation from the network requests already in context:**
 
-Add v2 learning system observability to `/accuracy`.
+The latest `model_performance` record (Model v4, created `2026-04-16T14:20:27`) shows:
+- `total_matches: 199`
+- `period_end: 2026-04-16`
+- `last_learning_match_count: 1000` (this is suspicious — gate uses this count, but the `total_matches` field is 199)
 
-### New Section 1: Model Version Header Card (top of page)
-- Large badge showing **Model v{N}** (e.g., "Model v4")
-- Validation status pill: `bootstrap` (blue), `passed` (green), `failed` (red), `pending` (gray)
-- Cycle progress: "1000/1050 matches" with progress bar toward next learning cycle (50-match gate)
-- Last computed timestamp + "matches since last learning cycle" counter
+The `compute-model-performance` call response from today shows: `"current_matches": 1000, "last_learning_at": 1000, "next_trigger_at": 1050`.
 
-### New Section 2: Active Learned Weights Card
-Grid display of weights from `numeric_weights`, `error_weights`, `calibration_corrections`:
+**The discrepancy:** The edge function tracks `current_matches: 1000` (likely total reviewed predictions/all-time), but the displayed `total_matches: 199` on the v4 record only counts matches within the 90-day window (`period_start: 2026-01-16` → `period_end: 2026-04-16`).
 
-**Numeric Weights** (4 mini-stat tiles):
-- `home_bias_adjustment`
-- `draw_calibration` (highlighted — primary lever)
-- `confidence_deflator`
-- `ou_lambda_adjustment`
+So the user is right that there are MORE than 199 matches — there are ~1000 total reviews. The "199" only reflects the rolling 90-day evaluation window.
 
-**Error Weights** (3 tiles, colored by direction):
-- `draw_overpredict_penalty` (red tint)
-- `draw_underpredict_boost` (green tint)
-- `overconfidence_penalty` (red tint)
+Also: the v4 record was computed yesterday (April 16), not today. New reviews from today (e.g. the April 17 01:15 reviews visible in `prediction_reviews`) are NOT yet reflected because the next learning cycle won't fire until 1050 matches (currently at 1000).
 
-**League Penalties** (compact list):
-- Show all `league_penalty_*` keys with values
+**What the user is seeing is technically correct but misleading:**
+- "199 matches evaluated" = matches in the 90-day analysis window of the **last completed learning cycle** (v4 from yesterday)
+- "Last computed 16-4-2026" = correct, that's when v4 ran
+- The actual review pool is ~1000+ but only the last 90 days drive metrics
 
-### New Section 3: Per-Bucket Calibration Corrections Chart
-- Bar chart showing each confidence band (30-40, 40-50, ..., 80-90) with its applied correction
-- Color: red if negative correction (penalty), green if positive (boost)
-- Tooltip explains "predicted X% → actual Y%, correction Z"
+I'll present a concise plan to clarify this in the UI.
 
-### New Section 4: Model Version History Table
-- Table of last 10 versions: `version | created | total_matches | 1X2 acc | validation | active`
-- Highlight currently active version
-- Show validation result with colored badge
+## Plan: Clarify the "199 matches" stat on the Accuracy page
 
-### Enhancements to Existing Sections
-- **Header subtitle**: append "Model v{N} active"
-- **Learning Trend chart**: overlay vertical reference lines at version boundaries
-- **Error Patterns section**: add tooltip explaining which errors map to which `error_weights`
-- **Summary stat cards**: add a 7th card "Model Version" alongside the 6 existing tiles
-- Refactor page max-width from `max-w-4xl` to `max-w-6xl` to fit the new content comfortably
+### What's actually happening
+- The `total_matches: 199` field on Model v4 reflects only matches inside the **90-day analysis window** (Jan 16 – Apr 16, 2026)
+- The `compute-model-performance` function tracks a separate `current_matches: 1000` counter representing **all-time reviewed predictions**
+- The next learning cycle fires at 1050 total reviews (currently 1000) — so the 199 number won't refresh until then
+- New reviews from today (April 17) exist in `prediction_reviews` but aren't reflected because v4 was computed yesterday
 
-### Files Modified
-- `src/pages/Accuracy.tsx` — add new sections, update header, widen container
-- `src/hooks/useModelPerformance.ts` — already has all required fields (verified); no changes needed
+### UI fix in `src/pages/Accuracy.tsx`
 
-### Technical Notes
-- All data already exists in the `model_performance` table; no migration or edge function changes required
-- `useModelPerformance()` already returns the last 10 versions for the history table
-- `useLatestPerformance()` provides the active model record
+1. **Relabel the stat**: change `"199 matches evaluated"` → `"199 matches in 90-day window"` to make the scope explicit.
+
+2. **Add a second number next to it**: fetch total `prediction_reviews` count (all-time) and display `"~1,000 total reviews on record"` so the user sees both numbers.
+
+3. **Add a tooltip** on the stat explaining: "Metrics are computed from completed matches in the last 90 days. The full review history powers the next learning cycle."
+
+4. **Fix the "Last computed" label**: append the relative time ("1 day ago") so it's clear the v4 snapshot isn't real-time.
+
+5. **Add a freshness warning** if `created_at` of the latest `model_performance` is >24h old: a small amber pill saying "Stats refresh on next learning cycle (next at 1050 reviews, currently 1000)".
+
+### Files to modify
+- `src/pages/Accuracy.tsx` — relabel, add total review count, tooltip, freshness pill
+- `src/hooks/useModelPerformance.ts` — add a small `useTotalReviewCount()` hook that runs `count` on `prediction_reviews`
+
+No edge function or migration changes needed — this is a UI clarity fix.
 
