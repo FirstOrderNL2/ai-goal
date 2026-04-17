@@ -244,7 +244,7 @@ export default function Accuracy() {
               const nextAt = lastCount + 50;
               const current = totalReviews ?? totalMatches;
               return (
-                <div className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30 text-[10px]">
+                <div className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full bg-draw/15 text-draw border border-draw/30 text-[10px]">
                   <AlertTriangle className="h-3 w-3" />
                   Stats refresh on next learning cycle (next at {nextAt} reviews, currently {current.toLocaleString()})
                 </div>
