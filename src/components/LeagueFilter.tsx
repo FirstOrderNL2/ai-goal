@@ -10,6 +10,7 @@ const leagues = [
   { value: "La Liga", label: "La Liga" },
   { value: "Serie A", label: "Serie A" },
   { value: "Bundesliga", label: "Bundesliga" },
+  { value: "2. Bundesliga", label: "2. Bundesliga" },
   { value: "Ligue 1", label: "Ligue 1" },
   { value: "Eredivisie", label: "Eredivisie" },
   { value: "Keuken Kampioen Divisie", label: "KKD" },
