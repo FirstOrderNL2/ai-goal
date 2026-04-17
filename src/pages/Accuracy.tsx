@@ -55,6 +55,7 @@ export default function Accuracy() {
   const { data: perf, isLoading: perfLoading } = useLatestPerformance();
   const { data: perfHistory } = useModelPerformance();
   const { data: reviews } = usePredictionReviews();
+  const { data: totalReviews } = useTotalReviewCount();
   const [computing, setComputing] = useState(false);
   const [reviewing, setReviewing] = useState(false);
 
