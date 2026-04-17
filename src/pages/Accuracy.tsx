@@ -210,6 +210,7 @@ export default function Accuracy() {
             </h1>
             <p className="text-sm text-muted-foreground">
               {totalMatches} matches evaluated • {perf ? `Last computed ${new Date(perf.created_at).toLocaleDateString()}` : "Live computation from match data"}
+              {perf?.model_version ? <> • <span className="text-primary font-semibold">Model v{perf.model_version}</span> active</> : null}
             </p>
           </div>
           <div className="flex items-center gap-2">
