@@ -286,6 +286,233 @@ export default function Accuracy() {
               </Card>
             </div>
 
+            {/* Model Version Header */}
+            {perf?.model_version != null && (() => {
+              const lastCount = perf.last_learning_match_count ?? 0;
+              const nextCycle = lastCount + 50;
+              const progress = totalMatches > 0 && nextCycle > 0
+                ? Math.min(100, Math.max(0, ((totalMatches - lastCount) / 50) * 100))
+                : 0;
+              const matchesUntilNext = Math.max(0, nextCycle - totalMatches);
+              const status = perf.validation_result || "pending";
+              const statusColor =
+                status === "passed" ? "bg-win/15 text-win border-win/30" :
+                status === "bootstrap" ? "bg-primary/15 text-primary border-primary/30" :
+                status === "failed" ? "bg-destructive/15 text-destructive border-destructive/30" :
+                "bg-muted text-muted-foreground border-border";
+              return (
+                <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
+                  <CardContent className="p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary/15 border border-primary/30">
+                          <Brain className="h-7 w-7 text-primary" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h2 className="text-2xl font-bold tracking-tight">Model v{perf.model_version}</h2>
+                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border uppercase tracking-wide ${statusColor}`}>
+                              {status}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Last cycle at {lastCount} matches • Next cycle in {matchesUntilNext} matches
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex-1 min-w-[200px] max-w-md">
+                        <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+                          <span>Cycle progress</span>
+                          <span className="font-mono">{totalMatches}/{nextCycle}</span>
+                        </div>
+                        <div className="h-2 rounded-full bg-muted overflow-hidden">
+                          <div className="h-full bg-gradient-to-r from-primary to-primary/60 transition-all" style={{ width: `${progress}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
+            {/* Active Learned Weights */}
+            {perf && (perf.numeric_weights || perf.error_weights) && (
+              <Card className="border-border/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Zap className="h-4 w-4 text-primary" />
+                    Active Learned Weights
+                  </CardTitle>
+                  <p className="text-[10px] text-muted-foreground">Live values applied to every prediction</p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Numeric Weights */}
+                  {perf.numeric_weights && Object.keys(perf.numeric_weights).length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Numeric weights</p>
+                      <div className="grid gap-2 grid-cols-2 sm:grid-cols-4">
+                        {["home_bias_adjustment", "draw_calibration", "confidence_deflator", "ou_lambda_adjustment"].map((key) => {
+                          const val = perf.numeric_weights?.[key];
+                          if (val == null) return null;
+                          const isHighlight = key === "draw_calibration";
+                          return (
+                            <div key={key} className={`rounded-lg p-3 border ${isHighlight ? "bg-primary/10 border-primary/30" : "bg-muted/40 border-border/50"}`}>
+                              <p className="text-[10px] text-muted-foreground capitalize">{key.replace(/_/g, " ")}</p>
+                              <p className={`text-lg font-mono font-bold ${isHighlight ? "text-primary" : ""}`}>
+                                {val > 0 ? "+" : ""}{Number(val).toFixed(3)}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Error Weights */}
+                  {perf.error_weights && Object.keys(perf.error_weights).length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Error-based corrections</p>
+                      <div className="grid gap-2 grid-cols-1 sm:grid-cols-3">
+                        {Object.entries(perf.error_weights).map(([key, val]) => {
+                          const num = Number(val);
+                          const isPenalty = key.includes("penalty") || key.includes("overpredict");
+                          const tone = num === 0
+                            ? "bg-muted/40 border-border/50 text-muted-foreground"
+                            : isPenalty
+                              ? "bg-destructive/10 border-destructive/30 text-destructive"
+                              : "bg-win/10 border-win/30 text-win";
+                          return (
+                            <div key={key} className={`rounded-lg p-3 border ${tone}`}>
+                              <p className="text-[10px] opacity-80 capitalize">{key.replace(/_/g, " ")}</p>
+                              <p className="text-lg font-mono font-bold">
+                                {num > 0 ? "+" : ""}{num.toFixed(4)}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* League Penalties */}
+                  {perf.numeric_weights && (() => {
+                    const leagueKeys = Object.entries(perf.numeric_weights).filter(([k]) => k.startsWith("league_penalty_"));
+                    if (leagueKeys.length === 0) return null;
+                    return (
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">League penalties</p>
+                        <div className="flex flex-wrap gap-2">
+                          {leagueKeys.map(([key, val]) => {
+                            const num = Number(val);
+                            return (
+                              <div key={key} className="flex items-center gap-2 rounded-md px-2.5 py-1 bg-muted/40 border border-border/50 text-xs">
+                                <span className="text-muted-foreground capitalize">{key.replace("league_penalty_", "").replace(/_/g, " ")}</span>
+                                <span className={`font-mono font-semibold ${num < 0 ? "text-destructive" : "text-win"}`}>
+                                  {num > 0 ? "+" : ""}{num.toFixed(3)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Per-Bucket Calibration Corrections */}
+            {perf?.calibration_corrections && Object.keys(perf.calibration_corrections).length > 0 && (() => {
+              const data = Object.entries(perf.calibration_corrections)
+                .map(([band, val]) => ({ band, correction: Math.round(Number(val) * 1000) / 10, raw: Number(val) }))
+                .sort((a, b) => a.band.localeCompare(b.band));
+              return (
+                <Card className="border-border/50">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Activity className="h-4 w-4 text-primary" />
+                      Calibration Corrections by Confidence Band
+                    </CardTitle>
+                    <p className="text-[10px] text-muted-foreground">Negative = confidence reduced (overconfident band) • Positive = boosted (underconfident)</p>
+                  </CardHeader>
+                  <CardContent>
+                    <ChartContainer config={chartConfig} className="h-44">
+                      <BarChart data={data}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis dataKey="band" stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                        <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickFormatter={(v) => `${v}pp`} />
+                        <ChartTooltip content={<ChartTooltipContent formatter={(v: number) => `${v}pp`} />} />
+                        <Bar dataKey="correction" radius={[4, 4, 4, 4]}>
+                          {data.map((d, i) => (
+                            <Cell key={i} fill={d.raw >= 0 ? "hsl(var(--win))" : "hsl(var(--destructive))"} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ChartContainer>
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
+            {/* Model Version History */}
+            {perfHistory && perfHistory.length > 1 && (
+              <Card className="border-border/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <TrendingUp className="h-4 w-4 text-primary" />
+                    Model Version History
+                  </CardTitle>
+                  <p className="text-[10px] text-muted-foreground">Last {perfHistory.length} learning cycles</p>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-border/50 text-muted-foreground">
+                          <th className="text-left font-medium py-2 px-2">Version</th>
+                          <th className="text-left font-medium py-2 px-2">Created</th>
+                          <th className="text-right font-medium py-2 px-2">Matches</th>
+                          <th className="text-right font-medium py-2 px-2">1X2</th>
+                          <th className="text-right font-medium py-2 px-2">O/U</th>
+                          <th className="text-right font-medium py-2 px-2">BTTS</th>
+                          <th className="text-center font-medium py-2 px-2">Validation</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {perfHistory.map((row) => {
+                          const isActive = perf?.id === row.id;
+                          const status = row.validation_result || "pending";
+                          const statusColor =
+                            status === "passed" ? "bg-win/15 text-win" :
+                            status === "bootstrap" ? "bg-primary/15 text-primary" :
+                            status === "failed" ? "bg-destructive/15 text-destructive" :
+                            "bg-muted text-muted-foreground";
+                          return (
+                            <tr key={row.id} className={`border-b border-border/30 ${isActive ? "bg-primary/5" : ""}`}>
+                              <td className="py-2 px-2 font-semibold">
+                                v{row.model_version ?? "—"}
+                                {isActive && <span className="ml-1.5 text-[9px] text-primary uppercase">active</span>}
+                              </td>
+                              <td className="py-2 px-2 text-muted-foreground">{new Date(row.created_at).toLocaleString()}</td>
+                              <td className="py-2 px-2 text-right font-mono">{row.total_matches}</td>
+                              <td className="py-2 px-2 text-right font-mono">{row.outcome_accuracy}%</td>
+                              <td className="py-2 px-2 text-right font-mono">{row.ou_25_accuracy}%</td>
+                              <td className="py-2 px-2 text-right font-mono">{row.btts_accuracy}%</td>
+                              <td className="py-2 px-2 text-center">
+                                <span className={`inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase ${statusColor}`}>
+                                  {status}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Learning Trend Chart */}
             {trendData.length >= 2 && (
               <Card className="border-border/50">
