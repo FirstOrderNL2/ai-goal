@@ -14,6 +14,7 @@ const LEAGUES = [
   { id: 140, name: "La Liga", country: "Spain", type: "league" },
   { id: 135, name: "Serie A", country: "Italy", type: "league" },
   { id: 78, name: "Bundesliga", country: "Germany", type: "league" },
+  { id: 79, name: "2. Bundesliga", country: "Germany", type: "league" },
   { id: 61, name: "Ligue 1", country: "France", type: "league" },
   { id: 88, name: "Eredivisie", country: "Netherlands", type: "league" },
   { id: 89, name: "Keuken Kampioen Divisie", country: "Netherlands", type: "league" },
