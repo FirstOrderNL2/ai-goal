@@ -233,10 +233,23 @@ export default function Accuracy() {
             <h1 className="text-2xl font-bold tracking-tight">
               AI <span className="text-primary">Performance</span>
             </h1>
-            <p className="text-sm text-muted-foreground">
-              {totalMatches} matches evaluated • {perf ? `Last computed ${new Date(perf.created_at).toLocaleDateString()}` : "Live computation from match data"}
+            <p className="text-sm text-muted-foreground" title="Metrics are computed from completed matches in the last 90 days. The full review history powers the next learning cycle.">
+              <span className="cursor-help underline decoration-dotted decoration-muted-foreground/40">{totalMatches} matches in 90-day window</span>
+              {totalReviews != null ? <> • <span className="font-mono text-foreground/80">{totalReviews.toLocaleString()}</span> total reviews on record</> : null}
+              {perf ? <> • Last computed {new Date(perf.created_at).toLocaleDateString()} <span className="text-muted-foreground/70">({formatRelativeTime(perf.created_at)})</span></> : <> • Live computation from match data</>}
               {perf?.model_version ? <> • <span className="text-primary font-semibold">Model v{perf.model_version}</span> active</> : null}
             </p>
+            {perf && (Date.now() - new Date(perf.created_at).getTime()) > 24 * 60 * 60 * 1000 && (() => {
+              const lastCount = perf.last_learning_match_count ?? 0;
+              const nextAt = lastCount + 50;
+              const current = totalReviews ?? totalMatches;
+              return (
+                <div className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30 text-[10px]">
+                  <AlertTriangle className="h-3 w-3" />
+                  Stats refresh on next learning cycle (next at {nextAt} reviews, currently {current.toLocaleString()})
+                </div>
+              );
+            })()}
           </div>
           <div className="flex items-center gap-2">
             {trendData.length >= 3 && (
