@@ -328,10 +328,14 @@ export default function Accuracy() {
             {perf?.model_version != null && (() => {
               const lastCount = perf.last_learning_match_count ?? 0;
               const nextCycle = lastCount + 50;
-              const progress = totalMatches > 0 && nextCycle > 0
-                ? Math.min(100, Math.max(0, ((totalMatches - lastCount) / 50) * 100))
+              // Cycle progress is driven by total reviews on record, NOT the 90-day window.
+              // Fall back to totalMatches only if review count hasn't loaded yet.
+              const cycleBase = totalReviews ?? totalMatches;
+              const delta = cycleBase - lastCount;
+              const progress = nextCycle > 0
+                ? Math.min(100, Math.max(0, (delta / 50) * 100))
                 : 0;
-              const matchesUntilNext = Math.max(0, nextCycle - totalMatches);
+              const matchesUntilNext = Math.max(0, nextCycle - cycleBase);
               const status = perf.validation_result || "pending";
               const statusColor =
                 status === "passed" ? "bg-win/15 text-win border-win/30" :
@@ -360,8 +364,8 @@ export default function Accuracy() {
                       </div>
                       <div className="flex-1 min-w-[200px] max-w-md">
                         <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
-                          <span>Cycle progress</span>
-                          <span className="font-mono">{totalMatches}/{nextCycle}</span>
+                          <span>Cycle progress (reviews)</span>
+                          <span className="font-mono">{cycleBase.toLocaleString()}/{nextCycle.toLocaleString()}</span>
                         </div>
                         <div className="h-2 rounded-full bg-muted overflow-hidden">
                           <div className="h-full bg-gradient-to-r from-primary to-primary/60 transition-all" style={{ width: `${progress}%` }} />
