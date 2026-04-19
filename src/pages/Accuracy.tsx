@@ -364,8 +364,8 @@ export default function Accuracy() {
                       </div>
                       <div className="flex-1 min-w-[200px] max-w-md">
                         <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
-                          <span>Cycle progress</span>
-                          <span className="font-mono">{totalMatches}/{nextCycle}</span>
+                          <span>Cycle progress (reviews)</span>
+                          <span className="font-mono">{cycleBase.toLocaleString()}/{nextCycle.toLocaleString()}</span>
                         </div>
                         <div className="h-2 rounded-full bg-muted overflow-hidden">
                           <div className="h-full bg-gradient-to-r from-primary to-primary/60 transition-all" style={{ width: `${progress}%` }} />
