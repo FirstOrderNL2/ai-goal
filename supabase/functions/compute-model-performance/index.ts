@@ -498,7 +498,7 @@ Deno.serve(async (req) => {
       btts_accuracy: bttsAcc,
       exact_score_hits: exactScoreHits,
       mae_goals: mae,
-      learning_cycle: { previous_count: prevMatchCount, current_count: currentTotal },
+      learning_cycle: { previous_count: prevMatchCount, current_count: reviewsNow, completed_matches: currentTotal },
       error_weights: finalErrorWeights,
       calibration_corrections: finalCalibrationCorrections,
     }), {
