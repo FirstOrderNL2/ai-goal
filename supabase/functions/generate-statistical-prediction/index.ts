@@ -271,6 +271,11 @@ Deno.serve(async (req) => {
     lambdaHome = lambdaHome + ouLambdaAdj;
     lambdaAway = lambdaAway + ouLambdaAdj;
 
+    // P3: Per-league lambda shifts (learned, additive). These actually move the predicted side
+    // unlike the old league_penalty_* which only deflated confidence.
+    lambdaHome = lambdaHome + leagueLambdaShiftHome;
+    lambdaAway = lambdaAway + leagueLambdaShiftAway;
+
     // ── Enrichment layer adjustments (additive, graceful fallback) ──
     let enrichmentApplied = false;
     if (enrichment) {
