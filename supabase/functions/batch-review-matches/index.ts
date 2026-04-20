@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
     for (let i = 0; i < matchIds.length; i += chunkSize) {
       const chunk = matchIds.slice(i, i + chunkSize);
       const [{ data: preds }, { data: reviews }] = await Promise.all([
-        supabase.from("predictions").select("*").in("match_id", chunk),
+        supabase.from("predictions").select("*").neq("publish_status", "low_quality").in("match_id", chunk),
         supabase.from("prediction_reviews").select("match_id").in("match_id", chunk),
       ]);
       if (preds) allPreds.push(...preds);

@@ -6,6 +6,52 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+function poissonPMF(lambda: number, k: number): number {
+  let result = Math.exp(-lambda);
+  for (let i = 1; i <= k; i++) result *= lambda / i;
+  return result;
+}
+
+function poissonOutcome(lambdaHome: number, lambdaAway: number) {
+  let home = 0, draw = 0, away = 0, over25 = 0;
+  for (let h = 0; h <= 8; h++) {
+    for (let a = 0; a <= 8; a++) {
+      const p = poissonPMF(lambdaHome, h) * poissonPMF(lambdaAway, a);
+      if (h > a) home += p;
+      else if (h === a) draw += p;
+      else away += p;
+      if (h + a > 2.5) over25 += p;
+    }
+  }
+  const btts = (1 - poissonPMF(lambdaHome, 0)) * (1 - poissonPMF(lambdaAway, 0));
+  return { home, draw, away, over25, btts };
+}
+
+function normalize1x2(home: number, draw: number, away: number) {
+  const h = Math.max(0.01, home);
+  const d = Math.max(0.01, draw);
+  const a = Math.max(0.01, away);
+  const total = h + d + a;
+  return { home: h / total, draw: d / total, away: a / total };
+}
+
+function applyConfidenceCorrection(probs: { home: number; draw: number; away: number }, corrections: Record<string, number>, deflator = 0) {
+  const entries = [["home", probs.home], ["draw", probs.draw], ["away", probs.away]] as const;
+  const [topKey, topProb] = entries.reduce((best, item) => item[1] > best[1] ? item : best);
+  const pct = Math.floor(topProb * 100);
+  const bucketKey = `${Math.floor(pct / 10) * 10}-${Math.floor(pct / 10) * 10 + 10}`;
+  const delta = Math.max(-0.18, Math.min(0.18, (corrections[bucketKey] || 0) + deflator));
+  const adjustedTop = Math.max(0.05, Math.min(0.95, topProb + delta));
+  const remainingBefore = Math.max(0.001, 1 - topProb);
+  const remainingAfter = 1 - adjustedTop;
+  const out = { ...probs };
+  out[topKey] = adjustedTop;
+  for (const key of ["home", "draw", "away"] as const) {
+    if (key !== topKey) out[key] = Math.max(0.01, probs[key] * remainingAfter / remainingBefore);
+  }
+  return normalize1x2(out.home, out.draw, out.away);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -87,6 +133,7 @@ Deno.serve(async (req) => {
     }
 
     const predictions = allPredictions;
+    const excludedLowQuality = predictions.filter((p: any) => p.publish_status === "low_quality").length;
     if (predictions.length === 0) {
       return new Response(JSON.stringify({ message: "No predictions found" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -96,6 +143,10 @@ Deno.serve(async (req) => {
     const predMap = new Map(predictions.map((p: any) => [p.match_id, p]));
     const featMap = new Map(allFeatures.map((f: any) => [f.match_id, f]));
     const reviewMap = new Map(allReviews.map((r: any) => [r.match_id, r]));
+    const learningMatches = matches.filter((m: any) => {
+      const pred = predMap.get(m.id);
+      return pred && pred.publish_status !== "low_quality";
+    });
 
     const now = Date.now();
     const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
@@ -128,7 +179,7 @@ Deno.serve(async (req) => {
       goalLineHits[`under_${line}`] = { correct: 0, total: 0 };
     }
 
-    for (const match of matches) {
+    for (const match of learningMatches) {
       const pred = predMap.get(match.id);
       if (!pred) continue;
 
@@ -311,7 +362,7 @@ Deno.serve(async (req) => {
     // Skewed = |xg_home − xg_away| ≥ 0.4 (lopsided, draws over-predicted)
     let tightActualDrawW = 0, tightPredDrawW = 0, tightTotalW = 0, tightN = 0;
     let skewActualDrawW = 0, skewPredDrawW = 0, skewTotalW = 0, skewN = 0;
-    for (const match of matches) {
+    for (const match of learningMatches) {
       const pred = predMap.get(match.id);
       if (!pred) continue;
       const w = getTemporalWeight(match.match_date, match.match_importance);
@@ -358,7 +409,7 @@ Deno.serve(async (req) => {
 
     if (ou25Acc < 48) {
       let predOverCountW = 0, actualOverCountW = 0;
-      for (const match of matches) {
+      for (const match of learningMatches) {
         const pred = predMap.get(match.id);
         if (!pred) continue;
         const w = getTemporalWeight(match.match_date, match.match_importance);
@@ -403,10 +454,12 @@ Deno.serve(async (req) => {
     }
 
     const errorWeights: Record<string, number> = {};
-    if (allReviews.length > 0) {
+    const trainingReviews = allReviews.filter((rev: any) => predMap.get(rev.match_id)?.publish_status !== "low_quality");
+
+    if (trainingReviews.length > 0) {
       const errorCounts: Record<string, number> = {};
       let totalErrors = 0;
-      for (const rev of allReviews) {
+      for (const rev of trainingReviews) {
         if (rev.error_type && !rev.outcome_correct) {
           errorCounts[rev.error_type] = (errorCounts[rev.error_type] || 0) + 1;
           totalErrors++;
@@ -443,25 +496,25 @@ Deno.serve(async (req) => {
     // regression. Falls back to last 30 matches if 7-day holdout has < 10 samples.
     const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
     const holdoutCutoff = now - SEVEN_DAYS_MS;
-    let holdout = matches.filter((m: any) => new Date(m.match_date).getTime() >= holdoutCutoff);
-    if (holdout.length < 10) holdout = matches.slice(0, Math.min(30, matches.length));
+    let holdout = learningMatches.filter((m: any) => new Date(m.match_date).getTime() >= holdoutCutoff);
+    if (holdout.length < 10) holdout = learningMatches.slice(0, Math.min(30, learningMatches.length));
 
-    function scoreWeights(w: Record<string, number>, ew: Record<string, number>, cc: Record<string, number>): { brier: number; n: number } {
-      let totalBrier = 0;
+    function scoreWeights(w: Record<string, number>, ew: Record<string, number>, cc: Record<string, number>): { brier: number; n: number; brier1x2: number; brierOu: number; brierBtts: number; confidenceBrier: number } {
+      let totalBrier = 0, total1x2 = 0, totalOu = 0, totalBtts = 0, totalConfidence = 0;
       let n = 0;
       const drawCal = w.draw_calibration || 0;
       const drawTight = w.draw_calibration_tight || 0;
       const drawSkewed = w.draw_calibration_skewed || 0;
       const homeBias = w.home_bias_adjustment || 0;
       const ouAdj = w.ou_lambda_adjustment || 0;
+      const confDeflator = w.confidence_deflator || 0;
       const drawOverPenalty = ew.draw_overpredict_penalty || 0;
       const drawUnderBoost = ew.draw_underpredict_boost || 0;
       for (const m of holdout) {
         const pred = predMap.get(m.id);
-        if (!pred) continue;
+        if (!pred || pred.publish_status === "low_quality") continue;
         const gh = m.goals_home, ga = m.goals_away;
         if (gh == null || ga == null) continue;
-        n++;
         const actualHome = gh > ga ? 1 : 0;
         const actualDraw = gh === ga ? 1 : 0;
         const actualAway = ga > gh ? 1 : 0;
@@ -469,48 +522,48 @@ Deno.serve(async (req) => {
         const actualOver = totalGoals > 2.5 ? 1 : 0;
         const actualBtts = (gh > 0 && ga > 0) ? 1 : 0;
 
-        const xgH = Number(pred.expected_goals_home) || 0;
-        const xgA = Number(pred.expected_goals_away) || 0;
-        const lamDiff = Math.abs(xgH - xgA);
+        const slug = (m.league || "unknown").replace(/\s/g, "_").toLowerCase();
+        let lambdaHome = Math.max(0.3, Math.min(4.0, (Number(pred.expected_goals_home) || 1.2) + ouAdj + (w[`league_lambda_shift_home_${slug}`] || 0)));
+        let lambdaAway = Math.max(0.3, Math.min(4.0, (Number(pred.expected_goals_away) || 1.0) + ouAdj + (w[`league_lambda_shift_away_${slug}`] || 0)));
+        const poisson = poissonOutcome(lambdaHome, lambdaAway);
+        const lamDiff = Math.abs(lambdaHome - lambdaAway);
         const shapeCal = lamDiff < 0.4 ? drawTight : drawSkewed;
         const netDrawAdj = (shapeCal !== 0 ? shapeCal : drawCal) + drawUnderBoost - drawOverPenalty;
 
-        let hw = Number(pred.home_win) || 0;
-        let dr = Number(pred.draw) || 0;
-        let aw = Number(pred.away_win) || 0;
-        // Apply calibration deltas symmetrically
-        dr += netDrawAdj;
-        hw += homeBias - netDrawAdj / 2;
-        aw -= homeBias * 0.5 + netDrawAdj / 2;
-        // Bucket correction on max prob
-        const maxP = Math.max(hw, dr, aw);
-        const bucketKey = `${Math.floor(maxP * 10) * 10}-${Math.floor(maxP * 10) * 10 + 10}`;
-        const corr = cc[bucketKey] || 0;
-        // Renormalize
-        hw = Math.max(0.01, hw); dr = Math.max(0.01, dr); aw = Math.max(0.01, aw);
-        const t = hw + dr + aw;
-        hw /= t; dr /= t; aw /= t;
-        // Confidence-shift after bucket correction (small effect on max class only)
-        const brier1x2 = Math.pow(hw - actualHome, 2) + Math.pow(dr - actualDraw, 2) + Math.pow(aw - actualAway, 2);
+        let probs = normalize1x2(
+          poisson.home + homeBias - netDrawAdj / 2,
+          poisson.draw + netDrawAdj,
+          poisson.away - homeBias * 0.5 - netDrawAdj / 2,
+        );
+        probs = applyConfidenceCorrection(probs, cc, confDeflator);
 
-        // O/U: shift implied over prob via ouAdj on lambda → use predicted side as proxy
-        const predOver = pred.over_under_25 === "over" ? 1 : 0;
-        // Slight adjustment: positive ouAdj reduces over likelihood (it deflates lambdas downward when bias is over)
-        const ouProb = Math.max(0.05, Math.min(0.95, predOver - ouAdj * 0.5));
-        const brierOu = Math.pow(ouProb - actualOver, 2);
+        const brier1x2 = Math.pow(probs.home - actualHome, 2) + Math.pow(probs.draw - actualDraw, 2) + Math.pow(probs.away - actualAway, 2);
+        const brierOu = Math.pow(Math.max(0.05, Math.min(0.95, poisson.over25)) - actualOver, 2);
+        const brierBtts = Math.pow(Math.max(0.05, Math.min(0.95, poisson.btts)) - actualBtts, 2);
+        const topProb = Math.max(probs.home, probs.draw, probs.away);
+        const hitTop = (probs.home === topProb && actualHome) || (probs.draw === topProb && actualDraw) || (probs.away === topProb && actualAway) ? 1 : 0;
+        const confidenceBrier = Math.pow(topProb - hitTop, 2);
 
-        const predBtts = pred.btts === "yes" ? 1 : 0;
-        const brierBtts = Math.pow(predBtts - actualBtts, 2);
-
-        // Weighted: 1X2 dominant, OU and BTTS secondary
-        totalBrier += brier1x2 * 0.6 + brierOu * 0.2 + brierBtts * 0.2 + Math.abs(corr) * 0.0; // corr is informational
-        // Note: corr already shifted hw/dr/aw indirectly via renormalization above is not applied;
-        // we keep this conservative to avoid over-rewarding learned corrections.
+        n++;
+        total1x2 += brier1x2;
+        totalOu += brierOu;
+        totalBtts += brierBtts;
+        totalConfidence += confidenceBrier;
+        totalBrier += brier1x2 * 0.55 + brierOu * 0.18 + brierBtts * 0.18 + confidenceBrier * 0.09;
       }
-      return { brier: n > 0 ? totalBrier / n : 999, n };
+      return {
+        brier: n > 0 ? totalBrier / n : 999,
+        n,
+        brier1x2: n > 0 ? total1x2 / n : 999,
+        brierOu: n > 0 ? totalOu / n : 999,
+        brierBtts: n > 0 ? totalBtts / n : 999,
+        confidenceBrier: n > 0 ? totalConfidence / n : 999,
+      };
     }
 
     let validationResult = "pending";
+    let validationMetrics: Record<string, unknown> = {};
+    let validationWeightsTested: Record<string, unknown> = {};
     let finalWeights = numericWeights;
     let finalErrorWeights = errorWeights;
     let finalCalibrationCorrections = calibrationCorrections;
@@ -524,11 +577,29 @@ Deno.serve(async (req) => {
     } else {
       const newScore = scoreWeights(numericWeights, errorWeights, calibrationCorrections);
       const oldScore = scoreWeights(prevWeights, prevErrW, prevCalC);
+      const improvement = oldScore.brier - newScore.brier;
+      validationMetrics = {
+        holdout_sample_size: newScore.n,
+        holdout_window_start: holdout.length > 0 ? holdout[holdout.length - 1].match_date : null,
+        holdout_window_end: holdout.length > 0 ? holdout[0].match_date : null,
+        old_composite_brier: Math.round(oldScore.brier * 10000) / 10000,
+        new_composite_brier: Math.round(newScore.brier * 10000) / 10000,
+        improvement: Math.round(improvement * 10000) / 10000,
+        new_brier_1x2: Math.round(newScore.brier1x2 * 10000) / 10000,
+        new_brier_ou: Math.round(newScore.brierOu * 10000) / 10000,
+        new_brier_btts: Math.round(newScore.brierBtts * 10000) / 10000,
+        new_confidence_brier: Math.round(newScore.confidenceBrier * 10000) / 10000,
+        excluded_low_quality_predictions: excludedLowQuality,
+      };
+      validationWeightsTested = {
+        numeric_weights: Object.keys(numericWeights),
+        error_weights: Object.keys(errorWeights),
+        calibration_corrections: Object.keys(calibrationCorrections),
+      };
       if (newScore.n < 10) {
         validationResult = "insufficient_holdout";
       } else {
         // Lower Brier = better. Improvement = oldBrier - newBrier.
-        const improvement = oldScore.brier - newScore.brier;
         if (improvement >= 0.003) validationResult = "passed";
         else if (improvement >= -0.003) validationResult = "marginal";
         else {
@@ -569,6 +640,8 @@ Deno.serve(async (req) => {
         last_learning_match_count: reviewsNow,
         calibration_corrections: finalCalibrationCorrections,
         error_weights: finalErrorWeights,
+        validation_metrics: validationMetrics,
+        validation_weights_tested: validationWeightsTested,
       });
 
     if (insertErr) throw insertErr;
@@ -593,7 +666,8 @@ Deno.serve(async (req) => {
       btts_accuracy: bttsAcc,
       exact_score_hits: exactScoreHits,
       mae_goals: mae,
-      learning_cycle: { previous_count: prevMatchCount, current_count: reviewsNow, completed_matches: currentTotal },
+      learning_cycle: { previous_count: prevMatchCount, current_count: reviewsNow, completed_matches: currentTotal, training_matches: total, excluded_low_quality_predictions: excludedLowQuality },
+      validation_metrics: validationMetrics,
       error_weights: finalErrorWeights,
       calibration_corrections: finalCalibrationCorrections,
     }), {
