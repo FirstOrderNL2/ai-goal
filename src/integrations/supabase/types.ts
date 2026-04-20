@@ -440,7 +440,9 @@ export type Database = {
           period_end: string
           period_start: string
           total_matches: number | null
+          validation_metrics: Json | null
           validation_result: string | null
+          validation_weights_tested: Json | null
           weak_areas: Json | null
         }
         Insert: {
@@ -465,7 +467,9 @@ export type Database = {
           period_end: string
           period_start: string
           total_matches?: number | null
+          validation_metrics?: Json | null
           validation_result?: string | null
+          validation_weights_tested?: Json | null
           weak_areas?: Json | null
         }
         Update: {
@@ -490,7 +494,9 @@ export type Database = {
           period_end?: string
           period_start?: string
           total_matches?: number | null
+          validation_metrics?: Json | null
           validation_result?: string | null
+          validation_weights_tested?: Json | null
           weak_areas?: Json | null
         }
         Relationships: []

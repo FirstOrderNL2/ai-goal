@@ -39,6 +39,29 @@ function useTotalReviewCount() {
   });
 }
 
+function usePredictionPublishStats() {
+  return useQuery({
+    queryKey: ["predictions", "publish-status-counts"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("predictions")
+        .select("publish_status, quality_score");
+      if (error) throw error;
+      return (data ?? []).reduce(
+        (acc, row) => {
+          const status = row.publish_status === "low_quality" ? "low_quality" : "published";
+          acc[status] += 1;
+          if (typeof row.quality_score === "number") {
+            acc[`${status}_quality_sum` as "published_quality_sum" | "low_quality_quality_sum"] += row.quality_score;
+          }
+          return acc;
+        },
+        { published: 0, low_quality: 0, published_quality_sum: 0, low_quality_quality_sum: 0 },
+      );
+    },
+  });
+}
+
 function formatRelativeTime(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
@@ -56,6 +79,7 @@ export default function Accuracy() {
   const { data: perfHistory } = useModelPerformance();
   const { data: reviews } = usePredictionReviews();
   const { data: totalReviews } = useTotalReviewCount();
+  const { data: publishStats } = usePredictionPublishStats();
   const [computing, setComputing] = useState(false);
   const [reviewing, setReviewing] = useState(false);
 
@@ -94,6 +118,10 @@ export default function Accuracy() {
   const totalMatches = perf?.total_matches ?? stats?.total ?? 0;
   const brierAvg = perf ? Math.round(((perf.avg_brier_1x2 + perf.avg_brier_ou + perf.avg_brier_btts) / 3) * 1000) / 1000 : null;
   const mae = perf?.mae_goals ?? null;
+  const validationMetrics = (perf?.validation_metrics ?? {}) as Record<string, number | string | null>;
+  const brierImprovement = typeof validationMetrics.improvement === "number" ? validationMetrics.improvement : null;
+  const holdoutSample = typeof validationMetrics.holdout_sample_size === "number" ? validationMetrics.holdout_sample_size : null;
+  const excludedLowQuality = typeof validationMetrics.excluded_low_quality_predictions === "number" ? validationMetrics.excluded_low_quality_predictions : (publishStats?.low_quality ?? 0);
 
   // Calibration chart data
   const calibrationData = perf?.calibration_data
@@ -362,13 +390,31 @@ export default function Accuracy() {
                           </p>
                         </div>
                       </div>
-                      <div className="flex-1 min-w-[200px] max-w-md">
-                        <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
-                          <span>Cycle progress (reviews)</span>
-                          <span className="font-mono">{cycleBase.toLocaleString()}/{nextCycle.toLocaleString()}</span>
+                      <div className="flex-1 min-w-[200px] max-w-md space-y-3">
+                        <div>
+                          <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+                            <span>Cycle progress (reviews)</span>
+                            <span className="font-mono">{cycleBase.toLocaleString()}/{nextCycle.toLocaleString()}</span>
+                          </div>
+                          <div className="h-2 rounded-full bg-muted overflow-hidden">
+                            <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
+                          </div>
                         </div>
-                        <div className="h-2 rounded-full bg-muted overflow-hidden">
-                          <div className="h-full bg-gradient-to-r from-primary to-primary/60 transition-all" style={{ width: `${progress}%` }} />
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <div className="rounded-md border border-border/50 bg-muted/30 px-2 py-1.5">
+                            <p className="text-[9px] text-muted-foreground">Holdout</p>
+                            <p className="text-xs font-mono font-semibold">{holdoutSample ?? "—"}</p>
+                          </div>
+                          <div className="rounded-md border border-border/50 bg-muted/30 px-2 py-1.5">
+                            <p className="text-[9px] text-muted-foreground">Brier Δ</p>
+                            <p className={`text-xs font-mono font-semibold ${brierImprovement != null && brierImprovement >= 0 ? "text-win" : "text-destructive"}`}>
+                              {brierImprovement != null ? `${brierImprovement > 0 ? "+" : ""}${brierImprovement.toFixed(4)}` : "—"}
+                            </p>
+                          </div>
+                          <div className="rounded-md border border-border/50 bg-muted/30 px-2 py-1.5">
+                            <p className="text-[9px] text-muted-foreground">Withheld</p>
+                            <p className="text-xs font-mono font-semibold">{excludedLowQuality}</p>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -436,6 +482,30 @@ export default function Accuracy() {
                     </div>
                   )}
 
+                  {/* Lambda Shifts */}
+                  {perf.numeric_weights && (() => {
+                    const lambdaKeys = Object.entries(perf.numeric_weights).filter(([k]) => k.startsWith("league_lambda_shift_"));
+                    if (lambdaKeys.length === 0) return null;
+                    return (
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">League lambda shifts</p>
+                        <div className="flex flex-wrap gap-2">
+                          {lambdaKeys.map(([key, val]) => {
+                            const num = Number(val);
+                            return (
+                              <div key={key} className="flex items-center gap-2 rounded-md px-2.5 py-1 bg-muted/40 border border-border/50 text-xs">
+                                <span className="text-muted-foreground capitalize">{key.replace("league_lambda_shift_", "").replace(/_/g, " ")}</span>
+                                <span className={`font-mono font-semibold ${num < 0 ? "text-destructive" : "text-win"}`}>
+                                  {num > 0 ? "+" : ""}{num.toFixed(3)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* League Penalties */}
                   {perf.numeric_weights && (() => {
                     const leagueKeys = Object.entries(perf.numeric_weights).filter(([k]) => k.startsWith("league_penalty_"));
@@ -495,6 +565,32 @@ export default function Accuracy() {
                 </Card>
               );
             })()}
+
+            {/* Validation Diagnostics */}
+            {perf?.validation_metrics && Object.keys(perf.validation_metrics).length > 0 && (
+              <Card className="border-border/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 text-primary" />
+                    Holdout Validation Diagnostics
+                  </CardTitle>
+                  <p className="text-[10px] text-muted-foreground">Recent unseen matches re-scored with active learned weights</p>
+                </CardHeader>
+                <CardContent className="grid gap-2 grid-cols-2 sm:grid-cols-4">
+                  {[
+                    ["Old Brier", validationMetrics.old_composite_brier],
+                    ["New Brier", validationMetrics.new_composite_brier],
+                    ["1X2 Brier", validationMetrics.new_brier_1x2],
+                    ["Confidence", validationMetrics.new_confidence_brier],
+                  ].map(([label, value]) => (
+                    <div key={String(label)} className="rounded-lg border border-border/50 bg-muted/30 p-3">
+                      <p className="text-[10px] text-muted-foreground">{label}</p>
+                      <p className="text-lg font-mono font-bold">{typeof value === "number" ? value.toFixed(4) : "—"}</p>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Model Version History */}
             {perfHistory && perfHistory.length > 1 && (

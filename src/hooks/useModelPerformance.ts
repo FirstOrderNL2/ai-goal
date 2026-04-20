@@ -25,6 +25,8 @@ export interface ModelPerformance {
   calibration_corrections: Record<string, number>;
   error_weights: Record<string, number>;
   numeric_weights: Record<string, number>;
+  validation_metrics?: Record<string, unknown>;
+  validation_weights_tested?: Record<string, unknown>;
 }
 
 export function useModelPerformance() {

@@ -158,7 +158,7 @@ Deno.serve(async (req) => {
     const calCorrections = (perfData as any)?.calibration_corrections || {};
     const homeBiasAdj: number = nw.home_bias_adjustment || 0;
     const drawCalAdj: number = nw.draw_calibration || 0;
-    // P4: shape-conditional draw calibrations (fallback to 0 if not yet learned)
+    // P4: shape-conditional draw calibrations; positive values increase draw probability, negative values decrease it.
     const drawCalTight: number = nw.draw_calibration_tight || 0;
     const drawCalSkewed: number = nw.draw_calibration_skewed || 0;
     const ouLambdaAdj: number = nw.ou_lambda_adjustment || 0;
