@@ -118,7 +118,7 @@ Deno.serve(async (req) => {
     let homeAdvCorrectCount = 0, homeAdvTotalCount = 0;
     let highConfCorrectCount = 0, highConfTotalCount = 0;
     let lowConfCorrectCount = 0, lowConfTotalCount = 0;
-    const leagueAccuracy: Record<string, { correct: number; total: number; correctW: number; totalW: number }> = {};
+    const leagueAccuracy: Record<string, { correct: number; total: number; correctW: number; totalW: number; sumGoalErrHome: number; sumGoalErrAway: number; n: number }> = {};
 
     for (let i = 0; i < 10; i++) {
       calibrationBuckets[`${i * 10}-${(i + 1) * 10}`] = { predicted: 0, actual: 0, count: 0 };
@@ -211,10 +211,16 @@ Deno.serve(async (req) => {
       else if (conf <= 0.45) { lowConfTotalCount++; if (outcomeHit) lowConfCorrectCount++; }
 
       const league = match.league || "Unknown";
-      if (!leagueAccuracy[league]) leagueAccuracy[league] = { correct: 0, total: 0, correctW: 0, totalW: 0 };
+      if (!leagueAccuracy[league]) leagueAccuracy[league] = { correct: 0, total: 0, correctW: 0, totalW: 0, sumGoalErrHome: 0, sumGoalErrAway: 0, n: 0 } as any;
       leagueAccuracy[league].total++;
       leagueAccuracy[league].totalW += w;
       if (outcomeHit) { leagueAccuracy[league].correct++; leagueAccuracy[league].correctW += w; }
+      // P3: track per-league signed goal error (predicted xG − actual goals)
+      const xgH = Number(pred.expected_goals_home) || 0;
+      const xgA = Number(pred.expected_goals_away) || 0;
+      (leagueAccuracy[league] as any).sumGoalErrHome += (xgH - gh);
+      (leagueAccuracy[league] as any).sumGoalErrAway += (xgA - ga);
+      (leagueAccuracy[league] as any).n += 1;
     }
 
     if (total === 0) {
@@ -344,11 +350,24 @@ Deno.serve(async (req) => {
     }
 
     for (const [league, data] of Object.entries(leagueAccuracy)) {
+      const slug = league.replace(/\s/g, "_").toLowerCase();
       if (data.total >= 10) {
         const wAcc = data.totalW > 0 ? data.correctW / data.totalW : 0;
         if (wAcc < 0.35) {
-          numericWeights[`league_penalty_${league.replace(/\s/g, "_").toLowerCase()}`] = Math.round((0.35 - wAcc) * -1 * 1000) / 1000;
+          numericWeights[`league_penalty_${slug}`] = Math.round((0.35 - wAcc) * -1 * 1000) / 1000;
         }
+      }
+      // P3: per-league lambda shifts based on systematic xG bias.
+      // Need a meaningful sample (≥15) to avoid noise. Shift opposes the bias,
+      // damped by 0.4 (we don't want to over-correct on a 90-day window) and
+      // clamped to ±0.20 goals so we never inflate/deflate by more than ~14%.
+      if ((data as any).n >= 15) {
+        const meanErrH = (data as any).sumGoalErrHome / (data as any).n;
+        const meanErrA = (data as any).sumGoalErrAway / (data as any).n;
+        const shiftH = Math.round(Math.max(-0.20, Math.min(0.20, -meanErrH * 0.4)) * 1000) / 1000;
+        const shiftA = Math.round(Math.max(-0.20, Math.min(0.20, -meanErrA * 0.4)) * 1000) / 1000;
+        if (Math.abs(shiftH) >= 0.01) numericWeights[`league_lambda_shift_home_${slug}`] = shiftH;
+        if (Math.abs(shiftA) >= 0.01) numericWeights[`league_lambda_shift_away_${slug}`] = shiftA;
       }
     }
 
