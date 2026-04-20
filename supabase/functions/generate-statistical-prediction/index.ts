@@ -158,6 +158,9 @@ Deno.serve(async (req) => {
     const calCorrections = (perfData as any)?.calibration_corrections || {};
     const homeBiasAdj: number = nw.home_bias_adjustment || 0;
     const drawCalAdj: number = nw.draw_calibration || 0;
+    // P4: shape-conditional draw calibrations (fallback to 0 if not yet learned)
+    const drawCalTight: number = nw.draw_calibration_tight || 0;
+    const drawCalSkewed: number = nw.draw_calibration_skewed || 0;
     const ouLambdaAdj: number = nw.ou_lambda_adjustment || 0;
     const confDeflator: number = nw.confidence_deflator || 0;
     // Error-based adjustments
@@ -403,8 +406,11 @@ Deno.serve(async (req) => {
     }
 
     // Apply draw calibration from learning loop
-    // Net draw adjustment = learned draw_calibration + error-based corrections
-    const netDrawAdj = drawCalAdj + drawUnderpredictBoost - drawOverpredictPenalty;
+    // Net draw adjustment = learned draw_calibration + shape-conditional correction + error-based corrections.
+    // P4: prefer shape-specific weight when available; falls back to global draw_calibration when zero.
+    const lamDiffForCal = Math.abs(lambdaHome - lambdaAway);
+    const shapeCal = lamDiffForCal < 0.4 ? drawCalTight : drawCalSkewed;
+    const netDrawAdj = (shapeCal !== 0 ? shapeCal : drawCalAdj) + drawUnderpredictBoost - drawOverpredictPenalty;
     if (netDrawAdj !== 0) {
       poissonDR += netDrawAdj;
       const shift = netDrawAdj / 2;
