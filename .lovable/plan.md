@@ -1,5 +1,13 @@
 
 
-Let me investigate. From the network logs context: latest model_performance is v4 with `total_matches: 199`, `last_learning_match_count: 1000`, and the compute-model-performance call returned `current_matches: 1000, next_trigger_at: 1050`.
+The user wants me to verify the Accuracy page cycle progress UI on mobile and desktop. This requires the browser tool, which is available in default mode.
 
-The user is on the Accuracy page seeing the cycle progress bar. Let me check what it shows and compare against actual DB state.
+## Plan
+
+1. Navigate to `/en/accuracy` at desktop viewport (1366x768), screenshot the cycle progress section, confirm it shows reviews vs next cycle (e.g. `255 / 1050`).
+2. Resize to mobile viewport (390x844), screenshot the same section, confirm layout/labels remain correct.
+3. Cross-check the displayed numbers against the latest `model_performance` row and the `prediction_reviews` HEAD count visible in network logs.
+4. Report findings; if anything is off, flag it (no code edits unless a bug is found).
+
+No code changes expected — pure verification.
+
