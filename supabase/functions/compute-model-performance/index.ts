@@ -471,7 +471,7 @@ Deno.serve(async (req) => {
         numeric_weights: finalWeights,
         model_version: newVersion,
         validation_result: validationResult,
-        last_learning_match_count: currentTotal,
+        last_learning_match_count: reviewsNow,
         calibration_corrections: finalCalibrationCorrections,
         error_weights: finalErrorWeights,
       });
