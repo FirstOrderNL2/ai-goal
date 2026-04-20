@@ -118,7 +118,7 @@ Deno.serve(async (req) => {
     let homeAdvCorrectCount = 0, homeAdvTotalCount = 0;
     let highConfCorrectCount = 0, highConfTotalCount = 0;
     let lowConfCorrectCount = 0, lowConfTotalCount = 0;
-    const leagueAccuracy: Record<string, { correct: number; total: number; correctW: number; totalW: number }> = {};
+    const leagueAccuracy: Record<string, { correct: number; total: number; correctW: number; totalW: number; sumGoalErrHome: number; sumGoalErrAway: number; n: number }> = {};
 
     for (let i = 0; i < 10; i++) {
       calibrationBuckets[`${i * 10}-${(i + 1) * 10}`] = { predicted: 0, actual: 0, count: 0 };
