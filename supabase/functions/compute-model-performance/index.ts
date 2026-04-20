@@ -33,6 +33,24 @@ Deno.serve(async (req) => {
     const prevMatchCount = (latestPerf as any)?.last_learning_match_count || 0;
     const prevWeights = (latestPerf as any)?.numeric_weights || {};
 
+    // P1 fix: gate on count of prediction_reviews (the actual learning signal),
+    // not on count of completed matches.
+    const { count: currentReviewCount } = await supabase
+      .from("prediction_reviews")
+      .select("*", { count: "exact", head: true });
+    const reviewsNow = currentReviewCount ?? 0;
+
+    if (!forceRecompute && prevMatchCount > 0 && (reviewsNow - prevMatchCount) < 50) {
+      return new Response(JSON.stringify({
+        message: "Learning cycle not triggered",
+        current_reviews: reviewsNow,
+        last_learning_at: prevMatchCount,
+        next_trigger_at: prevMatchCount + 50,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const { data: matches, error: mErr } = await supabase
       .from("matches")
       .select("id, goals_home, goals_away, match_date, league, team_home_id, team_away_id, match_importance")
@@ -48,17 +66,6 @@ Deno.serve(async (req) => {
     }
 
     const currentTotal = matches.length;
-
-    if (!forceRecompute && prevMatchCount > 0 && (currentTotal - prevMatchCount) < 50) {
-      return new Response(JSON.stringify({
-        message: "Learning cycle not triggered",
-        current_matches: currentTotal,
-        last_learning_at: prevMatchCount,
-        next_trigger_at: prevMatchCount + 50,
-      }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     const matchIds = matches.map((m: any) => m.id);
 
