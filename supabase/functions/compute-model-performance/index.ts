@@ -211,10 +211,16 @@ Deno.serve(async (req) => {
       else if (conf <= 0.45) { lowConfTotalCount++; if (outcomeHit) lowConfCorrectCount++; }
 
       const league = match.league || "Unknown";
-      if (!leagueAccuracy[league]) leagueAccuracy[league] = { correct: 0, total: 0, correctW: 0, totalW: 0 };
+      if (!leagueAccuracy[league]) leagueAccuracy[league] = { correct: 0, total: 0, correctW: 0, totalW: 0, sumGoalErrHome: 0, sumGoalErrAway: 0, n: 0 } as any;
       leagueAccuracy[league].total++;
       leagueAccuracy[league].totalW += w;
       if (outcomeHit) { leagueAccuracy[league].correct++; leagueAccuracy[league].correctW += w; }
+      // P3: track per-league signed goal error (predicted xG − actual goals)
+      const xgH = Number(pred.expected_goals_home) || 0;
+      const xgA = Number(pred.expected_goals_away) || 0;
+      (leagueAccuracy[league] as any).sumGoalErrHome += (xgH - gh);
+      (leagueAccuracy[league] as any).sumGoalErrAway += (xgA - ga);
+      (leagueAccuracy[league] as any).n += 1;
     }
 
     if (total === 0) {
