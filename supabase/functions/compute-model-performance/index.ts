@@ -350,11 +350,24 @@ Deno.serve(async (req) => {
     }
 
     for (const [league, data] of Object.entries(leagueAccuracy)) {
+      const slug = league.replace(/\s/g, "_").toLowerCase();
       if (data.total >= 10) {
         const wAcc = data.totalW > 0 ? data.correctW / data.totalW : 0;
         if (wAcc < 0.35) {
-          numericWeights[`league_penalty_${league.replace(/\s/g, "_").toLowerCase()}`] = Math.round((0.35 - wAcc) * -1 * 1000) / 1000;
+          numericWeights[`league_penalty_${slug}`] = Math.round((0.35 - wAcc) * -1 * 1000) / 1000;
         }
+      }
+      // P3: per-league lambda shifts based on systematic xG bias.
+      // Need a meaningful sample (≥15) to avoid noise. Shift opposes the bias,
+      // damped by 0.4 (we don't want to over-correct on a 90-day window) and
+      // clamped to ±0.20 goals so we never inflate/deflate by more than ~14%.
+      if ((data as any).n >= 15) {
+        const meanErrH = (data as any).sumGoalErrHome / (data as any).n;
+        const meanErrA = (data as any).sumGoalErrAway / (data as any).n;
+        const shiftH = Math.round(Math.max(-0.20, Math.min(0.20, -meanErrH * 0.4)) * 1000) / 1000;
+        const shiftA = Math.round(Math.max(-0.20, Math.min(0.20, -meanErrA * 0.4)) * 1000) / 1000;
+        if (Math.abs(shiftH) >= 0.01) numericWeights[`league_lambda_shift_home_${slug}`] = shiftH;
+        if (Math.abs(shiftA) >= 0.01) numericWeights[`league_lambda_shift_away_${slug}`] = shiftA;
       }
     }
 
