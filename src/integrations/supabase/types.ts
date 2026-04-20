@@ -730,6 +730,8 @@ export type Database = {
           predicted_score_away: number | null
           predicted_score_home: number | null
           prediction_intervals: Json | null
+          publish_status: string
+          quality_score: number | null
         }
         Insert: {
           ai_reasoning?: string | null
@@ -753,6 +755,8 @@ export type Database = {
           predicted_score_away?: number | null
           predicted_score_home?: number | null
           prediction_intervals?: Json | null
+          publish_status?: string
+          quality_score?: number | null
         }
         Update: {
           ai_reasoning?: string | null
@@ -776,6 +780,8 @@ export type Database = {
           predicted_score_away?: number | null
           predicted_score_home?: number | null
           prediction_intervals?: Json | null
+          publish_status?: string
+          quality_score?: number | null
         }
         Relationships: [
           {
