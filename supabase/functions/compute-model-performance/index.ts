@@ -306,6 +306,11 @@ Deno.serve(async (req) => {
     }
 
     let drawPredCountW = 0, drawCorrectCountW = 0, actualDrawCountW = 0;
+    // P4: two-sided shape-based draw calibration
+    // Tight = |xg_home − xg_away| < 0.4 (close match, draws under-predicted)
+    // Skewed = |xg_home − xg_away| ≥ 0.4 (lopsided, draws over-predicted)
+    let tightActualDrawW = 0, tightPredDrawW = 0, tightTotalW = 0, tightN = 0;
+    let skewActualDrawW = 0, skewPredDrawW = 0, skewTotalW = 0, skewN = 0;
     for (const match of matches) {
       const pred = predMap.get(match.id);
       if (!pred) continue;
@@ -320,10 +325,36 @@ Deno.serve(async (req) => {
         drawPredCountW += w;
         if (isDraw) drawCorrectCountW += w;
       }
+      // Shape bucket via expected goals
+      const xgH = Number(pred.expected_goals_home) || 0;
+      const xgA = Number(pred.expected_goals_away) || 0;
+      const lamDiff = Math.abs(xgH - xgA);
+      if (lamDiff < 0.4) {
+        tightTotalW += w; tightN++;
+        if (isDraw) tightActualDrawW += w;
+        if (predDraw) tightPredDrawW += w;
+      } else {
+        skewTotalW += w; skewN++;
+        if (isDraw) skewActualDrawW += w;
+        if (predDraw) skewPredDrawW += w;
+      }
     }
     const actualDrawRate = totalW > 0 ? actualDrawCountW / totalW : 0.26;
     const predDrawRate = totalW > 0 ? drawPredCountW / totalW : 0.26;
     numericWeights.draw_calibration = Math.round(Math.max(-0.05, Math.min(0.05, (actualDrawRate - predDrawRate))) * 1000) / 1000;
+
+    // P4: shape-specific draw calibration. Only emit when sample is meaningful (≥30).
+    // Clamp to ±0.06 (slightly wider than the global ±0.05 since these are conditional).
+    if (tightN >= 30 && tightTotalW > 0) {
+      const tActual = tightActualDrawW / tightTotalW;
+      const tPred = tightPredDrawW / tightTotalW;
+      numericWeights.draw_calibration_tight = Math.round(Math.max(-0.06, Math.min(0.06, tActual - tPred)) * 1000) / 1000;
+    }
+    if (skewN >= 30 && skewTotalW > 0) {
+      const sActual = skewActualDrawW / skewTotalW;
+      const sPred = skewPredDrawW / skewTotalW;
+      numericWeights.draw_calibration_skewed = Math.round(Math.max(-0.06, Math.min(0.06, sActual - sPred)) * 1000) / 1000;
+    }
 
     if (ou25Acc < 48) {
       let predOverCountW = 0, actualOverCountW = 0;
