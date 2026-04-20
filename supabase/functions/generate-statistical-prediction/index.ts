@@ -164,9 +164,13 @@ Deno.serve(async (req) => {
     const drawOverpredictPenalty: number = errorW.draw_overpredict_penalty || 0;
     const drawUnderpredictBoost: number = errorW.draw_underpredict_boost || 0;
     const overconfPenalty: number = errorW.overconfidence_penalty || 0;
-    // League-specific penalty
-    const leagueKey = `league_penalty_${match.league.replace(/\s/g, "_").toLowerCase()}`;
+    // League-specific weights (slug-based keys)
+    const leagueSlug = match.league.replace(/\s/g, "_").toLowerCase();
+    const leagueKey = `league_penalty_${leagueSlug}`;
     const leaguePenalty: number = nw[leagueKey] || 0;
+    // P3: per-league lambda shifts learned from systematic over/under-scoring
+    const leagueLambdaShiftHome: number = nw[`league_lambda_shift_home_${leagueSlug}`] || 0;
+    const leagueLambdaShiftAway: number = nw[`league_lambda_shift_away_${leagueSlug}`] || 0;
 
     // Compute league averages
     const leagueComplete = (leagueMatches || []).filter((m: any) => m.goals_home != null);
