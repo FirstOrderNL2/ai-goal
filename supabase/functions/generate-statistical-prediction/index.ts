@@ -577,6 +577,17 @@ Deno.serve(async (req) => {
     const overUnder = goalLines.over_2_5 > 0.5 ? "over" : "under";
     const btts = poissonBtts >= 0.5 ? "yes" : "no";
 
+    // ── P6: Publish gate ──
+    // Hide predictions when the inputs are weak so displayed accuracy reflects only high-quality picks.
+    // Triggers: dataQuality < 0.45, league reliability < 0.75, or final confidence below the floor.
+    const qualityScore = Math.round(
+      (0.55 * dataQuality + 0.30 * leagueRelFactor + 0.15 * Math.min(1, confidence / 0.6)) * 1000
+    ) / 1000;
+    const publishStatus =
+      dataQuality < 0.45 || leagueRelFactor < 0.75 || confidence < 0.35
+        ? "low_quality"
+        : "published";
+
     // Upsert prediction
     const { error: upsertErr } = await supabase.from("predictions").upsert({
       match_id,
@@ -595,6 +606,8 @@ Deno.serve(async (req) => {
       best_pick: bestPickResult.pick,
       best_pick_confidence: Math.round(bestPickResult.confidence * 1000) / 1000,
       last_prediction_at: new Date().toISOString(),
+      publish_status: publishStatus,
+      quality_score: qualityScore,
     }, { onConflict: "match_id" });
 
     if (upsertErr) throw upsertErr;
