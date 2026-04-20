@@ -529,7 +529,17 @@ Deno.serve(async (req) => {
     // Use learned deflator with safety floor of -0.15 (no hardcoded override)
     const safeDeflator = Math.max(confDeflator - overconfPenalty, -0.15);
     const totalConfPenalty = volPenalty + Math.abs(safeDeflator) + Math.abs(leaguePenalty);
-    let rawConfidence = Math.round(Math.max(0.10, (dataQuality * 0.6 + marketAgreement * 0.4) * leagueRelFactor - totalConfPenalty) * 1000) / 1000;
+
+    // ── P2: Confidence redesign ──
+    // Couple confidence to the actual probability mass of the top pick.
+    // Old formula treated all picks equally regardless of how lopsided the probabilities were,
+    // producing inverted calibration (high confidence → worse hit rate).
+    // New formula: maxProb is the floor, scaled by league reliability and a data-quality multiplier
+    // (which folds in market agreement). Penalties from learning still apply additively.
+    const maxProb = Math.max(poissonHW, poissonDR, poissonAW);
+    const dataQualityMult = 0.70 + 0.30 * dataQuality + 0.15 * (marketAgreement - 0.5); // ~[0.625, 1.075]
+    const probConfidence = maxProb * leagueRelFactor * dataQualityMult;
+    let rawConfidence = Math.round(Math.max(0.10, Math.min(0.90, probConfidence - totalConfPenalty)) * 1000) / 1000;
 
     // ── Per-bucket calibration correction ──
     // Apply bucket-specific correction based on where the raw confidence falls
