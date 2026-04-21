@@ -117,6 +117,11 @@ Deno.serve(async (req) => {
   // Step 1: Sync API-Football data with detected mode
   await callFunction("sync-football-data", { mode: effectiveMode });
 
+  // Step 1b: Backfill missing odds for upcoming matches (helps ML feature snapshot)
+  if (effectiveMode === "pre_match" || effectiveMode === "full") {
+    await callFunction("backfill-odds", { scope: "upcoming", max: 40 });
+  }
+
   // Step 2: News scraping — full mode only
   if (effectiveMode === "full") {
     await callFunction("scrape-news");

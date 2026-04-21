@@ -92,12 +92,14 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { match_id } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const { match_id, training_mode } = body as { match_id?: string; training_mode?: boolean };
     if (!match_id) {
       return new Response(JSON.stringify({ error: "match_id required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    const isTraining = training_mode === true;
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -147,9 +149,9 @@ Deno.serve(async (req) => {
       match.referee ? supabase.from("referees").select("*").eq("name", match.referee).maybeSingle() : Promise.resolve({ data: null }),
       supabase.from("team_discipline").select("*").eq("team_id", match.team_home_id).order("season", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("team_discipline").select("*").eq("team_id", match.team_away_id).order("season", { ascending: false }).limit(1).maybeSingle(),
-      supabase.from("model_performance").select("numeric_weights, error_weights, calibration_corrections").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("model_performance").select("numeric_weights, error_weights, calibration_corrections, model_version").order("created_at", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("match_enrichment").select("*").eq("match_id", match_id).maybeSingle(),
-      supabase.from("match_intelligence").select("confidence_adjustment").eq("match_id", match_id).maybeSingle(),
+      supabase.from("match_intelligence").select("confidence_adjustment, momentum_home, momentum_away").eq("match_id", match_id).maybeSingle(),
     ]);
 
     // Extract numeric calibration weights + error weights + calibration corrections
@@ -235,26 +237,30 @@ Deno.serve(async (req) => {
       lambdaAway = leagueAwayAvg;
     }
 
+    // Capture base lambdas BEFORE all adjustments for the ML feature snapshot.
+    const baseLambdaHome = lambdaHome;
+    const baseLambdaAway = lambdaAway;
+
     // ── H2H adjustment ──
     // If features contain h2h_results, adjust lambdas based on historical dominance
+    let h2hHomeWins = 0, h2hAwayWins = 0, h2hDraws = 0, h2hCount = 0;
     if (features?.h2h_results && Array.isArray(features.h2h_results) && features.h2h_results.length >= 2) {
       const h2h = features.h2h_results as any[];
-      let homeWins = 0, awayWins = 0;
+      h2hCount = h2h.length;
       for (const r of h2h) {
         if (r.score_home > r.score_away) {
-          // Check if the current home team was also home in this H2H match
           const homeTeamName = match.home_team?.name?.toLowerCase() || "";
-          if (r.home?.toLowerCase().includes(homeTeamName.slice(0, 5))) homeWins++;
-          else awayWins++;
+          if (r.home?.toLowerCase().includes(homeTeamName.slice(0, 5))) h2hHomeWins++;
+          else h2hAwayWins++;
         } else if (r.score_away > r.score_home) {
           const homeTeamName = match.home_team?.name?.toLowerCase() || "";
-          if (r.away?.toLowerCase().includes(homeTeamName.slice(0, 5))) homeWins++;
-          else awayWins++;
+          if (r.away?.toLowerCase().includes(homeTeamName.slice(0, 5))) h2hHomeWins++;
+          else h2hAwayWins++;
+        } else {
+          h2hDraws++;
         }
       }
-      const totalH2H = h2h.length;
-      const h2hDominance = (homeWins - awayWins) / totalH2H; // -1 to +1
-      // Apply ±5% lambda adjustment based on H2H dominance
+      const h2hDominance = (h2hHomeWins - h2hAwayWins) / h2hCount;
       const h2hAdj = h2hDominance * 0.05;
       lambdaHome = lambdaHome * (1 + h2hAdj);
       lambdaAway = lambdaAway * (1 - h2hAdj);
@@ -583,10 +589,89 @@ Deno.serve(async (req) => {
     const qualityScore = Math.round(
       (0.55 * dataQuality + 0.30 * leagueRelFactor + 0.15 * Math.min(1, confidence / 0.6)) * 1000
     ) / 1000;
-    const publishStatus =
+    const computedPublishStatus =
       dataQuality < 0.45 || leagueRelFactor < 0.75 || confidence < 0.35
         ? "low_quality"
         : "published";
+    // Training-mode predictions are never user-visible.
+    const publishStatus = isTraining ? "training_only" : computedPublishStatus;
+
+    // ── ML feature snapshot (Phase 1) ──
+    // Immutable record of every input used at prediction time, for offline ML training.
+    const intel = (intelligence as any) || {};
+    const enr = (enrichment as any) || {};
+    const feature_snapshot = {
+      lambda_home: Math.round(lambdaHome * 1000) / 1000,
+      lambda_away: Math.round(lambdaAway * 1000) / 1000,
+      base_lambda_home: Math.round(baseLambdaHome * 1000) / 1000,
+      base_lambda_away: Math.round(baseLambdaAway * 1000) / 1000,
+      poisson_home_prob: Math.round(poissonHW * 1000) / 1000,
+      poisson_draw_prob: Math.round(poissonDR * 1000) / 1000,
+      poisson_away_prob: Math.round(poissonAW * 1000) / 1000,
+      league: match.league,
+      league_reliability: leagueRelFactor,
+      league_position_home: features?.league_position_home ?? null,
+      league_position_away: features?.league_position_away ?? null,
+      position_diff: features?.position_diff ?? null,
+      form_home: features?.home_form_last5 ?? null,
+      form_away: features?.away_form_last5 ?? null,
+      home_avg_scored: homeStats?.avgScored ?? null,
+      home_avg_conceded: homeStats?.avgConceded ?? null,
+      home_w_avg_scored: homeStats?.wAvgScored ?? null,
+      home_w_avg_conceded: homeStats?.wAvgConceded ?? null,
+      away_avg_scored: awayStats?.avgScored ?? null,
+      away_avg_conceded: awayStats?.avgConceded ?? null,
+      away_w_avg_scored: awayStats?.wAvgScored ?? null,
+      away_w_avg_conceded: awayStats?.wAvgConceded ?? null,
+      h2h: { home_wins: h2hHomeWins, draws: h2hDraws, away_wins: h2hAwayWins, count: h2hCount },
+      volatility: volatilityScore,
+      ref_strictness: refStrictness,
+      team_aggression: teamAggression,
+      match_importance: matchImportanceVal,
+      match_stage: matchStage,
+      competition_type: competitionType,
+      is_cup: isCup,
+      bookmaker_probs: odds ? {
+        home: impliedHome,
+        draw: impliedDraw,
+        away: impliedAway,
+      } : null,
+      market_agreement: marketAgreement,
+      enrichment_flags: enrichment ? {
+        key_player_missing_home: enr.key_player_missing_home ?? 0,
+        key_player_missing_away: enr.key_player_missing_away ?? 0,
+        news_sentiment_home: enr.news_sentiment_home ?? 0,
+        news_sentiment_away: enr.news_sentiment_away ?? 0,
+        weather_impact: enr.weather_impact ?? 0,
+        lineup_confirmed: enr.lineup_confirmed ?? false,
+      } : null,
+      intelligence: intelligence ? {
+        confidence_adjustment: intel.confidence_adjustment ?? 0,
+        momentum_home: intel.momentum_home ?? null,
+        momentum_away: intel.momentum_away ?? null,
+      } : null,
+      data_quality: Math.round(dataQuality * 1000) / 1000,
+      quality_score: qualityScore,
+      raw_confidence: rawConfidence,
+      bucket_correction: bucketCorrection,
+      model_version: (perfData as any)?.model_version ?? null,
+      applied_weights: {
+        home_bias_adjustment: homeBiasAdj,
+        draw_calibration: drawCalAdj,
+        draw_calibration_tight: drawCalTight,
+        draw_calibration_skewed: drawCalSkewed,
+        ou_lambda_adjustment: ouLambdaAdj,
+        confidence_deflator: confDeflator,
+        league_lambda_shift_home: leagueLambdaShiftHome,
+        league_lambda_shift_away: leagueLambdaShiftAway,
+        league_penalty: leaguePenalty,
+        draw_overpredict_penalty: drawOverpredictPenalty,
+        draw_underpredict_boost: drawUnderpredictBoost,
+        overconfidence_penalty: overconfPenalty,
+      },
+      training_mode: isTraining,
+      generated_at: new Date().toISOString(),
+    };
 
     // Upsert prediction
     const { error: upsertErr } = await supabase.from("predictions").upsert({
@@ -608,6 +693,8 @@ Deno.serve(async (req) => {
       last_prediction_at: new Date().toISOString(),
       publish_status: publishStatus,
       quality_score: qualityScore,
+      feature_snapshot,
+      training_only: isTraining,
     }, { onConflict: "match_id" });
 
     if (upsertErr) throw upsertErr;
