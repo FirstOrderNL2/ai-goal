@@ -56,10 +56,13 @@ Deno.serve(async (req) => {
   }
 
   // Filter: missing prediction OR prediction without feature_snapshot.
+  // `predictions` may come back as an array (1:N) or a single object (1:1) depending on FK.
   const targets = (candidates ?? []).filter((m: any) => {
-    const preds = m.predictions ?? [];
-    if (preds.length === 0) return true;
-    return !preds[0].feature_snapshot;
+    const raw = m.predictions;
+    if (raw == null) return true;
+    const arr = Array.isArray(raw) ? raw : [raw];
+    if (arr.length === 0) return true;
+    return !arr[0]?.feature_snapshot;
   }).slice(0, batchSize);
 
   const results: Array<{ id: string; ok: boolean; error?: string }> = [];
