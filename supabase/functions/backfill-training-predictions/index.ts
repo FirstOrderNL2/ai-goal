@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
     const arr = Array.isArray(raw) ? raw : [raw];
     if (arr.length === 0) return true;
     return !arr[0]?.feature_snapshot;
-  }).slice(0, batchSize);
+  }).slice(0, batchSize) as Array<{ id: string; match_date: string }>;
 
   const results: Array<{ id: string; ok: boolean; error?: string }> = [];
   for (const m of targets) {
@@ -74,7 +74,16 @@ Deno.serve(async (req) => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${serviceKey}`,
         },
-        body: JSON.stringify({ match_id: m.id, training_mode: true }),
+        // Priority 2: tag every backfill call with `backfill: true` and the
+        // strict pre-match cutoff (`as_of = match_date`) so the prediction
+        // engine refuses any post-kickoff enrichment/intelligence and the
+        // resulting snapshot is annotated for downstream auditors.
+        body: JSON.stringify({
+          match_id: m.id,
+          training_mode: true,
+          backfill: true,
+          as_of: m.match_date,
+        }),
       });
       if (res.ok) {
         results.push({ id: m.id, ok: true });
