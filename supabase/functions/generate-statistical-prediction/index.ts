@@ -684,6 +684,13 @@ Deno.serve(async (req) => {
         draw_underpredict_boost: drawUnderpredictBoost,
         overconfidence_penalty: overconfPenalty,
       },
+      // Full weight payload embedded so the snapshot stays reproducible even after
+      // model_performance versions are pruned (Blocker 4 fix).
+      weights_full: {
+        numeric_weights: nw,
+        error_weights: errorW,
+        calibration_corrections: calCorrections,
+      },
       training_mode: isTraining,
       generated_at: new Date().toISOString(),
     };
