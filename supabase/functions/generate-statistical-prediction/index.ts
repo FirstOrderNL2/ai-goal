@@ -589,10 +589,89 @@ Deno.serve(async (req) => {
     const qualityScore = Math.round(
       (0.55 * dataQuality + 0.30 * leagueRelFactor + 0.15 * Math.min(1, confidence / 0.6)) * 1000
     ) / 1000;
-    const publishStatus =
+    const computedPublishStatus =
       dataQuality < 0.45 || leagueRelFactor < 0.75 || confidence < 0.35
         ? "low_quality"
         : "published";
+    // Training-mode predictions are never user-visible.
+    const publishStatus = isTraining ? "training_only" : computedPublishStatus;
+
+    // ── ML feature snapshot (Phase 1) ──
+    // Immutable record of every input used at prediction time, for offline ML training.
+    const intel = (intelligence as any) || {};
+    const enr = (enrichment as any) || {};
+    const feature_snapshot = {
+      lambda_home: Math.round(lambdaHome * 1000) / 1000,
+      lambda_away: Math.round(lambdaAway * 1000) / 1000,
+      base_lambda_home: Math.round(baseLambdaHome * 1000) / 1000,
+      base_lambda_away: Math.round(baseLambdaAway * 1000) / 1000,
+      poisson_home_prob: Math.round(poissonHW * 1000) / 1000,
+      poisson_draw_prob: Math.round(poissonDR * 1000) / 1000,
+      poisson_away_prob: Math.round(poissonAW * 1000) / 1000,
+      league: match.league,
+      league_reliability: leagueRelFactor,
+      league_position_home: features?.league_position_home ?? null,
+      league_position_away: features?.league_position_away ?? null,
+      position_diff: features?.position_diff ?? null,
+      form_home: features?.home_form_last5 ?? null,
+      form_away: features?.away_form_last5 ?? null,
+      home_avg_scored: homeStats?.avgScored ?? null,
+      home_avg_conceded: homeStats?.avgConceded ?? null,
+      home_w_avg_scored: homeStats?.wAvgScored ?? null,
+      home_w_avg_conceded: homeStats?.wAvgConceded ?? null,
+      away_avg_scored: awayStats?.avgScored ?? null,
+      away_avg_conceded: awayStats?.avgConceded ?? null,
+      away_w_avg_scored: awayStats?.wAvgScored ?? null,
+      away_w_avg_conceded: awayStats?.wAvgConceded ?? null,
+      h2h: { home_wins: h2hHomeWins, draws: h2hDraws, away_wins: h2hAwayWins, count: h2hCount },
+      volatility: volatilityScore,
+      ref_strictness: refStrictness,
+      team_aggression: teamAggression,
+      match_importance: matchImportanceVal,
+      match_stage: matchStage,
+      competition_type: competitionType,
+      is_cup: isCup,
+      bookmaker_probs: odds ? {
+        home: impliedHome,
+        draw: impliedDraw,
+        away: impliedAway,
+      } : null,
+      market_agreement: marketAgreement,
+      enrichment_flags: enrichment ? {
+        key_player_missing_home: enr.key_player_missing_home ?? 0,
+        key_player_missing_away: enr.key_player_missing_away ?? 0,
+        news_sentiment_home: enr.news_sentiment_home ?? 0,
+        news_sentiment_away: enr.news_sentiment_away ?? 0,
+        weather_impact: enr.weather_impact ?? 0,
+        lineup_confirmed: enr.lineup_confirmed ?? false,
+      } : null,
+      intelligence: intelligence ? {
+        confidence_adjustment: intel.confidence_adjustment ?? 0,
+        momentum_home: intel.momentum_home ?? null,
+        momentum_away: intel.momentum_away ?? null,
+      } : null,
+      data_quality: Math.round(dataQuality * 1000) / 1000,
+      quality_score: qualityScore,
+      raw_confidence: rawConfidence,
+      bucket_correction: bucketCorrection,
+      model_version: (perfData as any)?.model_version ?? null,
+      applied_weights: {
+        home_bias_adjustment: homeBiasAdj,
+        draw_calibration: drawCalAdj,
+        draw_calibration_tight: drawCalTight,
+        draw_calibration_skewed: drawCalSkewed,
+        ou_lambda_adjustment: ouLambdaAdj,
+        confidence_deflator: confDeflator,
+        league_lambda_shift_home: leagueLambdaShiftHome,
+        league_lambda_shift_away: leagueLambdaShiftAway,
+        league_penalty: leaguePenalty,
+        draw_overpredict_penalty: drawOverpredictPenalty,
+        draw_underpredict_boost: drawUnderpredictBoost,
+        overconfidence_penalty: overconfPenalty,
+      },
+      training_mode: isTraining,
+      generated_at: new Date().toISOString(),
+    };
 
     // Upsert prediction
     const { error: upsertErr } = await supabase.from("predictions").upsert({
@@ -614,6 +693,8 @@ Deno.serve(async (req) => {
       last_prediction_at: new Date().toISOString(),
       publish_status: publishStatus,
       quality_score: qualityScore,
+      feature_snapshot,
+      training_only: isTraining,
     }, { onConflict: "match_id" });
 
     if (upsertErr) throw upsertErr;
