@@ -113,6 +113,7 @@ Deno.serve(async (req) => {
 
       newReviews.push({
         match_id: match.id,
+        prediction_id: pred.id,
         predicted_outcome: predictedOutcome,
         actual_outcome: actualOutcome,
         outcome_correct: outcomeCorrect,
