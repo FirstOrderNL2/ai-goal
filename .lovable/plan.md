@@ -1,105 +1,103 @@
 
 
-# Phase 2 — Baseline ML Model (Offline Benchmark)
+# Production-Safe ML Readiness — Fix Order (Temporal Consistency First)
 
-## Reality check before building
+The audit's verdict is correct: the system is a statistical engine with ML scaffolding, not an ML system, and the blocker is **temporal data consistency**, not model quality. This plan fixes the four risks in priority order. Nothing here introduces a new ML model — that remains gated until Phase 2 can be re-run on clean data.
 
-- Labeled snapshots available: **478** (target was ≥ 2,000 from Phase 1).
-- Snapshots with odds: **46** — bookmaker_probs feature will be ~90% null.
-- Time window: **2026-02-21 → 2026-04-21** (2 months only) — time-based split will have ~334 train / 96 val / 48 test.
-- Schema is consistent (43 keys on all rows, `weights_full` on 478/499).
+---
 
-**Recommendation:** proceed with Phase 2 as a **benchmark / feasibility study only**, not a production-ready model. Sample size is too small to declare ML "won" or "lost" definitively, but big enough to detect signal direction. The plan's GO/NO-GO gate is honored: if logloss does not beat Poisson, we stop.
+## Priority 1 — Freeze enrichment & intelligence per match (CRITICAL)
 
-## Execution environment
+**Problem:** `match_enrichment` and `match_intelligence` are mutable singletons per `match_id`. If `enrich-match-context` or `football-intelligence` is re-invoked after kickoff (manually, by cron, or by a future backfill), it overwrites the row that a snapshot already pointed at — silently corrupting historical training data.
 
-LightGBM/XGBoost are C++ libraries — not runnable inside Deno edge functions. Two viable paths:
+**Fix:**
+1. **Schema migration** — add freeze fields:
+   - `match_enrichment.frozen_at TIMESTAMPTZ`, `frozen_for_match_date TIMESTAMPTZ`
+   - `match_intelligence.frozen_at TIMESTAMPTZ`, `frozen_for_match_date TIMESTAMPTZ`
+2. **Edge function guards** — in `enrich-match-context` and `football-intelligence`:
+   - Refuse to write if a row exists with `frozen_at IS NOT NULL`.
+   - On every successful pre-match write, also set `frozen_at = now()` and `frozen_for_match_date = matches.match_date` **only when `now() < match_date`**.
+   - After kickoff, the row becomes immutable.
+3. **Snapshot consumer** (`generate-statistical-prediction`) — read enrichment/intelligence only when:
+   - row's `enriched_at`/`generated_at` < `match_date` **AND**
+   - either `frozen_at IS NULL` (still pre-match) or `frozen_for_match_date = match_date` (frozen for this fixture).
+   Otherwise treat as missing (already does this for the timestamp check; freeze adds the second guard).
 
-**Chosen: Python sandbox (offline, one-shot)** — train + evaluate via `code--exec` using `lightgbm`, `scikit-learn`, `pandas`. Pull data via `psql` (managed PG env). Write artefacts (model `.txt`, metrics `.json`, comparison report `.md`, calibration plots `.png`) to `/mnt/documents/`.
+---
 
-This satisfies "offline only", "no production impact", "no edge function integration".
+## Priority 2 — Eliminate the backfill time-travel bug
 
-## Pipeline
+**Problem:** `backfill-training-predictions` calls the live `generate-statistical-prediction` pipeline. The temporal guard nullifies post-match enrichment, but `match_features` (rolling form, lambdas) is recomputed from current `team_statistics`, which already includes the match itself.
 
-### 1. Data export
-SQL pulls every labeled snapshot + match outcome into a single CSV at `/tmp/training.csv`:
-- features: all 43 snapshot keys flattened (nested `bookmaker_probs`, `h2h`, `intelligence`, `enrichment_flags`, `applied_weights` → dot-notation columns)
-- label `y`: 0=home win, 1=draw, 2=away win, derived from `goals_home` vs `goals_away`
-- `match_date` for ordering
+**Fix:**
+1. **`compute-features` audit** — verify rolling windows exclude the target match. If form/lambdas use season aggregates that include the completed match, add `WHERE matches.match_date < target.match_date` filters.
+2. **Backfill mode flag** — pass `{ backfill: true, as_of: match_date }` from `backfill-training-predictions` to `generate-statistical-prediction`. The function:
+   - Recomputes `match_features` with a strict `match_date < as_of` cut.
+   - Skips matches lacking sufficient pre-`as_of` history (instead of silently using future data).
+3. **Snapshot annotation** — store `as_of` and `backfill: true` inside `feature_snapshot` so any later audit can distinguish backfilled rows from live rows.
 
-### 2. Feature engineering (`/tmp/build_features.py`)
-- Drop leakage-risk and ID-like columns: `generated_at`, `model_version`, `training_mode`, `weights_full`, `applied_weights.*`, `bucket_correction`, `quality_score`, `data_quality`, `raw_confidence`.
-- Numeric scaling: standardize lambdas, form, volatility, position_diff.
-- Categorical encoding: `league`, `match_stage`, `competition_type` → target-encoded with train-fold means (no leakage).
-- Bookmaker probs: keep raw + add `market_agreement` flag; `NaN` allowed (LightGBM handles missing natively).
-- Form strings (`WWLDL`) → 5 ordinal columns.
-- H2H jsonb → `h2h_home_wins`, `h2h_draws`, `h2h_away_wins`, `h2h_total`.
+---
 
-### 3. Time-based split
-Sort by `match_date` ascending → 70 / 20 / 10:
-- Train: oldest 70%
-- Validation: next 20% (early stopping)
-- Test: most recent 10% (final report only, never fit on)
+## Priority 3 — Coverage push (snapshots ≥ 2,000, odds ≥ 80%)
 
-### 4. Models trained (`/tmp/train_ml.py`)
+**Problem:** snapshot coverage stalled at 499/528 live + a few hundred backfilled; odds at ~58% on published predictions.
 
-| Model | Purpose |
-|---|---|
-| **Poisson baseline** | extracted directly from snapshot's `poisson_home/draw/away_prob` — no retraining |
-| **LightGBM multiclass** | objective `multiclass`, 3 classes, `num_leaves=31`, `learning_rate=0.05`, early stopping on val logloss, max 1000 rounds |
-| **LightGBM + isotonic calibration** | per-class isotonic regression fit on val set |
-| **Hybrid 0.7·Poisson + 0.3·ML** | linear blend on calibrated probs |
+**Fix:**
+1. **Cron-driven snapshot loop** — schedule `run-backfill-loop` (`target: predictions`, `max_iterations: 3`, `batch: 25`) every 5 minutes via `pg_cron` until `feature_snapshot` count ≥ 2,000. Auto-stops when exhausted.
+2. **Cron-driven odds loop** — same pattern, `target: odds`, `scope: completed`, every 15 minutes, capped to API-Football quota budget already in `api-usage-strategy`.
+3. **KPI gate UI** — add a small status strip to `MLReadinessPanel.tsx` showing live counts and a green/red badge per KPI. No GO until all four go green.
 
-### 5. Evaluation harness (`/tmp/evaluate.py`)
-On the test slice:
-- **Logloss** (primary)
-- **Accuracy** (argmax)
-- **Brier multiclass** (sum of squared errors across the 3-class probability vector)
-- **ECE** (expected calibration error, 10 bins, per-class then averaged)
-- **Reliability diagrams** → PNG per model
+---
 
-Segment breakdowns (test set):
-- High vs low volatility (`volatility` median split)
-- Top leagues (Premier League, La Liga, Serie A, Bundesliga, Ligue 1) vs others
-- With odds vs without odds
-- Per outcome class (focus: draw recall — the plan's critical weakness zone)
+## Priority 4 — Enforce dataset hygiene flags globally
 
-### 6. Outputs to `/mnt/documents/phase2_ml_benchmark/`
-- `metrics.json` — full metrics matrix
-- `report.md` — Markdown comparison table + segment table + GO/NO-GO verdict
-- `feature_importance.png` — top-30 LightGBM gains
-- `reliability_*.png` — calibration curves per model
-- `model_lgbm.txt` — saved booster (for Phase 3 reuse, not deployed)
-- `predictions_test.csv` — per-match: actual, poisson probs, ML probs, hybrid probs
+**Problem:** `training_only` and `publish_status` exist but aren't enforced consistently in queries.
 
-### 7. GO / NO-GO verdict (auto-emitted)
-Hard rules from the plan:
-1. ML logloss < Poisson logloss on test set → **required**
-2. ML ECE < Poisson ECE → **required**
-3. No regression on draw class (draw recall not lower than Poisson by > 5%) → **required**
-4. Improvement holds across ≥ 50 of the 48 test matches segments (use bootstrap, 1000 resamples, 95% CI on logloss delta excludes 0) → **required**
+**Fix:**
+1. **Production reads** (everything that powers UI predictions): add `training_only = false AND publish_status = 'published'` to:
+   - `useMatches`, `useFixtureData`, `useModelPerformance`, `MatchDetail`, `Accuracy`, `compute-model-performance` training input.
+2. **ML/training reads** (dataset-validation-report, future ML loaders): explicitly opt-in with `training_only IN (true,false)` and clearly label which slice they are reading.
+3. **Lint rule** — none enforceable, but add a code comment header in `predictions` query helpers documenting the rule, and a single `predictionFilters.ts` helper exporting `productionFilter()` and `trainingFilter()` so future code reuses them.
 
-If all 4 pass → **GO to Phase 3 (Hybrid System Design)**.
-If any fail → **STOP, return to data improvement** (per plan's "If ML loses → STOP" rule).
+---
 
-## Strict guardrails (enforced)
-- No edits to `generate-statistical-prediction` or any production prediction path.
-- No new edge functions, no DB writes, no schema changes, no `ml_experiment` flag toggling production code.
-- All artefacts live in `/mnt/documents/phase2_ml_benchmark/`.
-- Model file is saved but **not** wired anywhere.
+## Out of scope (deferred)
 
-## Caveats reported in the final report
-- Sample size (478) is below the plan's 2,000 target → results are **directional, not conclusive**.
-- 2-month window means no seasonal generalization claim possible.
-- Odds feature is sparse (~10%) → bookmaker_probs importance will be artificially low.
-- Test set is only ~48 matches → bootstrap CI included to expose noise.
+- LightGBM training (Phase 2) — re-run only after Priorities 1–3 are green.
+- Logloss / ECE in `compute-model-performance` — added together with Phase 2 evaluation harness.
+- Hybrid blending in production — never until Phase 2 verdict is GO.
 
-## Files created
-- `/tmp/export_dataset.sql`
-- `/tmp/build_features.py`
-- `/tmp/train_ml.py`
-- `/tmp/evaluate.py`
-- `/mnt/documents/phase2_ml_benchmark/*` (artefacts)
+---
 
-No source-tree files modified.
+## Files touched
+
+**Migrations**
+- `supabase/migrations/<ts>_freeze_enrichment_intelligence.sql`
+
+**Edge functions**
+- `supabase/functions/enrich-match-context/index.ts` (freeze write + refusal)
+- `supabase/functions/football-intelligence/index.ts` (freeze write + refusal)
+- `supabase/functions/generate-statistical-prediction/index.ts` (frozen-row guard + `as_of`/`backfill` snapshot annotation)
+- `supabase/functions/compute-features/index.ts` (strict `match_date < as_of` rolling windows)
+- `supabase/functions/backfill-training-predictions/index.ts` (pass `as_of` + `backfill: true`)
+- `supabase/functions/run-backfill-loop/index.ts` (no change; just scheduled)
+
+**Cron (`pg_cron` + `pg_net`)**
+- snapshot loop every 5 min
+- odds loop every 15 min
+
+**Frontend**
+- `src/components/MLReadinessPanel.tsx` (KPI gate strip)
+- `src/lib/predictionFilters.ts` (new helper)
+- `src/hooks/useMatches.ts`, `useFixtureData.ts`, `useModelPerformance.ts`, `src/pages/MatchDetail.tsx`, `src/pages/Accuracy.tsx` (apply `productionFilter()`)
+
+---
+
+## Success criteria
+
+- Re-run `dataset-validation-report` shows: snapshots ≥ 2,000, odds ≥ 80% on published, 0 orphans, referees > 0.
+- `match_enrichment` / `match_intelligence` rows for completed matches are immutable (write attempts return refusal).
+- `feature_snapshot` rows produced by backfill carry `as_of` ≤ `match_date` and `backfill: true`.
+- All UI prediction reads exclude `training_only = true`.
+- Only after all four pass: re-run Phase 2 benchmark on the now-trustworthy ≥2k dataset.
 
