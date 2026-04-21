@@ -180,6 +180,40 @@ export function MLReadinessPanel() {
           </div>
         ) : (
           <>
+            {/* Phase 1 KPI gate — all four must be green before Phase 2 ML training is unlocked */}
+            {(() => {
+              const gates = [
+                { label: "Snapshots ≥ 2,000", ok: report.with_feature_snapshot >= 2000, value: report.with_feature_snapshot.toLocaleString() },
+                { label: "Odds coverage ≥ 80%", ok: report.odds_coverage_pct >= 80, value: `${report.odds_coverage_pct}%` },
+                { label: "No orphans", ok: (report.orphan_rows.predictions + report.orphan_rows.match_features + report.orphan_rows.prediction_reviews) === 0, value: "0" },
+                { label: "Reviews ≥ 500", ok: report.total_reviews >= 500, value: report.total_reviews.toLocaleString() },
+              ];
+              const allGreen = gates.every(g => g.ok);
+              return (
+                <div className={`rounded-lg border p-3 ${allGreen ? "border-win/40 bg-win/5" : "border-destructive/30 bg-destructive/5"}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide">
+                      Phase 2 Gate — {allGreen ? <span className="text-win">UNLOCKED ✅</span> : <span className="text-destructive">BLOCKED</span>}
+                    </p>
+                    <span className="text-[10px] text-muted-foreground">all four KPIs must be green</span>
+                  </div>
+                  <div className="grid gap-1.5 grid-cols-2 sm:grid-cols-4">
+                    {gates.map(g => (
+                      <div key={g.label} className="flex items-center gap-1.5 text-[11px]">
+                        {g.ok
+                          ? <CheckCircle2 className="h-3.5 w-3.5 text-win shrink-0" />
+                          : <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />}
+                        <div className="min-w-0">
+                          <div className="truncate">{g.label}</div>
+                          <div className="font-mono text-muted-foreground">{g.value}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
               <Metric
                 label="Snapshots stored"

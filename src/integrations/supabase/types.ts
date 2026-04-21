@@ -137,6 +137,8 @@ export type Database = {
           enriched_at: string
           formation_away: string | null
           formation_home: string | null
+          frozen_at: string | null
+          frozen_for_match_date: string | null
           id: string
           key_player_missing_away: number | null
           key_player_missing_home: number | null
@@ -155,6 +157,8 @@ export type Database = {
           enriched_at?: string
           formation_away?: string | null
           formation_home?: string | null
+          frozen_at?: string | null
+          frozen_for_match_date?: string | null
           id?: string
           key_player_missing_away?: number | null
           key_player_missing_home?: number | null
@@ -173,6 +177,8 @@ export type Database = {
           enriched_at?: string
           formation_away?: string | null
           formation_home?: string | null
+          frozen_at?: string | null
+          frozen_for_match_date?: string | null
           id?: string
           key_player_missing_away?: number | null
           key_player_missing_home?: number | null
@@ -281,6 +287,8 @@ export type Database = {
         Row: {
           confidence_adjustment: number | null
           context_summary: string | null
+          frozen_at: string | null
+          frozen_for_match_date: string | null
           generated_at: string
           id: string
           market_signal: Json | null
@@ -294,6 +302,8 @@ export type Database = {
         Insert: {
           confidence_adjustment?: number | null
           context_summary?: string | null
+          frozen_at?: string | null
+          frozen_for_match_date?: string | null
           generated_at?: string
           id?: string
           market_signal?: Json | null
@@ -307,6 +317,8 @@ export type Database = {
         Update: {
           confidence_adjustment?: number | null
           context_summary?: string | null
+          frozen_at?: string | null
+          frozen_for_match_date?: string | null
           generated_at?: string
           id?: string
           market_signal?: Json | null

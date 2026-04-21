@@ -155,7 +155,14 @@ async function enrichMatches(matches: Match[]): Promise<Match[]> {
 
   const [teamsRes, predsRes, oddsRes, votesRes, featuresRes] = await Promise.all([
     supabase.from("teams").select("*").in("id", teamIds),
-    supabase.from("predictions").select("*").in("match_id", matchIds),
+    // Production read: never expose training_only or low-quality predictions to UI.
+    // See src/lib/predictionFilters.ts.
+    supabase
+      .from("predictions")
+      .select("*")
+      .in("match_id", matchIds)
+      .eq("training_only", false)
+      .eq("publish_status", "published"),
     supabase.from("odds").select("*").in("match_id", matchIds),
     supabase.from("prediction_votes").select("prediction_id, vote_type").in(
       "prediction_id",

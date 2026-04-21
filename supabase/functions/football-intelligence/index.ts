@@ -24,12 +24,19 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    // Check cache — skip if generated within last 30 minutes
+    // Check cache — refuse if frozen (Priority 1), else 30-min soft cache.
     const { data: existing } = await supabase
       .from("match_intelligence")
-      .select("generated_at")
+      .select("generated_at, frozen_at")
       .eq("match_id", match_id)
       .maybeSingle();
+
+    if (existing?.frozen_at) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: true, reason: "row frozen (post-kickoff immutable)" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     if (existing?.generated_at) {
       const age = Date.now() - new Date(existing.generated_at).getTime();
@@ -303,21 +310,29 @@ xG: ${prediction.expected_goals_home} - ${prediction.expected_goals_away}`;
     // Clamp confidence adjustment
     const confAdj = Math.max(-0.1, Math.min(0.1, fil.confidence_adjustment || 0));
 
-    // Upsert into match_intelligence
+    // Upsert into match_intelligence — freeze if still pre-match.
+    const nowMs = Date.now();
+    const matchTs = (match as any).match_date ? new Date((match as any).match_date).getTime() : nowMs;
+    const isPreMatch = nowMs < matchTs;
+    const intelRow: Record<string, unknown> = {
+      match_id,
+      player_impacts: fil.player_impacts || [],
+      tactical_analysis: fil.tactical_analysis || {},
+      momentum_home: Math.max(0, Math.min(100, fil.momentum_home || 50)),
+      momentum_away: Math.max(0, Math.min(100, fil.momentum_away || 50)),
+      market_signal: marketSignal,
+      match_narrative: fil.match_narrative || null,
+      context_summary: fil.context_summary || null,
+      confidence_adjustment: Math.round(confAdj * 1000) / 1000,
+      generated_at: new Date().toISOString(),
+    };
+    if (isPreMatch) {
+      intelRow.frozen_at = new Date().toISOString();
+      intelRow.frozen_for_match_date = (match as any).match_date;
+    }
     const { error: upsertErr } = await supabase
       .from("match_intelligence")
-      .upsert({
-        match_id,
-        player_impacts: fil.player_impacts || [],
-        tactical_analysis: fil.tactical_analysis || {},
-        momentum_home: Math.max(0, Math.min(100, fil.momentum_home || 50)),
-        momentum_away: Math.max(0, Math.min(100, fil.momentum_away || 50)),
-        market_signal: marketSignal,
-        match_narrative: fil.match_narrative || null,
-        context_summary: fil.context_summary || null,
-        confidence_adjustment: Math.round(confAdj * 1000) / 1000,
-        generated_at: new Date().toISOString(),
-      }, { onConflict: "match_id" });
+      .upsert(intelRow, { onConflict: "match_id" });
 
     if (upsertErr) {
       console.error("Upsert error:", upsertErr);

@@ -93,13 +93,19 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { match_id, training_mode } = body as { match_id?: string; training_mode?: boolean };
+    const { match_id, training_mode, backfill, as_of } = body as {
+      match_id?: string;
+      training_mode?: boolean;
+      backfill?: boolean;
+      as_of?: string;
+    };
     if (!match_id) {
       return new Response(JSON.stringify({ error: "match_id required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     const isTraining = training_mode === true;
+    const isBackfill = backfill === true;
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -156,18 +162,23 @@ Deno.serve(async (req) => {
 
     // ── Temporal-cutoff guard (anti-leakage) ──
     // For training/backfill, enrichment & intelligence must be strictly pre-match.
-    // For live predictions on upcoming matches this is naturally true; for completed
-    // matches we drop any row populated after kickoff so post-match data never leaks
-    // into the feature snapshot or the calibration math.
-    const matchTs = new Date(match.match_date).getTime();
-    let enrichment: any = enrichmentRaw;
-    let intelligence: any = intelligenceRaw;
-    if (enrichment && enrichment.enriched_at && new Date(enrichment.enriched_at).getTime() > matchTs) {
-      enrichment = null;
+    // The cutoff is `as_of` when supplied (backfill mode), else match_date.
+    // We additionally require the row to be either still pre-match (frozen_at IS NULL)
+    // or explicitly frozen for THIS fixture. Anything else → treat as missing.
+    const cutoffMs = as_of ? new Date(as_of).getTime() : new Date(match.match_date).getTime();
+    const matchDateIso = match.match_date;
+    function isRowSafe(row: any, tsField: "enriched_at" | "generated_at"): boolean {
+      if (!row) return false;
+      const ts = row[tsField] ? new Date(row[tsField]).getTime() : null;
+      if (ts == null || ts > cutoffMs) return false;
+      if (row.frozen_at == null) return true; // still pre-match elsewhere — safe
+      // Frozen rows must be frozen for this exact fixture.
+      const frozenFor = row.frozen_for_match_date ? new Date(row.frozen_for_match_date).getTime() : null;
+      const matchTs = new Date(matchDateIso).getTime();
+      return frozenFor === matchTs;
     }
-    if (intelligence && intelligence.generated_at && new Date(intelligence.generated_at).getTime() > matchTs) {
-      intelligence = null;
-    }
+    const enrichment: any = isRowSafe(enrichmentRaw, "enriched_at") ? enrichmentRaw : null;
+    const intelligence: any = isRowSafe(intelligenceRaw, "generated_at") ? intelligenceRaw : null;
 
     // Extract numeric calibration weights + error weights + calibration corrections
     const nw = (perfData as any)?.numeric_weights || {};
@@ -692,6 +703,8 @@ Deno.serve(async (req) => {
         calibration_corrections: calCorrections,
       },
       training_mode: isTraining,
+      backfill: isBackfill,
+      as_of: as_of ?? null,
       generated_at: new Date().toISOString(),
     };
 
