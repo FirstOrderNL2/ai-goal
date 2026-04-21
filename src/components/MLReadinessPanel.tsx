@@ -253,11 +253,32 @@ export function MLReadinessPanel() {
                     {backfillRunning ? "Working…" : "Backfill snapshots (300)"}
                   </button>
                   <button
+                    onClick={() => runDeepBackfill("predictions")}
+                    disabled={backfillRunning}
+                    className="text-xs px-3 py-1.5 rounded-md bg-primary/80 text-primary-foreground hover:bg-primary/70 disabled:opacity-50"
+                  >
+                    {backfillRunning ? "Working…" : "Deep snapshot run → 2,000"}
+                  </button>
+                  <button
                     onClick={runOddsBackfill}
                     disabled={backfillRunning}
                     className="text-xs px-3 py-1.5 rounded-md bg-muted hover:bg-muted/80 disabled:opacity-50"
                   >
                     {backfillRunning ? "Working…" : "Backfill odds"}
+                  </button>
+                  <button
+                    onClick={() => runDeepBackfill("odds")}
+                    disabled={backfillRunning}
+                    className="text-xs px-3 py-1.5 rounded-md bg-muted hover:bg-muted/80 disabled:opacity-50"
+                  >
+                    {backfillRunning ? "Working…" : "Deep odds run"}
+                  </button>
+                  <button
+                    onClick={populateReferees}
+                    disabled={backfillRunning}
+                    className="text-xs px-3 py-1.5 rounded-md bg-muted hover:bg-muted/80 disabled:opacity-50"
+                  >
+                    {backfillRunning ? "Working…" : "Populate referees"}
                   </button>
                 </div>
               </div>
