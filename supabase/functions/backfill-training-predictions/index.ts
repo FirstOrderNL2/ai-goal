@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
   const nextCursor = oldestCandidate;
   // Exhausted only when the underlying query returned fewer rows than the
   // overshoot window — i.e. there are no more older completed matches.
-  const exhausted = (candidates?.length ?? 0) < batchSize * 4;
+  const exhausted = (candidates?.length ?? 0) < Math.max(batchSize * 20, 200);
 
   return new Response(JSON.stringify({
     success: true,
