@@ -1,283 +1,195 @@
 
-# Verification Result: Phases 1–6 and Learning Status
 
-## Verdict
+# ML Readiness Upgrade — Data Foundation
 
-The system is partially learning and most phases are implemented, but it is not yet a fully reliable closed-loop learning system.
-
-The model is learning in the sense that completed-match reviews are being converted into persisted calibration weights, and new statistical predictions read those weights. However, Phase 5 has a validation gap: the holdout validator does not truly test every learned weight family, so it can approve or mark changes as marginal without fully proving that the updated model improves future predictions.
-
-Also, this is statistical model learning, not LLM retraining. The AI reasoning model is not being fine-tuned. The deterministic Poisson/statistical engine learns calibration weights, while the AI layer adds reasoning and narrative.
+Goal: capture every prediction's full feature vector, backfill history, repair odds coverage, and lock referential integrity. No ML model is added in this plan.
 
 ---
 
-## Phase-by-phase audit
+## Phase 1 — Feature Snapshot Storage
 
-### Phase 1: Learning trigger based on real review count
-Status: Implemented correctly.
+**Schema change** (migration):
+- `predictions.feature_snapshot JSONB`
+- `predictions.training_only BOOLEAN NOT NULL DEFAULT false`
+- Index: `CREATE INDEX idx_predictions_training_only ON predictions(training_only) WHERE training_only = false;`
 
-What is present:
-- `compute-model-performance` uses `prediction_reviews` count as the learning trigger.
-- It no longer relies only on completed match count.
-- Current database state shows `281` prediction reviews.
+**Code change** in `supabase/functions/generate-statistical-prediction/index.ts`:
+Build the snapshot just before the DB upsert and write it alongside the prediction.
 
-Evidence:
-- Latest model version stores `last_learning_match_count: 280`.
-- `prediction_reviews` currently contains `281` rows.
+```ts
+const feature_snapshot = {
+  lambda_home, lambda_away,
+  base_lambda_home, base_lambda_away,            // pre-adjustment
+  poisson_home_prob, poisson_draw_prob, poisson_away_prob,
+  league: match.league,
+  league_reliability: leagueRelFactor,
+  league_position_home, league_position_away, position_diff,
+  form_home: features?.home_form_last5,
+  form_away: features?.away_form_last5,
+  home_avg_scored, home_avg_conceded,
+  away_avg_scored, away_avg_conceded,
+  h2h: { home_wins, draws, away_wins },
+  volatility: volatilityScore,
+  match_importance, match_stage, competition_type,
+  bookmaker_probs: odds ? { home: implied_home, draw: implied_draw, away: implied_away } : null,
+  market_agreement,
+  enrichment_flags: {
+    key_player_missing_home, key_player_missing_away,
+    news_sentiment_home, news_sentiment_away,
+    weather_impact, lineup_confirmed,
+  },
+  intelligence: { confidence_adjustment, momentum_home, momentum_away },
+  data_quality, quality_score,
+  model_version: latestModelVersion,
+  applied_weights: { home_bias, draw_calibration, league_lambda_shift_home, league_lambda_shift_away, confidence_deflator },
+  generated_at: new Date().toISOString(),
+};
+```
 
-Conclusion:
-- Phase 1 is working.
-- The next normal learning cycle will not run until enough new reviews exist unless forced.
-
----
-
-### Phase 2: Confidence redesign
-Status: Implemented correctly.
-
-What is present:
-- Confidence is tied to the actual top probability mass.
-- Confidence is adjusted by:
-  - data quality
-  - league reliability
-  - market agreement
-  - volatility penalty
-  - learned confidence deflator
-  - calibration bucket correction
-  - Football Intelligence confidence adjustment
-
-Conclusion:
-- Phase 2 is wired into new statistical predictions.
-- The latest learned model has `confidence_deflator: -0.094`, so the learning loop is actively reducing overconfident predictions.
-
----
-
-### Phase 3: Per-league lambda shifts
-Status: Implemented correctly.
-
-What is present:
-- `compute-model-performance` calculates per-league signed xG error.
-- It persists league-specific lambda shift weights.
-- `generate-statistical-prediction` applies those shifts before computing probabilities.
-
-Current learned examples:
-- Premier League:
-  - home lambda shift: `+0.082`
-  - away lambda shift: `+0.032`
-- La Liga:
-  - home lambda shift: `+0.042`
-  - away lambda shift: `-0.124`
-- Keuken Kampioen Divisie:
-  - home lambda shift: `+0.179`
-  - away lambda shift: `-0.163`
-
-Conclusion:
-- Phase 3 is truly active.
-- It changes expected goals before probabilities are generated, so it affects the actual prediction output.
+Deploy: `generate-statistical-prediction`.
 
 ---
 
-### Phase 4: Two-sided draw calibration
-Status: Implemented correctly, with one minor cleanup needed.
+## Phase 2 — Backfill Historical Predictions
 
-What is present:
-- The learning loop calculates:
-  - `draw_calibration_tight`
-  - `draw_calibration_skewed`
-- Prediction generation chooses the correct draw adjustment based on lambda difference.
-- Current active weights:
-  - `draw_calibration_tight: -0.031`
-  - `draw_calibration_skewed: +0.06`
+New edge function: `backfill-training-predictions`.
 
-Conclusion:
-- Phase 4 is active and being used.
-- Minor cleanup: one code comment says tight matches are under-predicted, but the current learned value is negative, meaning the system is reducing tight-match draw probability. The math is correct; the comment should be clarified.
+Behavior:
+- Iterates `matches` where `status = 'completed'` AND no `predictions` row exists OR existing prediction lacks `feature_snapshot`.
+- Calls the same statistical pipeline with a `training_mode: true` flag so the engine:
+  - skips publish-status logic
+  - sets `training_only = true`
+  - sets `publish_status = 'training_only'` (extend the column's allowed values implicitly — it's free text)
+  - uses only data that existed at the time (point-in-time integrity is best-effort: completed match snapshot is acceptable since features are reconstructed from `team_statistics` + historical `matches`)
+- Batches of 25 matches per invocation, 250 ms delay between calls, idempotent (UPSERT keyed by `match_id` only when prediction missing).
+- Resumable via `?cursor=<match_date>` query param.
 
----
+Frontend filter: `useMatches` and any prediction lists must filter `training_only = false` (already filtering `low_quality`, extend the same hook).
 
-### Phase 5: True holdout validation
-Status: Partially implemented, but not fully correct.
-
-What is present:
-- The function creates a 7-day holdout set.
-- It compares new learned weights against previous weights.
-- It uses a composite Brier score:
-  - 1X2: 60%
-  - O/U 2.5: 20%
-  - BTTS: 20%
-- It reverts weights if validation fails.
-
-Current latest result:
-- Model version: `8`
-- Validation result: `marginal`
-- Outcome accuracy: `43.8%`
-- O/U 2.5 accuracy: `61.9%`
-- BTTS accuracy: `53.7%`
-- Average 1X2 Brier: `0.638`
-
-Problems found:
-1. Calibration corrections are read but not actually applied inside the holdout scoring function.
-2. League lambda shifts are not truly re-simulated during validation.
-3. O/U validation uses a rough proxy instead of recomputing probabilities from adjusted lambdas.
-4. The validation is therefore not truly testing all weight families, even though the comments say it is.
-
-Conclusion:
-- Phase 5 exists but needs correction before it can be considered fully reliable.
-- The current learning loop can persist weights, but its validation does not fully prove that those weights improve the model.
+Trigger: manual run from Accuracy dashboard "Backfill" button → invokes function in a loop until cursor exhausted. Target ≥ 2,000 backfilled rows (4,053 completed matches available).
 
 ---
 
-### Phase 6: Publish gate
-Status: Implemented correctly for display, but not yet integrated into training quality control.
+## Phase 3 — Odds Coverage Improvement
 
-What is present:
-- `predictions` has:
-  - `publish_status`
-  - `quality_score`
-- `generate-statistical-prediction` writes both fields.
-- UI hides predictions marked `low_quality`.
-- Current prediction distribution:
-  - `published`: 509
-  - `low_quality`: 6
-- Average low-quality score: `0.818`
-- Average published score: `0.974`
+Audit & re-ingest:
+- New edge function `backfill-odds`:
+  - Selects `matches` (completed + upcoming next 14 days) where no row in `odds` exists.
+  - Calls API-Football `odds` endpoint in batches of 20 fixture IDs.
+  - Inserts `home_win_odds`, `draw_odds`, `away_win_odds` (Bet365 → fallback first available bookmaker).
+  - Rate-limited: 10 req/sec, respects API-Football quota.
+- Update `auto-sync` to call `backfill-odds` for newly synced upcoming matches automatically.
+- Add a coverage check in `compute-model-performance` validation_metrics: `odds_coverage_pct`.
 
-Conclusion:
-- Phase 6 is active for the user-facing UI.
-- However, low-quality predictions are still included in the learning/review loop. That means the model can still train on predictions it decided were too weak to publish.
+Target: raise current 12% → ≥ 80% on the published prediction set.
 
 ---
 
-## Is the AI model truly learning?
+## Phase 4 — Data Integrity (Foreign Keys)
 
-Yes, but with important qualifications.
+Migration:
 
-What is truly happening:
-- Completed matches are reviewed.
-- Errors are classified.
-- Calibration weights are generated.
-- Those weights are stored in `model_performance`.
-- New predictions read the latest stored weights.
-- At least 8 predictions have been generated after the latest model version was created, so the latest learned weights are being used.
+```sql
+-- Clean orphans first
+DELETE FROM predictions WHERE match_id NOT IN (SELECT id FROM matches);
+DELETE FROM match_features WHERE match_id NOT IN (SELECT id FROM matches);
+DELETE FROM prediction_reviews WHERE match_id NOT IN (SELECT id FROM matches);
 
-What is not happening:
-- The LLM is not being retrained.
-- The holdout validator does not yet fully validate all learned changes.
-- Low-quality predictions are not yet excluded from training.
-- The system does not yet store enough validation metadata to explain why a model passed, failed, or was marginal.
+-- Add prediction_id to prediction_reviews if missing
+ALTER TABLE prediction_reviews
+  ADD COLUMN IF NOT EXISTS prediction_id uuid;
 
-Best description:
-GoalGPT currently has a working statistical learning loop with persisted calibration, but it needs Phase 5 hardening and a training-quality gate before it can be called a robust self-learning model.
+UPDATE prediction_reviews pr
+   SET prediction_id = p.id
+  FROM predictions p
+ WHERE p.match_id = pr.match_id
+   AND pr.prediction_id IS NULL;
 
----
+-- Foreign keys
+ALTER TABLE predictions
+  ADD CONSTRAINT predictions_match_id_fkey
+  FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE;
 
-# Implementation Plan to Make Learning Fully Correct
+ALTER TABLE match_features
+  ADD CONSTRAINT match_features_match_id_fkey
+  FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE;
 
-## 1. Fix Phase 5 holdout validation
+ALTER TABLE prediction_reviews
+  ADD CONSTRAINT prediction_reviews_prediction_id_fkey
+  FOREIGN KEY (prediction_id) REFERENCES predictions(id) ON DELETE CASCADE;
 
-Update `compute-model-performance` so the holdout validator truly evaluates all learned weight families.
+CREATE INDEX IF NOT EXISTS idx_predictions_match_id ON predictions(match_id);
+CREATE INDEX IF NOT EXISTS idx_match_features_match_id ON match_features(match_id);
+CREATE INDEX IF NOT EXISTS idx_prediction_reviews_prediction_id ON prediction_reviews(prediction_id);
+```
 
-Changes:
-- Apply `calibration_corrections` inside `scoreWeights`.
-- Recompute 1X2 probabilities after applying:
-  - home bias
-  - draw calibration
-  - tight/skewed draw calibration
-  - error-based draw adjustments
-  - league lambda shifts
-- Recompute O/U 2.5 from adjusted lambdas instead of using the stored prediction side as a proxy.
-- Recompute BTTS probability from adjusted lambdas instead of using only the stored yes/no label.
-- Include confidence deflator in validation by evaluating calibrated probability quality.
-
-Expected result:
-- `validation_result` will actually reflect whether the new weights improve the model on unseen recent matches.
+Update `batch-review-matches` to set `prediction_id` on every new review row.
 
 ---
 
-## 2. Add validation diagnostics to model performance records
+## Phase 5 — Dataset Validation
 
-Extend the stored model performance payload with validation details.
+New edge function `dataset-validation-report` returns JSON:
 
-Add fields, likely as JSONB:
-- `validation_metrics`
-  - holdout sample size
-  - old composite Brier
-  - new composite Brier
-  - improvement
-  - validation window start/end
-- `validation_weights_tested`
-  - numeric weights tested
-  - error weights tested
-  - calibration corrections tested
+```json
+{
+  "total_predictions": ...,
+  "training_only": ...,
+  "published": ...,
+  "with_feature_snapshot_pct": ...,
+  "odds_coverage_pct": ...,
+  "match_features_coverage_pct": ...,
+  "match_enrichment_coverage_pct": ...,
+  "match_intelligence_coverage_pct": ...,
+  "review_coverage_pct": ...,
+  "orphan_rows": { "predictions": 0, "match_features": 0, "prediction_reviews": 0 },
+  "usable_training_samples": ...,
+  "missing_fields_top10": [...]
+}
+```
 
-Expected result:
-- The Accuracy dashboard and backend logs can explain why the model passed, failed, or was marginal.
-
----
-
-## 3. Exclude low-quality predictions from learning
-
-Update the learning and review pipeline so withheld predictions do not pollute calibration.
-
-Changes:
-- In `batch-review-matches`, either skip predictions where `publish_status = 'low_quality'`, or mark the review as excluded from training.
-- In `compute-model-performance`, ignore low-quality predictions when calculating:
-  - accuracy
-  - Brier scores
-  - draw calibration
-  - league lambda shifts
-  - error weights
-  - confidence calibration
-- Keep a separate count of excluded low-quality predictions for monitoring.
-
-Expected result:
-- The model learns from predictions it was confident enough to publish, making displayed accuracy and training data consistent.
+UI: new "ML Readiness" panel on `/accuracy` showing each metric with a green/amber/red status against the success thresholds.
 
 ---
 
-## 4. Fix the Phase 4 comment mismatch
-
-Clarify comments around tight/skewed draw calibration.
-
-Changes:
-- Replace fixed wording like “tight matches are under-predicted” with neutral wording:
-  - “tight matches receive a separate learned draw correction”
-  - “positive values increase draw probability; negative values decrease it”
-- Keep the existing math unchanged.
-
-Expected result:
-- Future maintenance will not misinterpret the sign of draw calibration weights.
+## Success Criteria (verified post-implementation)
+- 100% of new predictions write `feature_snapshot`.
+- ≥ 2,000 rows in `predictions` with `feature_snapshot IS NOT NULL`.
+- `odds_coverage_pct` ≥ 80% on published predictions.
+- All three FK constraints exist; `orphan_rows` all zero.
+- Accuracy dashboard "ML Readiness" panel renders all-green.
 
 ---
 
-## 5. Add an Accuracy dashboard learning panel
+## Files & artifacts to create / edit
 
-Surface the learning loop state in the UI.
+**New migrations**
+- `add_feature_snapshot_and_training_flag.sql`
+- `add_predictions_match_features_reviews_fks.sql`
 
-Show:
-- latest model version
-- validation result
-- total learning reviews
-- latest holdout Brier improvement
-- active learned weights
-- published vs low-quality prediction count
-- next learning trigger threshold
+**New edge functions**
+- `supabase/functions/backfill-training-predictions/index.ts`
+- `supabase/functions/backfill-odds/index.ts`
+- `supabase/functions/dataset-validation-report/index.ts`
 
-Expected result:
-- It becomes visible whether the model is actually learning, stalled, regressing, or waiting for enough new completed matches.
+**Edited edge functions**
+- `supabase/functions/generate-statistical-prediction/index.ts` (snapshot writer + training_mode branch)
+- `supabase/functions/batch-review-matches/index.ts` (set `prediction_id`)
+- `supabase/functions/auto-sync/index.ts` (chain `backfill-odds` for new upcoming)
+
+**Edited frontend**
+- `src/hooks/useMatches.ts` (filter `training_only`)
+- `src/integrations/supabase/types.ts` (auto-regenerated)
+- `src/hooks/useModelPerformance.ts` (expose readiness metrics)
+- `src/pages/Accuracy.tsx` (ML Readiness panel + Backfill trigger button)
 
 ---
 
-## 6. Run an end-to-end verification cycle
-
-After implementation:
-1. Trigger review generation for completed matches.
-2. Trigger model recalibration.
-3. Confirm a new model version is created.
-4. Confirm validation metrics are stored.
-5. Generate fresh predictions.
-6. Confirm those predictions used the latest model version’s weights.
-7. Confirm low-quality predictions are hidden from the UI and excluded from training.
-
-Expected result:
-- A complete evidence chain from completed result → review → learned weights → validated model → fresh prediction → UI publish gate.
+## Execution order
+1. Migrations (Phase 1 schema + Phase 4 FKs).
+2. Update `generate-statistical-prediction` to write snapshots.
+3. Build & run `backfill-training-predictions` until ≥ 2,000 rows.
+4. Build & run `backfill-odds`; wire into `auto-sync`.
+5. Build `dataset-validation-report` + Accuracy dashboard panel.
+6. Final verification report against success criteria.
 
