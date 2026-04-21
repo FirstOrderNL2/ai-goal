@@ -134,6 +134,7 @@ Deno.serve(async (req) => {
 
     const predictions = allPredictions;
     const excludedLowQuality = predictions.filter((p: any) => p.publish_status === "low_quality").length;
+    const excludedTrainingOnly = predictions.filter((p: any) => p.training_only === true).length;
     if (predictions.length === 0) {
       return new Response(JSON.stringify({ message: "No predictions found" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -143,9 +144,11 @@ Deno.serve(async (req) => {
     const predMap = new Map(predictions.map((p: any) => [p.match_id, p]));
     const featMap = new Map(allFeatures.map((f: any) => [f.match_id, f]));
     const reviewMap = new Map(allReviews.map((r: any) => [r.match_id, r]));
+    // Production filter: calibration learns only from real, published predictions.
+    // training_only rows are offline backfills — never feed them back into weights.
     const learningMatches = matches.filter((m: any) => {
       const pred = predMap.get(m.id);
-      return pred && pred.publish_status !== "low_quality";
+      return pred && pred.publish_status !== "low_quality" && pred.training_only !== true;
     });
 
     const now = Date.now();
