@@ -237,6 +237,10 @@ Deno.serve(async (req) => {
       lambdaAway = leagueAwayAvg;
     }
 
+    // Capture base lambdas BEFORE all adjustments for the ML feature snapshot.
+    const baseLambdaHome = lambdaHome;
+    const baseLambdaAway = lambdaAway;
+
     // ── H2H adjustment ──
     // If features contain h2h_results, adjust lambdas based on historical dominance
     if (features?.h2h_results && Array.isArray(features.h2h_results) && features.h2h_results.length >= 2) {
