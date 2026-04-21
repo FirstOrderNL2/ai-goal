@@ -186,9 +186,11 @@ async function enrichMatches(matches: Match[]): Promise<Match[]> {
 
   return matches.map((m) => {
     const rawPred = predsMap.get(m.id);
-    // P6 publish gate: hide low-quality predictions from UI consumers.
+    // P6 publish gate + ML training_only flag: hide both from UI consumers.
     const pred =
-      rawPred && (rawPred as any).publish_status === "low_quality" ? undefined : rawPred;
+      rawPred && ((rawPred as any).publish_status === "low_quality" || (rawPred as any).training_only === true)
+        ? undefined
+        : rawPred;
     const votes = pred ? votesByPred.get(pred.id) : undefined;
     const totalVotes = votes ? votes.agree + votes.disagree : 0;
     const disagreement = votes && totalVotes > 0 ? Math.min(votes.agree, votes.disagree) / totalVotes : 0;
