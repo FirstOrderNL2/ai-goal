@@ -129,8 +129,8 @@ Deno.serve(async (req) => {
       { data: homeDiscipline },
       { data: awayDiscipline },
       { data: perfData },
-      { data: enrichment },
-      { data: intelligence },
+      { data: enrichmentRaw },
+      { data: intelligenceRaw },
     ] = await Promise.all([
       supabase.from("odds").select("*").eq("match_id", match_id).single(),
       supabase.from("match_features").select("*").eq("match_id", match_id).single(),
