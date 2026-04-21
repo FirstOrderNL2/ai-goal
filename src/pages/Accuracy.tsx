@@ -353,6 +353,9 @@ export default function Accuracy() {
               </Card>
             </div>
 
+            {/* ML Readiness — Phase 1–5 data foundation */}
+            <MLReadinessPanel />
+
             {/* Model Version Header */}
             {perf?.model_version != null && (() => {
               const lastCount = perf.last_learning_match_count ?? 0;
