@@ -1,195 +1,141 @@
 
 
-# ML Readiness Upgrade — Data Foundation
+# GoalGPT — ML Full System Audit (Read-Only)
 
-Goal: capture every prediction's full feature vector, backfill history, repair odds coverage, and lock referential integrity. No ML model is added in this plan.
-
----
-
-## Phase 1 — Feature Snapshot Storage
-
-**Schema change** (migration):
-- `predictions.feature_snapshot JSONB`
-- `predictions.training_only BOOLEAN NOT NULL DEFAULT false`
-- Index: `CREATE INDEX idx_predictions_training_only ON predictions(training_only) WHERE training_only = false;`
-
-**Code change** in `supabase/functions/generate-statistical-prediction/index.ts`:
-Build the snapshot just before the DB upsert and write it alongside the prediction.
-
-```ts
-const feature_snapshot = {
-  lambda_home, lambda_away,
-  base_lambda_home, base_lambda_away,            // pre-adjustment
-  poisson_home_prob, poisson_draw_prob, poisson_away_prob,
-  league: match.league,
-  league_reliability: leagueRelFactor,
-  league_position_home, league_position_away, position_diff,
-  form_home: features?.home_form_last5,
-  form_away: features?.away_form_last5,
-  home_avg_scored, home_avg_conceded,
-  away_avg_scored, away_avg_conceded,
-  h2h: { home_wins, draws, away_wins },
-  volatility: volatilityScore,
-  match_importance, match_stage, competition_type,
-  bookmaker_probs: odds ? { home: implied_home, draw: implied_draw, away: implied_away } : null,
-  market_agreement,
-  enrichment_flags: {
-    key_player_missing_home, key_player_missing_away,
-    news_sentiment_home, news_sentiment_away,
-    weather_impact, lineup_confirmed,
-  },
-  intelligence: { confidence_adjustment, momentum_home, momentum_away },
-  data_quality, quality_score,
-  model_version: latestModelVersion,
-  applied_weights: { home_bias, draw_calibration, league_lambda_shift_home, league_lambda_shift_away, confidence_deflator },
-  generated_at: new Date().toISOString(),
-};
-```
-
-Deploy: `generate-statistical-prediction`.
+This is the audit deliverable. No code changes proposed. All numbers below pulled from live DB on `2026-04-21`.
 
 ---
 
-## Phase 2 — Backfill Historical Predictions
+## 1. Executive Summary
 
-New edge function: `backfill-training-predictions`.
+**Current ML maturity: PRE-ML.** The system is a calibrated Poisson engine with a statistical learning loop (calibration weights, per-league lambda shifts, holdout validation). There is **no XGBoost/LightGBM model, no hybrid simulation layer, and no ML benchmark layer** in the codebase — only the data foundation (Phase 1–5 of the previous ML Readiness Upgrade) is in place.
 
-Behavior:
-- Iterates `matches` where `status = 'completed'` AND no `predictions` row exists OR existing prediction lacks `feature_snapshot`.
-- Calls the same statistical pipeline with a `training_mode: true` flag so the engine:
-  - skips publish-status logic
-  - sets `training_only = true`
-  - sets `publish_status = 'training_only'` (extend the column's allowed values implicitly — it's free text)
-  - uses only data that existed at the time (point-in-time integrity is best-effort: completed match snapshot is acceptable since features are reconstructed from `team_statistics` + historical `matches`)
-- Batches of 25 matches per invocation, 250 ms delay between calls, idempotent (UPSERT keyed by `match_id` only when prediction missing).
-- Resumable via `?cursor=<match_date>` query param.
+**Is current ML trustworthy?** N/A — no ML model exists yet. The statistical learning loop *is* trustworthy (holdout-validated, atomic revert on regression).
 
-Frontend filter: `useMatches` and any prediction lists must filter `training_only = false` (already filtering `low_quality`, extend the same hook).
-
-Trigger: manual run from Accuracy dashboard "Backfill" button → invokes function in a loop until cursor exhausted. Target ≥ 2,000 backfilled rows (4,053 completed matches available).
+**Recommendation: NEEDS DATA FIXES FIRST.** Three blockers prevent moving to a real ML model: feature snapshots cover only **4.4% of predictions** (23/528), prediction coverage on completed matches is only **7.7%** (313/4055), and odds coverage is **2.8%** of all predictions covered (149 distinct matches with odds across 528 predictions).
 
 ---
 
-## Phase 3 — Odds Coverage Improvement
+## 2. Data Quality Report
 
-Audit & re-ingest:
-- New edge function `backfill-odds`:
-  - Selects `matches` (completed + upcoming next 14 days) where no row in `odds` exists.
-  - Calls API-Football `odds` endpoint in batches of 20 fixture IDs.
-  - Inserts `home_win_odds`, `draw_odds`, `away_win_odds` (Bet365 → fallback first available bookmaker).
-  - Rate-limited: 10 req/sec, respects API-Football quota.
-- Update `auto-sync` to call `backfill-odds` for newly synced upcoming matches automatically.
-- Add a coverage check in `compute-model-performance` validation_metrics: `odds_coverage_pct`.
+### Coverage table (live)
 
-Target: raise current 12% → ≥ 80% on the published prediction set.
+| Dataset | Rows | Coverage on 528 predictions | Coverage on 4055 completed matches |
+|---|---|---|---|
+| `predictions` | 528 (508 published, 20 low_quality, 0 training_only) | 100% | **7.7%** |
+| `predictions.feature_snapshot` | 23 | **4.4%** | **0.6%** |
+| `predictions.training_only=true` | 0 | 0% | 0% |
+| `odds` | 149 (149 distinct matches) | ~28% | ~3.7% |
+| `match_features` | 676 | n/a | 16.7% |
+| `match_enrichment` | 208 | ~39% | 5.1% |
+| `match_intelligence` | 211 | ~40% | 5.2% |
+| `match_context` | 235 | ~44% | 5.8% |
+| `prediction_reviews` | 283 (all linked, `prediction_id` populated 100%) | 53.6% | 7.0% |
+| `referees` | **0** | 0% | 0% |
+| `model_performance` | 19 (max version 9) | n/a | n/a |
 
----
+### Orphan check (FKs working)
 
-## Phase 4 — Data Integrity (Foreign Keys)
+| Table | Orphan rows |
+|---|---|
+| predictions → matches | 0 |
+| match_features → matches | 0 |
+| prediction_reviews → matches | 0 |
 
-Migration:
+Phase 4 FK migration is in effect. No broken joins.
 
-```sql
--- Clean orphans first
-DELETE FROM predictions WHERE match_id NOT IN (SELECT id FROM matches);
-DELETE FROM match_features WHERE match_id NOT IN (SELECT id FROM matches);
-DELETE FROM prediction_reviews WHERE match_id NOT IN (SELECT id FROM matches);
-
--- Add prediction_id to prediction_reviews if missing
-ALTER TABLE prediction_reviews
-  ADD COLUMN IF NOT EXISTS prediction_id uuid;
-
-UPDATE prediction_reviews pr
-   SET prediction_id = p.id
-  FROM predictions p
- WHERE p.match_id = pr.match_id
-   AND pr.prediction_id IS NULL;
-
--- Foreign keys
-ALTER TABLE predictions
-  ADD CONSTRAINT predictions_match_id_fkey
-  FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE;
-
-ALTER TABLE match_features
-  ADD CONSTRAINT match_features_match_id_fkey
-  FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE;
-
-ALTER TABLE prediction_reviews
-  ADD CONSTRAINT prediction_reviews_prediction_id_fkey
-  FOREIGN KEY (prediction_id) REFERENCES predictions(id) ON DELETE CASCADE;
-
-CREATE INDEX IF NOT EXISTS idx_predictions_match_id ON predictions(match_id);
-CREATE INDEX IF NOT EXISTS idx_match_features_match_id ON match_features(match_id);
-CREATE INDEX IF NOT EXISTS idx_prediction_reviews_prediction_id ON prediction_reviews(prediction_id);
-```
-
-Update `batch-review-matches` to set `prediction_id` on every new review row.
+### Critical missing datasets
+1. **Feature snapshots** — only 23 predictions have one. Backfill never ran.
+2. **Training-only backfill predictions** — 0 rows. `backfill-training-predictions` exists but has not been executed.
+3. **Odds** — 149/528 predictions covered, far from the 80% target.
+4. **Referees table** — empty, so volatility model uses constant 0.5 strictness everywhere.
 
 ---
 
-## Phase 5 — Dataset Validation
+## 3. ML Validity Report
 
-New edge function `dataset-validation-report` returns JSON:
+### 3.1 Feature snapshot audit
 
-```json
-{
-  "total_predictions": ...,
-  "training_only": ...,
-  "published": ...,
-  "with_feature_snapshot_pct": ...,
-  "odds_coverage_pct": ...,
-  "match_features_coverage_pct": ...,
-  "match_enrichment_coverage_pct": ...,
-  "match_intelligence_coverage_pct": ...,
-  "review_coverage_pct": ...,
-  "orphan_rows": { "predictions": 0, "match_features": 0, "prediction_reviews": 0 },
-  "usable_training_samples": ...,
-  "missing_fields_top10": [...]
-}
-```
+**Schema (43 keys, present on all 23 snapshots — schema is consistent):**
+`lambda_home, lambda_away, base_lambda_home, base_lambda_away, poisson_home_prob, poisson_draw_prob, poisson_away_prob, league, league_reliability, league_position_home, league_position_away, position_diff, form_home, form_away, home_avg_scored, home_avg_conceded, away_avg_scored, away_avg_conceded, home_w_avg_scored, home_w_avg_conceded, away_w_avg_scored, away_w_avg_conceded, h2h, volatility, match_importance, match_stage, competition_type, is_cup, bookmaker_probs, market_agreement, enrichment_flags, intelligence, ref_strictness, team_aggression, data_quality, quality_score, model_version, applied_weights, bucket_correction, raw_confidence, training_mode, generated_at`
 
-UI: new "ML Readiness" panel on `/accuracy` showing each metric with a green/amber/red status against the success thresholds.
+**Determinism:** Snapshot is built from already-computed inputs and written in the same upsert as the prediction → deterministic per generation.
+**Reproducibility:** Partial. Snapshot does not store the raw `match_features` row id or `model_performance.id` it consumed, so re-deriving the exact prediction later requires the model_version pointer plus surviving `model_performance` history (kept to 20 versions). Acceptable for now.
+**Schema versioning:** Single schema across all 23 rows. No drift.
+**Leakage signals inside snapshot:** None detected. All fields are pre-match (form is rolling history; lambdas, Poisson probs, h2h, league position, bookmaker probs, enrichment flags, intelligence — all available before kickoff).
+**`generated_at`** is correctly the prediction time, not match time.
 
----
+**Risk:** `enrichment_flags` and `intelligence` are sourced from `match_enrichment` / `match_intelligence`, which are populated by `enrich-match-context` and `football-intelligence`. Those functions read live data; if they ever ran *after* a match completed (e.g. backfill), the captured values would be post-match and would leak. **No timestamp guard exists.** This is a latent leakage risk for any future backfill.
 
-## Success Criteria (verified post-implementation)
-- 100% of new predictions write `feature_snapshot`.
-- ≥ 2,000 rows in `predictions` with `feature_snapshot IS NOT NULL`.
-- `odds_coverage_pct` ≥ 80% on published predictions.
-- All three FK constraints exist; `orphan_rows` all zero.
-- Accuracy dashboard "ML Readiness" panel renders all-green.
+### 3.2 ML dataset validity
 
----
+There is **no ML training pipeline today** — no train/test split code, no model artefact, no logloss computation.
 
-## Files & artifacts to create / edit
+What *would* happen if you trained on the current data:
+- 23 usable rows. Far below any usable threshold.
+- Labels would come from `matches.goals_home/away` joined via `match_id` → label alignment is straightforward and correct.
+- No temporal split exists — must be implemented from scratch.
 
-**New migrations**
-- `add_feature_snapshot_and_training_flag.sql`
-- `add_predictions_match_features_reviews_fks.sql`
+### 3.3 Leakage & contamination audit
 
-**New edge functions**
-- `supabase/functions/backfill-training-predictions/index.ts`
-- `supabase/functions/backfill-odds/index.ts`
-- `supabase/functions/dataset-validation-report/index.ts`
+| Source | Status | Evidence |
+|---|---|---|
+| `feature_snapshot` fields | **Clean** | All 43 keys are pre-match by construction in `generate-statistical-prediction`. |
+| `match_enrichment` | **At risk for backfill** | No `enriched_at < match_date` guard. If `backfill-training-predictions` runs `enrich-match-context` retroactively, post-match data leaks into snapshots. |
+| `match_intelligence` | **At risk for backfill** | Same as above; `football-intelligence` has no temporal cutoff. |
+| `prediction_reviews` | **Clean** | Built from completed match results vs stored prediction. Outcome-only data, never fed back into snapshot. |
+| `compute-model-performance` calibration weights | **Clean** | Holdout is the most recent 7 days; training uses prior data only. |
+| `match_features` | **Mostly clean** | `home_form_last5/away_form_last5` is rolling — derived from prior matches. Risk: if recomputed after the match, last entry could include the match itself. Worth verifying. |
 
-**Edited edge functions**
-- `supabase/functions/generate-statistical-prediction/index.ts` (snapshot writer + training_mode branch)
-- `supabase/functions/batch-review-matches/index.ts` (set `prediction_id`)
-- `supabase/functions/auto-sync/index.ts` (chain `backfill-odds` for new upcoming)
+**Leakage severity score: 2/10 today**, **rises to 7/10 the moment the historical backfill runs without a temporal guard.**
 
-**Edited frontend**
-- `src/hooks/useMatches.ts` (filter `training_only`)
-- `src/integrations/supabase/types.ts` (auto-regenerated)
-- `src/hooks/useModelPerformance.ts` (expose readiness metrics)
-- `src/pages/Accuracy.tsx` (ML Readiness panel + Backfill trigger button)
+### 3.4 Model design
+
+There is no ML model. The plan-on-record (per project memory) is residual learning over Poisson, but nothing is implemented.
+
+**Is residual-over-Poisson conceptually correct? YES** — it preserves the calibrated statistical backbone, learns only the residual, avoids destroying the working engine, and aligns with the system's existing weight-revert validation pattern.
+
+**Is a direct classifier conceptually correct? NO for this stage** — too few labelled rows (23 with snapshot, 283 with reviews), and the existing Poisson engine is already calibrated. A from-scratch classifier would underperform.
+
+### 3.5 Evaluation system
+
+- `compute-model-performance` computes Brier scores per target (1X2, O/U 2.5, BTTS), composite Brier, holdout Brier with full Poisson re-simulation. **Correctness: high.**
+- No logloss or ECE computation today — would need to be added for ML evaluation.
+- Hybrid weighting: does not exist yet.
 
 ---
 
-## Execution order
-1. Migrations (Phase 1 schema + Phase 4 FKs).
-2. Update `generate-statistical-prediction` to write snapshots.
-3. Build & run `backfill-training-predictions` until ≥ 2,000 rows.
-4. Build & run `backfill-odds`; wire into `auto-sync`.
-5. Build `dataset-validation-report` + Accuracy dashboard panel.
-6. Final verification report against success criteria.
+## 4. System Risks (top failure points)
+
+1. **Snapshot coverage 4.4%** — backfill function exists but was never run. Without ≥2k snapshots, no ML model is viable.
+2. **Backfill leakage trap** — `backfill-training-predictions` calls the live pipeline. If `match_enrichment`/`match_intelligence` are populated post-match, every backfilled snapshot is contaminated. No `enriched_at` ≤ `match_date` check is enforced.
+3. **Odds coverage 28%** of predictions, 3.7% of completed matches — `bookmaker_probs` is null on 72% of snapshots, killing market-based features.
+4. **Referees table empty** — `ref_strictness` is constant; one feature is dead.
+5. **Model_version pointer fragility** — snapshots reference `model_version`, but `compute-model-performance` prunes versions beyond 20. Old snapshots will lose their reference once version 30 is reached.
+6. **No temporal split scaffolding** — the moment ML training begins, time-based CV must be built; no helper exists.
+7. **`generate-ai-prediction` 503 errors in logs** — Lovable AI gateway returning 1102 (rate/quota). Not blocking statistical engine but FIL narrative occasionally fails.
+
+---
+
+## 5. Recommendation
+
+**NEEDS DATA FIXES FIRST.** Readiness score: **35/100**.
+
+### Top 5 blockers (in execution order)
+1. **Add temporal-cutoff guard to backfill** before running it. `backfill-training-predictions` must skip enrichment/intelligence rows where `enriched_at` / `generated_at` > `match_date`, or rebuild them with a frozen pre-match window.
+2. **Run `backfill-training-predictions`** to push snapshot coverage to ≥2,000 rows.
+3. **Run `backfill-odds`** to push odds coverage on published predictions to ≥80%.
+4. **Pin model_performance versions** referenced by snapshots (or copy `applied_weights` fully into snapshot — already done partially) so old snapshots stay reproducible after pruning.
+5. **Populate `referees` table** via API-Football referees endpoint, or remove `ref_strictness` from the feature vector.
+
+### Recommended ML architecture (when data is ready)
+**Residual classifier over Poisson, gradient-boosted (LightGBM), time-series CV.**
+- Inputs: full `feature_snapshot` + Poisson outputs.
+- Target: actual H/D/A.
+- Output: residual logit added to Poisson logits, then softmax + isotonic calibration.
+- Evaluation: composite Brier vs current Poisson on a strictly later time window. Adopt only if Brier improves > 1% with no regression in any target.
+- Deployment pattern: parallel to current engine, blended via learned weight inside `compute-model-performance` validation, atomic revert on regression — same shape as the existing learning loop.
+
+### Go/no-go decision
+**NO-GO for ML model implementation today.** Re-evaluate after blockers 1–3 are resolved (snapshot ≥ 2k, odds ≥ 80%, no leakage).
 
