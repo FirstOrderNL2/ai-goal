@@ -10,6 +10,7 @@ import { CheckCircle, XCircle, Target, TrendingUp, AlertTriangle, BarChart3, Act
 import { supabase } from "@/integrations/supabase/client";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { MLReadinessPanel } from "@/components/MLReadinessPanel";
 
 function usePredictionReviews() {
   return useQuery({
