@@ -92,12 +92,14 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { match_id } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const { match_id, training_mode } = body as { match_id?: string; training_mode?: boolean };
     if (!match_id) {
       return new Response(JSON.stringify({ error: "match_id required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    const isTraining = training_mode === true;
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
