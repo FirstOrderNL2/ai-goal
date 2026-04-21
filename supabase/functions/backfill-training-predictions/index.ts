@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
     .select("id, match_date, predictions(id, feature_snapshot)")
     .eq("status", "completed")
     .order("match_date", { ascending: false })
-    .limit(batchSize * 4); // overshoot to allow filtering
+    .limit(Math.max(batchSize * 20, 200)); // big overshoot — most recent matches already have snapshots
 
   if (cursor) q = q.lt("match_date", cursor);
 
@@ -56,10 +56,13 @@ Deno.serve(async (req) => {
   }
 
   // Filter: missing prediction OR prediction without feature_snapshot.
+  // `predictions` may come back as an array (1:N) or a single object (1:1) depending on FK.
   const targets = (candidates ?? []).filter((m: any) => {
-    const preds = m.predictions ?? [];
-    if (preds.length === 0) return true;
-    return !preds[0].feature_snapshot;
+    const raw = m.predictions;
+    if (raw == null) return true;
+    const arr = Array.isArray(raw) ? raw : [raw];
+    if (arr.length === 0) return true;
+    return !arr[0]?.feature_snapshot;
   }).slice(0, batchSize);
 
   const results: Array<{ id: string; ok: boolean; error?: string }> = [];
@@ -85,11 +88,15 @@ Deno.serve(async (req) => {
     if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
   }
 
-  // Next cursor = earliest match_date in this batch (for pagination).
-  const nextCursor = targets.length > 0
-    ? (targets[targets.length - 1] as any).match_date
+  // Cursor advances by the OLDEST candidate seen in this window (so the next
+  // call paginates further back), regardless of how many we filtered/processed.
+  const oldestCandidate = (candidates && candidates.length > 0)
+    ? (candidates[candidates.length - 1] as any).match_date
     : null;
-  const exhausted = targets.length < batchSize;
+  const nextCursor = oldestCandidate;
+  // Exhausted only when the underlying query returned fewer rows than the
+  // overshoot window — i.e. there are no more older completed matches.
+  const exhausted = (candidates?.length ?? 0) < Math.max(batchSize * 20, 200);
 
   return new Response(JSON.stringify({
     success: true,
