@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
     .select("id, match_date, predictions(id, feature_snapshot)")
     .eq("status", "completed")
     .order("match_date", { ascending: false })
-    .limit(batchSize * 4); // overshoot to allow filtering
+    .limit(Math.max(batchSize * 20, 200)); // big overshoot — most recent matches already have snapshots
 
   if (cursor) q = q.lt("match_date", cursor);
 
