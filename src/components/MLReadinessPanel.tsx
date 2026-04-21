@@ -123,6 +123,45 @@ export function MLReadinessPanel() {
     }
   }
 
+  async function runDeepBackfill(target: "predictions" | "odds") {
+    setBackfillRunning(true);
+    setBackfillLog(`Deep ${target} backfill running on the server…`);
+    try {
+      const { data, error } = await supabase.functions.invoke("run-backfill-loop", {
+        method: "POST",
+        body: target === "predictions"
+          ? { target: "predictions", max_iterations: 80, batch: 25, stop_at: 2000 }
+          : { target: "odds", max_iterations: 40, batch: 30, scope: "completed" },
+      });
+      if (error) throw error;
+      const r = data as any;
+      setBackfillLog(`Deep ${target}: ${r.iterations} iterations, +${r.total_succeeded} succeeded, ${r.total_failed} failed${r.exhausted ? " (exhausted)" : ""}.`);
+      await refetch();
+    } catch (e) {
+      setBackfillLog(`Error: ${(e as Error).message}`);
+    } finally {
+      setBackfillRunning(false);
+    }
+  }
+
+  async function populateReferees() {
+    setBackfillRunning(true);
+    setBackfillLog("Populating referees…");
+    try {
+      const { data, error } = await supabase.functions.invoke("populate-referees", {
+        method: "POST", body: {},
+      });
+      if (error) throw error;
+      const r = data as any;
+      setBackfillLog(`Referees: ${r.inserted}/${r.distinct_referees} populated.`);
+      await refetch();
+    } catch (e) {
+      setBackfillLog(`Error: ${(e as Error).message}`);
+    } finally {
+      setBackfillRunning(false);
+    }
+  }
+
   return (
     <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
       <CardHeader className="pb-2">
@@ -214,11 +253,32 @@ export function MLReadinessPanel() {
                     {backfillRunning ? "Working…" : "Backfill snapshots (300)"}
                   </button>
                   <button
+                    onClick={() => runDeepBackfill("predictions")}
+                    disabled={backfillRunning}
+                    className="text-xs px-3 py-1.5 rounded-md bg-primary/80 text-primary-foreground hover:bg-primary/70 disabled:opacity-50"
+                  >
+                    {backfillRunning ? "Working…" : "Deep snapshot run → 2,000"}
+                  </button>
+                  <button
                     onClick={runOddsBackfill}
                     disabled={backfillRunning}
                     className="text-xs px-3 py-1.5 rounded-md bg-muted hover:bg-muted/80 disabled:opacity-50"
                   >
                     {backfillRunning ? "Working…" : "Backfill odds"}
+                  </button>
+                  <button
+                    onClick={() => runDeepBackfill("odds")}
+                    disabled={backfillRunning}
+                    className="text-xs px-3 py-1.5 rounded-md bg-muted hover:bg-muted/80 disabled:opacity-50"
+                  >
+                    {backfillRunning ? "Working…" : "Deep odds run"}
+                  </button>
+                  <button
+                    onClick={populateReferees}
+                    disabled={backfillRunning}
+                    className="text-xs px-3 py-1.5 rounded-md bg-muted hover:bg-muted/80 disabled:opacity-50"
+                  >
+                    {backfillRunning ? "Working…" : "Populate referees"}
                   </button>
                 </div>
               </div>

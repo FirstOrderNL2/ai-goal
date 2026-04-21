@@ -129,8 +129,8 @@ Deno.serve(async (req) => {
       { data: homeDiscipline },
       { data: awayDiscipline },
       { data: perfData },
-      { data: enrichment },
-      { data: intelligence },
+      { data: enrichmentRaw },
+      { data: intelligenceRaw },
     ] = await Promise.all([
       supabase.from("odds").select("*").eq("match_id", match_id).single(),
       supabase.from("match_features").select("*").eq("match_id", match_id).single(),
@@ -151,8 +151,23 @@ Deno.serve(async (req) => {
       supabase.from("team_discipline").select("*").eq("team_id", match.team_away_id).order("season", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("model_performance").select("numeric_weights, error_weights, calibration_corrections, model_version").order("created_at", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("match_enrichment").select("*").eq("match_id", match_id).maybeSingle(),
-      supabase.from("match_intelligence").select("confidence_adjustment, momentum_home, momentum_away").eq("match_id", match_id).maybeSingle(),
+      supabase.from("match_intelligence").select("confidence_adjustment, momentum_home, momentum_away, generated_at").eq("match_id", match_id).maybeSingle(),
     ]);
+
+    // ── Temporal-cutoff guard (anti-leakage) ──
+    // For training/backfill, enrichment & intelligence must be strictly pre-match.
+    // For live predictions on upcoming matches this is naturally true; for completed
+    // matches we drop any row populated after kickoff so post-match data never leaks
+    // into the feature snapshot or the calibration math.
+    const matchTs = new Date(match.match_date).getTime();
+    let enrichment: any = enrichmentRaw;
+    let intelligence: any = intelligenceRaw;
+    if (enrichment && enrichment.enriched_at && new Date(enrichment.enriched_at).getTime() > matchTs) {
+      enrichment = null;
+    }
+    if (intelligence && intelligence.generated_at && new Date(intelligence.generated_at).getTime() > matchTs) {
+      intelligence = null;
+    }
 
     // Extract numeric calibration weights + error weights + calibration corrections
     const nw = (perfData as any)?.numeric_weights || {};
@@ -668,6 +683,13 @@ Deno.serve(async (req) => {
         draw_overpredict_penalty: drawOverpredictPenalty,
         draw_underpredict_boost: drawUnderpredictBoost,
         overconfidence_penalty: overconfPenalty,
+      },
+      // Full weight payload embedded so the snapshot stays reproducible even after
+      // model_performance versions are pruned (Blocker 4 fix).
+      weights_full: {
+        numeric_weights: nw,
+        error_weights: errorW,
+        calibration_corrections: calCorrections,
       },
       training_mode: isTraining,
       generated_at: new Date().toISOString(),
