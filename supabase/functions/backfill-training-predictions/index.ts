@@ -88,11 +88,15 @@ Deno.serve(async (req) => {
     if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
   }
 
-  // Next cursor = earliest match_date in this batch (for pagination).
-  const nextCursor = targets.length > 0
-    ? (targets[targets.length - 1] as any).match_date
+  // Cursor advances by the OLDEST candidate seen in this window (so the next
+  // call paginates further back), regardless of how many we filtered/processed.
+  const oldestCandidate = (candidates && candidates.length > 0)
+    ? (candidates[candidates.length - 1] as any).match_date
     : null;
-  const exhausted = targets.length < batchSize;
+  const nextCursor = oldestCandidate;
+  // Exhausted only when the underlying query returned fewer rows than the
+  // overshoot window — i.e. there are no more older completed matches.
+  const exhausted = (candidates?.length ?? 0) < batchSize * 4;
 
   return new Response(JSON.stringify({
     success: true,
