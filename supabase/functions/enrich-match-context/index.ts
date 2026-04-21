@@ -24,12 +24,20 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    // Check if recently enriched (within 30 min) — skip if so
+    // Check existing row: refuse if frozen (Priority 1 — temporal consistency).
+    // Skip if recently enriched within 30 min as a soft cache.
     const { data: existing } = await supabase
       .from("match_enrichment")
-      .select("enriched_at")
+      .select("enriched_at, frozen_at")
       .eq("match_id", match_id)
       .maybeSingle();
+
+    if (existing?.frozen_at) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: true, reason: "row frozen (post-kickoff immutable)" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     if (existing?.enriched_at) {
       const age = Date.now() - new Date(existing.enriched_at).getTime();
@@ -275,7 +283,12 @@ Deno.serve(async (req) => {
     }
 
     // ── Upsert enrichment data ──
-    const enrichment = {
+    // Freeze the row when we are still strictly pre-match. After kickoff it
+    // becomes immutable so historical training snapshots cannot be corrupted.
+    const nowMs = Date.now();
+    const matchTs = (match as any).match_date ? new Date((match as any).match_date).getTime() : nowMs;
+    const isPreMatch = nowMs < matchTs;
+    const enrichment: Record<string, unknown> = {
       match_id,
       key_player_missing_home: keyPlayerMissingHome,
       key_player_missing_away: keyPlayerMissingAway,
@@ -292,6 +305,10 @@ Deno.serve(async (req) => {
       enriched_at: new Date().toISOString(),
       sources,
     };
+    if (isPreMatch) {
+      enrichment.frozen_at = new Date().toISOString();
+      enrichment.frozen_for_match_date = (match as any).match_date;
+    }
 
     const { error: upsertErr } = await supabase
       .from("match_enrichment")
