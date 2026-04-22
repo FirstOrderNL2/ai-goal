@@ -1,0 +1,1 @@
+ALTER VIEW public.ml_readiness_v SET (security_invoker = true);
