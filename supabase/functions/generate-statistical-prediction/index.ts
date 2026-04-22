@@ -91,25 +91,43 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  try {
-    const body = await req.json().catch(() => ({}));
-    const { match_id, training_mode, backfill, as_of } = body as {
-      match_id?: string;
-      training_mode?: boolean;
-      backfill?: boolean;
-      as_of?: string;
-    };
-    if (!match_id) {
-      return new Response(JSON.stringify({ error: "match_id required" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    const isTraining = training_mode === true;
-    const isBackfill = backfill === true;
+  const startedAt = Date.now();
+  const body = await req.json().catch(() => ({}));
+  const { match_id, training_mode, backfill, as_of, update_reason } = body as {
+    match_id?: string;
+    training_mode?: boolean;
+    backfill?: boolean;
+    as_of?: string;
+    update_reason?: string;
+  };
+  const reason = update_reason || "initial";
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabase = createClient(supabaseUrl, serviceKey);
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, serviceKey);
+  async function writeLog(matchId: string | undefined, status: string, error?: string) {
+    try {
+      await supabase.from("prediction_logs").insert({
+        match_id: matchId ?? null,
+        action: "generate",
+        status,
+        error: error?.slice(0, 500) ?? null,
+        update_reason: reason,
+        latency_ms: Date.now() - startedAt,
+      });
+    } catch { /* swallow logging errors */ }
+  }
+
+  if (!match_id) {
+    await writeLog(undefined, "failed", "match_id required");
+    return new Response(JSON.stringify({ error: "match_id required" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  const isTraining = training_mode === true;
+  const isBackfill = backfill === true;
+
+  try {
 
     // Fetch match
     const { data: match } = await supabase
