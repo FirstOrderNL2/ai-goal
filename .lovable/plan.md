@@ -1,103 +1,82 @@
 
 
-# Fix the bugs surfaced by the Phase 1–6 audit
+# ML Evolution → Production Path: Phases 1–2 + 5.3
 
-## What's actually broken (verified live)
+## Scope decision
 
-1. **Recheck windows never fire.** `prediction_logs` for the last 6h: 316 rows, **100% `update_reason='initial'`** — zero `recheck_60/30/15/10/5`. Root cause is in `pre-match-predictions/index.ts:183`. The window-match condition `minutesLeft <= w.minutesBefore + 2 && minutesLeft >= w.minutesBefore - 4` produces 7-minute bands at {61–56, 32–26, 17–11, 12–6, 7–1} that **overlap** (recheck_15 vs recheck_10 both claim minutes 11–12) and **leave huge gaps** (minutes 55–33 and 25–18 belong to nobody). Most matches sail through Phase B without ever matching a window, so they only get the initial prediction and never refresh.
+Your plan is large (6 phases). Most of Phases 3–6 require capabilities that don't exist yet (LightGBM training inside an edge function, ONNX runtime, A/B framework) and shouldn't be built until the data foundation is verified clean for several weeks. So this run delivers the **foundation phases** that make everything else safe:
 
-2. **`ml_readiness_v` overcounts usable labels.** View reports 2,023 labeled samples, but only **296** are true pre-kickoff predictions (the other 1,727 are post-match backfill snapshots and would leak into ML training if used). The view doesn't filter `predictions.created_at <= matches.match_date`.
+- **Phase 1** (data cleanliness) — fully implementable now
+- **Phase 2.1 + 2.2** (coverage guarantee + nightly reconciliation) — extends what already exists
+- **Phase 5.3** (recheck logging verification) — re-check the fix from last pass actually fires
+- **Phase 5.1** (leakage detection view) — read-only monitoring
 
-3. **7 leaked enrichment / 7 leaked intelligence rows.** Confirmed: rows where `enriched_at > match_date` by 1–103 minutes. The freeze guard in `enrich-match-context:308` (and same in `football-intelligence:329`) only freezes when `isPreMatch=true`, so a call that arrives 1 minute after kickoff writes the row unfrozen, and any further call up to ~100 minutes later overwrites it again. Need a hard reject when `now > match_date` and the row isn't already frozen.
+Phases 2.3 (timeline engine), 3 (ML pipeline), 4 (hybrid weights), 5.2 (full dashboard), and 6 (live inference / A/B) are **out of scope** for this run — they need either more data (≥1,000 clean samples; we have 296) or architectural decisions worth their own plans.
 
-## Fixes
+## Current state (verified live)
 
-### 1. `supabase/functions/pre-match-predictions/index.ts` — fix window matching
+- `ml_readiness_v` was fixed last pass → reports 296 clean labels (correct).
+- `predictions.feature_snapshot` has no `snapshot_version` field. Adding one now is cheap; backfilling old rows as `v0` lets us train only on `v1+` going forward.
+- `enrich-match-context` and `football-intelligence` already reject post-kickoff writes (last pass). `predictions` table has no equivalent guard — `generate-statistical-prediction` can still write after kickoff.
+- `prediction_logs.update_reason` distribution last 24h is unknown until we re-query post-deploy; the fix landed but needs verification.
+- Nightly safety-net for missing predictions doesn't exist; coverage relies on the auto-sync cron.
 
-Replace the buggy band-find with a contiguous, non-overlapping bucket:
+## Changes
 
-```ts
-const windows = [
-  { reason: "recheck_60", min: 31, max: 60, freshnessMinutes: 25 },
-  { reason: "recheck_30", min: 16, max: 30, freshnessMinutes: 13 },
-  { reason: "recheck_15", min: 11, max: 15, freshnessMinutes: 7  },
-  { reason: "recheck_10", min: 6,  max: 10, freshnessMinutes: 4  },
-  { reason: "recheck_5",  min: 1,  max: 5,  freshnessMinutes: 3  },
-];
-const win = windows.find(w => minutesLeft >= w.min && minutesLeft <= w.max);
-```
+### Phase 1.1 — `ml_ready_predictions` view
+New SQL view (read-only, public-readable) returning only rows where `p.created_at <= m.match_date AND p.feature_snapshot IS NOT NULL`. This becomes the canonical training source — `ml_readiness_v` already counts the same set; the view exposes the rows themselves.
 
-Result: every match in the next 60 min lands in exactly one bucket. Phase B will start tagging `recheck_*` immediately on the next cron tick.
+### Phase 1.2 — Freeze `predictions` after kickoff
+Add to `generate-statistical-prediction/index.ts`: before the upsert, fetch `matches.match_date`. If `Date.now() > match_date` AND a row already exists (any status), refuse to overwrite. Insert a `prediction_logs` row with `update_reason='post_kickoff_blocked'` and return `{ skipped: true }`. Mirrors the guard added to `enrich-match-context` last pass.
 
-### 2. New migration — fix `ml_readiness_v` to count only leak-free labels
+### Phase 1.3 — Schema versioning
+Migration: add column `predictions.snapshot_version text default 'v1'`. Backfill historical rows: every existing row → `'v0'` (so they're identifiable as the legacy schema). Update `generate-statistical-prediction` to stamp `'v1'` on every new write, and add `snapshot_version: 'v1'` inside `feature_snapshot` itself for redundancy. Update `ml_ready_predictions` view to expose this column. **No ML training change yet** — versioning just becomes available for when training resumes.
 
-```sql
-CREATE OR REPLACE VIEW public.ml_readiness_v AS
-WITH true_labels AS (
-  SELECT pr.id
-  FROM public.prediction_reviews pr
-  JOIN public.predictions p ON p.match_id = pr.match_id
-  JOIN public.matches m ON m.id = pr.match_id
-  WHERE pr.actual_outcome IS NOT NULL
-    AND p.feature_snapshot IS NOT NULL
-    AND p.created_at <= m.match_date  -- strict pre-kickoff
-),
-true_snaps AS (
-  SELECT p.id FROM public.predictions p
-  JOIN public.matches m ON m.id = p.match_id
-  WHERE p.feature_snapshot IS NOT NULL AND p.created_at <= m.match_date
-)
-SELECT
-  (SELECT count(*) FROM true_labels)::int AS labeled_samples,
-  (SELECT count(*) FROM true_snaps)::int  AS feature_snapshots,
-  CASE WHEN (SELECT count(*) FROM true_snaps)=0 THEN 0::float
-       ELSE (SELECT count(*) FROM true_labels)::float / (SELECT count(*) FROM true_snaps) END AS label_coverage,
-  CASE WHEN (SELECT count(*) FROM true_labels) >= 2000 THEN 'ready' ELSE 'collecting' END AS ml_status,
-  GREATEST(0, 2000 - (SELECT count(*) FROM true_labels))::int AS samples_to_target;
-ALTER VIEW public.ml_readiness_v SET (security_invoker = true);
-GRANT SELECT ON public.ml_readiness_v TO anon, authenticated;
-```
+### Phase 1.4 — Backfill classification
+Audit query: confirm zero rows with `training_only=true` are also `created_at <= match_date` (would be a misclassification). If any exist, flip them to `false` via insert tool. The backfill rows from earlier (`created_at > match_date`) are already excluded from `ml_ready_predictions` by the timestamp filter, so no extra flag is needed.
 
-`PipelineHealthCard` reads from this view → its progress bar will honestly show ~296/2000 ("collecting"), not the misleading "ready". No frontend change needed.
+### Phase 2.1 + 2.2 — Coverage + nightly reconciliation
+- Phase E in `pre-match-predictions` (added last pass) already covers the 15-min window. Extend it: also force-generate for any match in **next 24h** with no row at all (currently only handles `failed`/`pending`).
+- New edge function `nightly-prediction-reconcile/index.ts`: scans next 48h for matches missing predictions, calls `generate-statistical-prediction` for each (capped at 100/run). Cron schedule: 02:30 Berlin daily.
 
-### 3. `enrich-match-context/index.ts` + `football-intelligence/index.ts` — reject post-kickoff writes
+### Phase 5.1 — Leakage detection view
+New SQL view `data_integrity_v` exposing single-row health metrics:
+- `late_enrichment_count` — `match_enrichment` rows where `enriched_at > match_date AND frozen_at IS NULL`
+- `late_intelligence_count` — same for `match_intelligence`
+- `late_predictions_count` — `predictions` where `created_at > match_date`
+- `prediction_coverage_24h_pct` — % of next-24h matches with a row
+- `recheck_distribution_24h` — JSON of `update_reason` counts from last 24h
 
-Right after the existing `frozen_at` early-return (~line 35 in both files), add:
+### Phase 5.3 — Recheck verification
+SQL probe (read-only) post-deploy to confirm `recheck_60/30/15/10/5` are firing. If still all-`initial`, dig into `pre-match-predictions` Phase B logic. No code change unless the probe shows it's still broken.
 
-```ts
-const matchDateMs = new Date((match as any).match_date).getTime();
-if (Date.now() > matchDateMs && !existing?.frozen_at) {
-  // Late-arriving call after kickoff and we never froze pre-match → do not write.
-  // Mark whatever we have as frozen-as-of-now to prevent future overwrites.
-  if (existing) {
-    await supabase.from("match_enrichment")  // or match_intelligence
-      .update({ frozen_at: new Date().toISOString(), frozen_for_match_date: (match as any).match_date })
-      .eq("match_id", match_id);
-  }
-  return new Response(JSON.stringify({ success: true, skipped: true, reason: "post-kickoff, refusing late write" }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-}
-```
-
-Eliminates the leakage class. Existing 7 leaked rows are historical and don't affect future training (the new `ml_readiness_v` filter handles them).
+### PipelineHealthCard extension
+Add a "Data Integrity" sub-card reading from `data_integrity_v`: late-write counts, coverage %, and a small badge per recheck window. This is the user-facing version of Phase 5.2 — minimal, just the critical signals, not a full dashboard.
 
 ## Files touched
 
-- `supabase/functions/pre-match-predictions/index.ts` — windows array + `find()` predicate (lines 146–184)
-- `supabase/functions/enrich-match-context/index.ts` — post-kickoff guard
-- `supabase/functions/football-intelligence/index.ts` — same guard
-- New migration — replace `ml_readiness_v`
+- New migration — `ml_ready_predictions` view, `data_integrity_v` view, `predictions.snapshot_version` column + `'v0'` backfill
+- `supabase/functions/generate-statistical-prediction/index.ts` — post-kickoff guard, stamp `snapshot_version='v1'`
+- `supabase/functions/pre-match-predictions/index.ts` — extend Phase E to cover missing-row case in next 24h
+- New `supabase/functions/nightly-prediction-reconcile/index.ts` + cron at 02:30 Berlin
+- `src/components/PipelineHealthCard.tsx` — Data Integrity sub-card
+- One-shot SQL probe for recheck distribution (no committed file)
 
-## Out of scope
+## Out of scope (intentional)
 
-- Backfilling/cleaning the 7 already-leaked rows (small impact, would need targeted re-fetch with `as_of` cutoff).
-- Productionizing the LightGBM model — separate decision.
-- Building a UI badge that distinguishes "true labels" from "backfill labels" — view fix already corrects the headline number.
+- **Phase 2.3 timeline engine** — current Phase B already handles 60→5min rechecks; rebuilding as discrete T-N actions adds complexity without proven gain.
+- **Phase 3 (ML training pipeline)** — only 296 clean samples; training infrastructure premature until ≥1,000.
+- **Phase 4 (hybrid weights)** — same data-volume blocker. Last pass's offline benchmark stands as the reference until more data lands.
+- **Phase 5.2 full dashboard** — the sub-card covers the critical signals; full dashboard is UI work that can wait.
+- **Phase 6 (ONNX / live inference / A/B)** — needs trained production model first.
 
-## Success criteria (verifiable within 1 cron cycle)
+## Success criteria (verifiable post-deploy)
 
-- Within 5 min of deploy: `prediction_logs` for the next hour shows non-zero `recheck_60/30/15/10/5` entries.
-- `ml_readiness_v.labeled_samples` drops from 2,023 → ~296 and `ml_status` flips to `collecting`.
-- New `enrich-match-context` / `football-intelligence` calls after kickoff return `{skipped: true, reason: "post-kickoff..."}` instead of writing.
-- 24h after deploy: count of `match_enrichment` rows with `enriched_at > match_date` should not increase beyond the current 7.
+- `SELECT count(*) FROM ml_ready_predictions` returns ~296 (same as `ml_readiness_v.labeled_samples`).
+- `predictions.snapshot_version` populated: existing rows = `'v0'`, new rows = `'v1'`.
+- New `generate-statistical-prediction` call after kickoff returns `{ skipped: true }` and does not overwrite.
+- `data_integrity_v.late_predictions_count` = 0 within 24h of deploy.
+- `nightly-prediction-reconcile` runs at 02:30 Berlin and logs processed count.
+- PipelineHealthCard shows a Data Integrity panel with all four metrics live.
+- Recheck probe shows non-`initial` distribution; if not, raise as P0 in the same run.
 
