@@ -609,16 +609,21 @@ Deno.serve(async (req) => {
     const overUnder = goalLines.over_2_5 > 0.5 ? "over" : "under";
     const btts = poissonBtts >= 0.5 ? "yes" : "no";
 
-    // ── P6: Publish gate ──
-    // Hide predictions when the inputs are weak so displayed accuracy reflects only high-quality picks.
-    // Triggers: dataQuality < 0.45, league reliability < 0.75, or final confidence below the floor.
+    // ── P6: Publish gate (graduated) ──
+    // Hard hide only on truly empty inputs. Soft band publishes with a capped confidence
+    // and a "Limited stats" caveat so newly-added leagues surface while their stats backfill.
     const qualityScore = Math.round(
       (0.55 * dataQuality + 0.30 * leagueRelFactor + 0.15 * Math.min(1, confidence / 0.6)) * 1000
     ) / 1000;
+    const isSoftBand = dataQuality >= 0.30 && dataQuality < 0.45;
     const computedPublishStatus =
-      dataQuality < 0.45 || leagueRelFactor < 0.75 || confidence < 0.35
+      dataQuality < 0.30 || leagueRelFactor < 0.75 || confidence < 0.30
         ? "low_quality"
         : "published";
+    // Soft band: cap confidence at 0.45 so the UI doesn't overstate.
+    if (isSoftBand && computedPublishStatus === "published") {
+      confidence = Math.min(confidence, 0.45);
+    }
     // Training-mode predictions are never user-visible.
     const publishStatus = isTraining ? "training_only" : computedPublishStatus;
 

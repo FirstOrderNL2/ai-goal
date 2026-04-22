@@ -1124,6 +1124,29 @@ IMPORTANT:
       statsAnchors.poisson_btts ?? null
     );
 
+    // ── Recompute publish gate (mirrors generate-statistical-prediction P6 logic) ──
+    // Inline league reliability table — keep in sync with statistical prediction.
+    const leagueReliabilityTable: Record<string, number> = {
+      "premier league": 1.0, "bundesliga": 1.0, "la liga": 0.95,
+      "serie a": 0.95, "ligue 1": 0.9, "eredivisie": 0.85,
+      "championship": 0.75, "keuken kampioen divisie": 0.7,
+    };
+    const leagueRelFactor = leagueReliabilityTable[(match.league || "").toLowerCase()] ?? 0.85;
+    const isSoftBand = dataQuality >= 0.30 && dataQuality < 0.45;
+    const publishStatus =
+      dataQuality < 0.30 || leagueRelFactor < 0.75 || blendedConfidence < 0.30
+        ? "low_quality"
+        : "published";
+    if (isSoftBand && publishStatus === "published") {
+      blendedConfidence = Math.min(blendedConfidence, 0.45);
+    }
+    const qualityScore = Math.round(
+      (0.55 * dataQuality + 0.30 * leagueRelFactor + 0.15 * Math.min(1, blendedConfidence / 0.6)) * 1000
+    ) / 1000;
+    const finalReasoning = isSoftBand
+      ? `⚠️ Limited stats — early signal only. Confidence capped while team data backfills.\n\n${reasoning}`
+      : reasoning;
+
     await supabase.from("predictions").upsert({
       match_id: match_id,
       home_win: Math.round(hw * 1000) / 1000,
@@ -1136,11 +1159,13 @@ IMPORTANT:
       over_under_25: goalLines.over_2_5 > 0.5 ? "over" : "under",
       btts: pred.btts || "no",
       model_confidence: blendedConfidence,
-      ai_reasoning: reasoning,
+      ai_reasoning: finalReasoning,
       goal_lines: goalLines,
       goal_distribution: goalDist,
       best_pick: bestPickResult.pick,
       best_pick_confidence: Math.round(bestPickResult.confidence * 1000) / 1000,
+      publish_status: publishStatus,
+      quality_score: qualityScore,
     }, { onConflict: "match_id" });
 
     await supabase.from("matches").update({ ai_insights: reasoning }).eq("id", match_id);
