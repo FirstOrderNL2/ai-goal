@@ -1131,7 +1131,7 @@ IMPORTANT:
       "serie a": 0.95, "ligue 1": 0.9, "eredivisie": 0.85,
       "championship": 0.75, "keuken kampioen divisie": 0.7,
     };
-    const leagueRelFactor = leagueReliabilityTable[(matchData.league || "").toLowerCase()] ?? 0.85;
+    const leagueRelFactor = leagueReliabilityTable[(match.league || "").toLowerCase()] ?? 0.85;
     const isSoftBand = dataQuality >= 0.30 && dataQuality < 0.45;
     const publishStatus =
       dataQuality < 0.30 || leagueRelFactor < 0.75 || blendedConfidence < 0.30
