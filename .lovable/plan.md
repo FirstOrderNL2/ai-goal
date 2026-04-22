@@ -1,65 +1,64 @@
 
 
-# Goal: Every match must have a published prediction before kickoff
+# Plan: Restore live data on the match details page
 
 ## Root cause
 
-Two issues compounding:
+Two compounding issues, confirmed in network logs and DB:
 
-1. **Coverage gap before kickoff**: `pre-match-predictions` runs every 10 min but caps the 24h coverage sweep (Phase F) at **20 matches/tick**. On busy weekends (100+ kickoffs in a few hours) the queue overflows → matches reach kickoff with no prediction row.
-2. **Silent post-kickoff fallback**: `backfill-training-predictions` (cron every 5 min) sees those matches *after* they finished, generates a prediction with `training_mode: true`, which writes `publish_status: 'training_only'` and `training_only: true`. The UI filter (`useMatches.ts`) hides anything not `published`, so they look "missing" forever — even though a prediction technically exists.
+1. **API-Football daily quota is exhausted.** Every `/fixtures`, `/fixtures/events`, and `/fixtures/lineups` call comes back with `errors.requests: "You have reached the request limit for the day"` and `response: []`. The `LiveMatchCard` then sees no fixture and no events and renders nothing. The header score also stays at the DB value because `liveFixture` is empty.
+2. **`matches.status` is stale in the DB.** 23 of 24 matches currently in the live window still have `status='upcoming'`. The UI's "is this live?" decision relies on either the DB status being `live`/`1H`/`2H`/`HT`, or `deriveMatchPhase` returning `transition_live` — which is only valid for the first 3 hours after kickoff. After that window, matches that should be live (or just-finished) silently fall back to "upcoming" UI.
+3. **The client keeps polling every 5 seconds against a quota-exhausted endpoint**, which burns into tomorrow's quota and guarantees the problem repeats.
 
-DB confirms: **116 recent completed matches** have a `training_only` prediction created *after* kickoff. Zero of them ever had a real pre-match prediction.
+So even on the days quota *is* available, the live UI is fragile because it depends on stale DB status + no graceful handling of empty live responses.
 
-## Fix strategy
+## Fix
 
-Three changes, in order of importance:
+Three targeted changes. None of them require API-Football quota to start working.
 
-### 1. Stop backfill from masking misses (the bleeding)
+### 1. Make `useLiveFixture` / `useFixtureEvents` quota-aware (stop the bleeding)
 
-In `backfill-training-predictions/index.ts`, **never write a training_only prediction for a match the user could have seen pre-kickoff**. Only backfill matches older than e.g. 7 days (true ML training data). Anything more recent must either get a real pre-match prediction or stay flagged as missing for ops to see.
+In `src/hooks/useFixtureData.ts`, when the proxy response contains `errors.requests` (quota), stop polling for the rest of the session and surface a flag so the UI can show "Live data unavailable (provider quota reached)" instead of an empty card. Concretely:
 
-Effectively: change the candidate query to `match_date < now() - interval '7 days'`. Recent misses then become visible in monitoring instead of being silently buried.
+- Detect `data?.errors?.requests` in the queryFn, throw a typed `QuotaExhaustedError`.
+- Set `refetchInterval: false` whenever the last error is quota-related (already partially in place via the `query.state.error` guard, but it currently keeps polling on empty `response: []`).
+- Treat empty `response: []` after a 200 as a non-error but still skip re-poll within 60s.
 
-### 2. Guarantee pre-kickoff coverage (the real fix)
+### 2. Auto-flip stale match status from the client (graceful fallback)
 
-Rework `pre-match-predictions/index.ts` so that **no upcoming match within 6 hours can ever be skipped**:
+The real fix for stale status is the `auto-sync` cron, but as a safety net the match details page should derive a working "live" state without relying on DB status:
 
-- **Phase F (24h sweep)**: remove the `COVERAGE_CAP = 20` limit for matches kicking off within 6 hours. Keep a soft cap (e.g. 50) only for the 6h–24h window. Process all <6h matches every tick.
-- **Phase E (15-min coverage guard)**: already force-generates, but currently runs sequentially with 800ms delays — at 50 matches that's 40s+ and may time out. Switch to bounded parallelism (5 concurrent) for matches inside 30 min.
-- **Schedule**: increase pre-match-predictions cron from every 10 min to **every 5 min**. Combined with the unlimited <6h sweep, this closes the window where a match can slip through.
+- Extend `deriveMatchPhase` so `transition_live` extends to the entire post-kickoff window where the match could plausibly still be running (e.g. up to 2.5h after kickoff for "live", and "completed_pending" between 2.5h–4h to differentiate). This keeps the LIVE badge and live polling enabled past the current 3h cutoff only when DB `status='upcoming'` (clear sign sync is behind).
+- When `liveFixture` returns a non-null payload with `status.short` in `LIVE/1H/2H/HT/ET`, trust it over DB status everywhere on the page. Currently the score swap is gated by `isMatchLive` (DB-derived); flip it to "live fixture present" so a live API response is always shown.
 
-### 3. Add a hard "kickoff with no published prediction" alarm
+### 3. Render a useful state in `LiveMatchCard` when there is no fixture
 
-Add a new edge function `coverage-alert` (cron every 5 min) that:
-- Counts matches with `match_date BETWEEN now()-2h AND now()` that have no published prediction (`publish_status='published' AND training_only=false`).
-- Writes to `prediction_logs` with `action='coverage_alert'` so the issue is queryable.
-- Returns the list in the response for manual inspection.
+Right now `LiveMatchCard` returns `null` when there is no fixture and no events. Replace that with:
 
-This gives an objective trip-wire so the regression can't return silently.
+- If quota error → "Live updates paused — provider quota reached, retrying tomorrow".
+- If DB `status` says live but API returned empty → "Waiting for live data from provider…" with a manual refresh button.
+- If `transition_live` and no API data → "Match has kicked off — waiting for first update".
 
-### 4. One-time cleanup of the 116 invisible predictions
+This way the user always sees *why* there is no live data instead of a blank.
 
-Run a one-shot SQL to either:
-- Delete the `training_only` predictions on completed matches from the last 14 days (cleanest — they're useless to the UI and never went through the real pre-kickoff path, so they're not even valid ML training rows for "what we predicted live"), **or**
-- Mark them with `update_reason='post_kickoff_backfill'` so analytics can exclude them.
+### 4. Fix the underlying `auto-sync` lag (the real cure)
 
-Recommend deletion — they pollute the ML calibration loop too.
+Ops-side: the fact that 23/24 in-window matches are still `upcoming` in the DB means `auto-sync` either isn't running often enough, also hit the daily quota, or is filtering them out. Check the `auto-sync` cron logs, confirm it pulls live fixtures on a 60s cadence inside match windows, and apply the same quota-detection so it backs off cleanly instead of writing nothing.
 
 ## Files to touch
 
 | File | Change |
 |---|---|
-| `supabase/functions/backfill-training-predictions/index.ts` | Add `match_date < now() - 7 days` filter |
-| `supabase/functions/pre-match-predictions/index.ts` | Remove cap for <6h matches in Phase F; parallelize Phase E |
-| `supabase/functions/coverage-alert/index.ts` (new) | Trip-wire alert function |
-| Cron schedule | `pre-match-predictions` 10m → 5m; add `coverage-alert` every 5m |
-| One-shot migration | Delete the 116 stale `training_only` rows on recent completed matches |
+| `src/hooks/useFixtureData.ts` | Detect `errors.requests`, expose `quotaExhausted`, stop polling on quota / empty |
+| `src/lib/match-status.ts` | Extend `transition_live` window with a separate "completed_pending" phase; small helper `isLiveLike` |
+| `src/components/LiveMatchCard.tsx` | Render explicit empty/quota states instead of returning null; trust live fixture status when present |
+| `src/pages/MatchDetail.tsx` | Use `liveFixture` presence as the source of truth for "show live score", not DB status alone |
+| `supabase/functions/auto-sync/index.ts` | Quota-aware backoff + verify live-fixture write path covers `1H/2H/HT` correctly |
 
 ## Verification
 
 After deploy:
-- `select count(*) from predictions p join matches m on m.id=p.match_id where m.status='completed' and m.match_date > now()-interval '24 hours' and (p.publish_status!='published' or p.training_only=true)` → should be 0.
-- `coverage-alert` return body should be `{missing: 0}` on every tick.
-- UI dashboard "completed matches" section shows predictions for every match in major leagues over the past week.
+- Open a live match details page → either real live score+events, or a clear "live data paused: quota reached" message — never a silent blank.
+- Once the daily API quota resets, live score and events appear within 5 seconds of the next poll.
+- A spot check `select count(*) from matches where status='upcoming' and match_date < now() - interval '15 min' and match_date > now() - interval '2 hours'` should drop to ~0 within one `auto-sync` tick.
 
