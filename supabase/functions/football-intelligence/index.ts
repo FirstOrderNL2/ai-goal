@@ -76,6 +76,25 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Hard reject post-kickoff writes when no pre-match freeze exists.
+    // Prevents temporal leakage from late-arriving intelligence overwriting training snapshots.
+    const matchDateMs = new Date((match as any).match_date).getTime();
+    if (Date.now() > matchDateMs && !existing?.frozen_at) {
+      if (existing) {
+        await supabase
+          .from("match_intelligence")
+          .update({
+            frozen_at: new Date().toISOString(),
+            frozen_for_match_date: (match as any).match_date,
+          })
+          .eq("match_id", match_id);
+      }
+      return new Response(
+        JSON.stringify({ success: true, skipped: true, reason: "post-kickoff, refusing late write" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const homeName = (match as any).home_team?.name || "Home";
     const awayName = (match as any).away_team?.name || "Away";
 

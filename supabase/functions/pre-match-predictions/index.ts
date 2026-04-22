@@ -143,12 +143,13 @@ Deno.serve(async (req) => {
   // ── Phase B: Explicit recheck windows T-60, T-30, T-15, T-10, T-5 ──
   // Each window has a tolerance band; we skip if the prediction is fresh enough for that window.
   // Window definition: { reason, minutesBefore, freshnessMinutes }
+  // Contiguous, non-overlapping buckets so every minute in [1,60] maps to exactly one window.
   const windows = [
-    { reason: "recheck_60", minutesBefore: 60, freshnessMinutes: 25 },
-    { reason: "recheck_30", minutesBefore: 30, freshnessMinutes: 13 },
-    { reason: "recheck_15", minutesBefore: 15, freshnessMinutes: 7 },
-    { reason: "recheck_10", minutesBefore: 10, freshnessMinutes: 4 },
-    { reason: "recheck_5",  minutesBefore: 5,  freshnessMinutes: 3 },
+    { reason: "recheck_60", min: 31, max: 60, freshnessMinutes: 25 },
+    { reason: "recheck_30", min: 16, max: 30, freshnessMinutes: 13 },
+    { reason: "recheck_15", min: 11, max: 15, freshnessMinutes: 7 },
+    { reason: "recheck_10", min: 6,  max: 10, freshnessMinutes: 4 },
+    { reason: "recheck_5",  min: 1,  max: 5,  freshnessMinutes: 3 },
   ];
 
   {
@@ -179,8 +180,8 @@ Deno.serve(async (req) => {
         const pred = predMap.get(match.id);
         const minutesLeft = Math.round((new Date(match.match_date).getTime() - now.getTime()) / 60000);
 
-        // Find which window this match falls into (the closest one ≥ minutesLeft).
-        const win = windows.find((w) => minutesLeft <= w.minutesBefore + 2 && minutesLeft >= w.minutesBefore - 4);
+        // Find the bucket for this match (exactly one match per minutes-left value).
+        const win = windows.find((w) => minutesLeft >= w.min && minutesLeft <= w.max);
         if (!win) continue;
 
         // Skip if last refresh was inside the freshness band for this window
