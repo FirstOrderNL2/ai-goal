@@ -16,6 +16,7 @@ Deno.serve(async (req) => {
   const MAX_ITERATIONS = 20;
   let totalCreated = 0;
   let iterations = 0;
+  let cursor: string | undefined = undefined;
   const log: any[] = [];
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -23,7 +24,7 @@ Deno.serve(async (req) => {
     const res = await fetch(`${supabaseUrl}/functions/v1/batch-review-matches`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
-      body: JSON.stringify({ mode: "backfill" }),
+      body: JSON.stringify({ mode: "backfill", after_date: cursor }),
     });
     if (!res.ok) {
       log.push({ iteration: i + 1, error: `HTTP ${res.status}` });
@@ -31,10 +32,13 @@ Deno.serve(async (req) => {
     }
     const data = await res.json().catch(() => ({}));
     const created = data?.prediction_reviews_created ?? 0;
+    const totalScanned = data?.total_completed ?? 0;
     totalCreated += created;
-    log.push({ iteration: i + 1, created, total_completed: data?.total_completed });
-    if (created === 0) break;
-    // brief pause between iterations
+    log.push({ iteration: i + 1, created, scanned: totalScanned, cursor });
+    cursor = data?.next_cursor || undefined;
+    // Stop when no more matches were returned (cursor is null) — created can be 0 even
+    // when the iteration scanned 1000 rows that all already had reviews.
+    if (!cursor || totalScanned === 0) break;
     await new Promise((r) => setTimeout(r, 800));
   }
 
