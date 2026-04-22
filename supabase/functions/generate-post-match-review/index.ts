@@ -186,8 +186,8 @@ Deno.serve(async (req) => {
     }
 
     const [{ data: prediction }, { data: odds }] = await Promise.all([
-      supabase.from("predictions").select("*").eq("match_id", match_id).single(),
-      supabase.from("odds").select("*").eq("match_id", match_id).single(),
+      supabase.from("predictions").select("*").eq("match_id", match_id).maybeSingle(),
+      supabase.from("odds").select("*").eq("match_id", match_id).maybeSingle(),
     ]);
 
     const homeName = match.home_team?.name ?? "Home";

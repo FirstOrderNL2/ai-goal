@@ -53,9 +53,31 @@ Deno.serve(async (req) => {
     await supabase.from("prediction_logs").insert(rows);
   }
 
+  // ── Post-match review coverage (last 24h completed matches missing AI review) ──
+  const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: completedRecent } = await supabase
+    .from("matches")
+    .select("id, match_date, league, ai_post_match_review")
+    .eq("status", "completed")
+    .gte("match_date", dayAgo)
+    .lte("match_date", now.toISOString())
+    .limit(500);
+
+  const missingReviews = (completedRecent ?? []).filter((m: any) => !m.ai_post_match_review);
+  if (missingReviews.length > 5) {
+    await supabase.from("prediction_logs").insert({
+      action: "coverage_alert",
+      status: "missing_post_match_reviews",
+      update_reason: `count=${missingReviews.length} of ${completedRecent?.length ?? 0}`,
+    });
+  }
+
   return new Response(JSON.stringify({
     checked: recent?.length ?? 0,
-    missing: missing.length,
+    missing_predictions: missing.length,
+    missing: missing.length, // back-compat
+    missing_reviews: missingReviews.length,
+    completed_24h: completedRecent?.length ?? 0,
     matches: missing.map((m: any) => ({ id: m.id, match_date: m.match_date, league: m.league })),
   }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });

@@ -154,54 +154,15 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Also trigger AI post-match reviews for unreviewed matches (limited).
-    // Skipped entirely in backfill mode — Lovable AI rate limits would kill a 1700-row pass,
-    // and we only need the structured prediction_reviews label for ML.
-    const unreviewedAI = isBackfill ? [] : unreviewed.filter((m: any) =>
-      predMap.has(m.id) && !m.ai_post_match_review
-    );
-
-    let aiProcessed = 0;
-    for (let i = 0; i < Math.min(unreviewedAI.length, 6); i++) {
-      // Check if match has ai_post_match_review
-      const { data: matchCheck } = await supabase
-        .from("matches")
-        .select("ai_post_match_review")
-        .eq("id", unreviewedAI[i].id)
-        .single();
-
-      if (matchCheck?.ai_post_match_review) continue;
-
-      try {
-        const res = await fetch(`${supabaseUrl}/functions/v1/generate-post-match-review`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${serviceKey}`,
-          },
-          body: JSON.stringify({ match_id: unreviewedAI[i].id }),
-        });
-
-        if (res.ok) {
-          aiProcessed++;
-        } else if (res.status === 429) {
-          break;
-        }
-      } catch (e) {
-        console.error("AI review error:", e);
-      }
-
-      if (i < unreviewedAI.length - 1) {
-        await new Promise(r => setTimeout(r, 3000));
-      }
-    }
+    // NOTE: AI post-match reviews are now owned by the dedicated `auto-post-match-reviews`
+    // cron (every 15 min, bounded parallelism). This function only maintains the structured
+    // `prediction_reviews` rows used for ML calibration.
 
     return new Response(JSON.stringify({
       success: true,
       mode,
       processed: newReviews.length,
       prediction_reviews_created: newReviews.length,
-      ai_reviews_processed: aiProcessed,
       total_completed: unreviewed.length,
       next_cursor: lastMatchDate,
     }), {
