@@ -140,20 +140,40 @@ Deno.serve(async (req) => {
     await callFunction("scrape-news");
   }
 
-  // Step 4: Mark stale "upcoming" and "live" matches as completed (3h buffer)
+  // Step 4: Mark stale matches — but ONLY flip to "completed" if we actually have a final score.
+  // Matches older than 3h with NULL goals → "unknown" (likely postponed/cancelled or sync gap).
+  // This prevents broken "Final 0-0" UI and useless post-match reviews.
   const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
 
-  const { data: staleUpcoming, error: staleUpErr } = await supabase
+  // 4a) With scores → completed
+  const { data: staleWithScore, error: staleScoredErr } = await supabase
     .from("matches")
     .update({ status: "completed" })
     .in("status", ["upcoming", "live"])
     .lt("match_date", cutoff)
+    .not("goals_home", "is", null)
+    .not("goals_away", "is", null)
     .select("id");
 
-  if (staleUpErr) {
-    errors.push(`cleanup: ${staleUpErr.message}`);
-  } else if (staleUpcoming?.length) {
-    log.push(`cleanup: marked ${staleUpcoming.length} stale matches as completed`);
+  if (staleScoredErr) {
+    errors.push(`cleanup-scored: ${staleScoredErr.message}`);
+  } else if (staleWithScore?.length) {
+    log.push(`cleanup: marked ${staleWithScore.length} stale matches as completed (with scores)`);
+  }
+
+  // 4b) Without scores → unknown (excluded from review pipelines and live UI)
+  const { data: staleNoScore, error: staleUnkErr } = await supabase
+    .from("matches")
+    .update({ status: "unknown" })
+    .in("status", ["upcoming", "live"])
+    .lt("match_date", cutoff)
+    .or("goals_home.is.null,goals_away.is.null")
+    .select("id");
+
+  if (staleUnkErr) {
+    errors.push(`cleanup-unknown: ${staleUnkErr.message}`);
+  } else if (staleNoScore?.length) {
+    log.push(`cleanup: marked ${staleNoScore.length} stale matches as unknown (no score)`);
   }
 
   // Step 5: Compute features — full, pre_match, and live modes
