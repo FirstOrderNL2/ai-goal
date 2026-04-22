@@ -91,25 +91,43 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  try {
-    const body = await req.json().catch(() => ({}));
-    const { match_id, training_mode, backfill, as_of } = body as {
-      match_id?: string;
-      training_mode?: boolean;
-      backfill?: boolean;
-      as_of?: string;
-    };
-    if (!match_id) {
-      return new Response(JSON.stringify({ error: "match_id required" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    const isTraining = training_mode === true;
-    const isBackfill = backfill === true;
+  const startedAt = Date.now();
+  const body = await req.json().catch(() => ({}));
+  const { match_id, training_mode, backfill, as_of, update_reason } = body as {
+    match_id?: string;
+    training_mode?: boolean;
+    backfill?: boolean;
+    as_of?: string;
+    update_reason?: string;
+  };
+  const reason = update_reason || "initial";
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabase = createClient(supabaseUrl, serviceKey);
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, serviceKey);
+  async function writeLog(matchId: string | undefined, status: string, error?: string) {
+    try {
+      await supabase.from("prediction_logs").insert({
+        match_id: matchId ?? null,
+        action: "generate",
+        status,
+        error: error?.slice(0, 500) ?? null,
+        update_reason: reason,
+        latency_ms: Date.now() - startedAt,
+      });
+    } catch { /* swallow logging errors */ }
+  }
+
+  if (!match_id) {
+    await writeLog(undefined, "failed", "match_id required");
+    return new Response(JSON.stringify({ error: "match_id required" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  const isTraining = training_mode === true;
+  const isBackfill = backfill === true;
+
+  try {
 
     // Fetch match
     const { data: match } = await supabase
@@ -610,20 +628,22 @@ Deno.serve(async (req) => {
     const btts = poissonBtts >= 0.5 ? "yes" : "no";
 
     // ── P6: Publish gate (graduated) ──
-    // Hard hide only on truly empty inputs. Soft band publishes with a capped confidence
-    // and a "Limited stats" caveat so newly-added leagues surface while their stats backfill.
+    // Only "low_quality" when truly broken: missing both team IDs OR league reliability collapsed.
+    // For thin data (new leagues, etc.) publish in "partial" mode with capped confidence + caveat.
     const qualityScore = Math.round(
       (0.55 * dataQuality + 0.30 * leagueRelFactor + 0.15 * Math.min(1, confidence / 0.6)) * 1000
     ) / 1000;
+    const isPartial = dataQuality < 0.30;
     const isSoftBand = dataQuality >= 0.30 && dataQuality < 0.45;
-    const computedPublishStatus =
-      dataQuality < 0.30 || leagueRelFactor < 0.75 || confidence < 0.30
-        ? "low_quality"
-        : "published";
-    // Soft band: cap confidence at 0.45 so the UI doesn't overstate.
-    if (isSoftBand && computedPublishStatus === "published") {
+    const isBroken = leagueRelFactor < 0.50 || (!match.team_home_id && !match.team_away_id);
+    const computedPublishStatus = isBroken ? "low_quality" : "published";
+    // Cap confidence so the UI doesn't overstate when data is thin.
+    if (isPartial && computedPublishStatus === "published") {
+      confidence = Math.min(confidence, 0.40);
+    } else if (isSoftBand && computedPublishStatus === "published") {
       confidence = Math.min(confidence, 0.45);
     }
+    const generationStatus = isBroken ? "failed" : (isPartial ? "partial" : "success");
     // Training-mode predictions are never user-visible.
     const publishStatus = isTraining ? "training_only" : computedPublishStatus;
 
@@ -713,6 +733,26 @@ Deno.serve(async (req) => {
       generated_at: new Date().toISOString(),
     };
 
+    // Caveat for partial / soft-band predictions so the UI shows the user why confidence is capped.
+    let caveat = "";
+    if (computedPublishStatus === "published" && (isPartial || isSoftBand)) {
+      caveat = "⚠️ Limited stats — early signal only. ";
+    }
+
+    // Preserve existing AI reasoning if present, otherwise leave null. The caveat is prepended
+    // by the AI prediction path; here we only set it when no reasoning exists yet.
+    const { data: existingPred } = await supabase
+      .from("predictions")
+      .select("ai_reasoning")
+      .eq("match_id", match_id)
+      .maybeSingle();
+    const existingReasoning = (existingPred as any)?.ai_reasoning ?? null;
+    const newReasoning = caveat
+      ? (existingReasoning && existingReasoning.startsWith("⚠️")
+          ? existingReasoning
+          : `${caveat}${existingReasoning ?? ""}`.trim())
+      : existingReasoning;
+
     // Upsert prediction
     const { error: upsertErr } = await supabase.from("predictions").upsert({
       match_id,
@@ -735,9 +775,16 @@ Deno.serve(async (req) => {
       quality_score: qualityScore,
       feature_snapshot,
       training_only: isTraining,
+      generation_status: generationStatus,
+      retry_count: 0,
+      last_error: null,
+      update_reason: reason,
+      ai_reasoning: newReasoning,
     }, { onConflict: "match_id" });
 
     if (upsertErr) throw upsertErr;
+
+    await writeLog(match_id, generationStatus);
 
     return new Response(JSON.stringify({
       success: true,
@@ -753,13 +800,38 @@ Deno.serve(async (req) => {
         btts,
         best_pick: bestPickResult.pick,
         confidence,
+        generation_status: generationStatus,
       },
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
-    console.error("Statistical prediction error:", error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    const msg = (error as any)?.message ?? String(error);
+    console.error("Statistical prediction error:", msg);
+    // Best-effort failure record + log
+    try {
+      const { data: existing } = await supabase
+        .from("predictions")
+        .select("retry_count")
+        .eq("match_id", match_id)
+        .maybeSingle();
+      const nextRetry = ((existing as any)?.retry_count ?? 0) + 1;
+      await supabase.from("predictions").upsert({
+        match_id,
+        home_win: 0.33, draw: 0.34, away_win: 0.33,
+        expected_goals_home: 1.4, expected_goals_away: 1.1,
+        over_under_25: "under",
+        model_confidence: 0.10,
+        publish_status: "low_quality",
+        generation_status: "failed",
+        retry_count: nextRetry,
+        last_error: msg.slice(0, 500),
+        update_reason: reason,
+        last_prediction_at: new Date().toISOString(),
+      }, { onConflict: "match_id" });
+    } catch { /* swallow */ }
+    await writeLog(match_id, "failed", msg);
+    return new Response(JSON.stringify({ error: msg }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

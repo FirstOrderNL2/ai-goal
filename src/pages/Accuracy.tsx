@@ -11,6 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MLReadinessPanel } from "@/components/MLReadinessPanel";
+import { PipelineHealthCard } from "@/components/PipelineHealthCard";
 
 function usePredictionReviews() {
   return useQuery({
@@ -352,6 +353,9 @@ export default function Accuracy() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Pipeline Health — generation/recheck reliability */}
+            <PipelineHealthCard />
 
             {/* ML Readiness — Phase 1–5 data foundation */}
             <MLReadinessPanel />
