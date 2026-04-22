@@ -293,10 +293,41 @@ Deno.serve(async (req) => {
 
     if (stuck && stuck.length > 0) {
       for (const m of stuck as any[]) {
-        const ok = await predictWithRetry(m.id, "manual");
+        const ok = await predictWithRetry(m.id, "retry");
         log.push(`phase-d watchdog: ${m.id} → ${ok ? "RECOVERED" : "STILL FAILING"}`);
         if (ok) totalProcessed++;
         await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+  }
+
+  // ── Phase E: Coverage guarantee — no kickoff without a successful prediction ──
+  // Any upcoming match starting within the next 15 minutes that has no prediction row,
+  // or a non-success generation_status, gets force-generated regardless of per-tick caps.
+  {
+    const in15m = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+    const { data: imminent } = await supabase
+      .from("matches")
+      .select("id, predictions(generation_status)")
+      .eq("status", "upcoming")
+      .gte("match_date", now.toISOString())
+      .lte("match_date", in15m)
+      .limit(50);
+
+    if (imminent && imminent.length > 0) {
+      for (const m of imminent as any[]) {
+        const pred = Array.isArray(m.predictions) ? m.predictions[0] : m.predictions;
+        const status = pred?.generation_status;
+        const needsForce = !pred || status === "failed" || status === "pending";
+        if (!needsForce) continue;
+
+        await callEnrich(m.id).catch(() => {});
+        await callImportance(m.id).catch(() => {});
+        await callFIL(m.id).catch(() => {});
+        const ok = await predictWithRetry(m.id, "retry");
+        log.push(`phase-e coverage-guard: ${m.id} → ${ok ? "FORCED" : "STILL MISSING"}`);
+        if (ok) totalProcessed++;
+        await new Promise((r) => setTimeout(r, 800));
       }
     }
   }
