@@ -42,14 +42,21 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
+    const url = new URL(req.url);
+    const body = await req.json().catch(() => ({}));
+    const mode = (body?.mode || url.searchParams.get("mode") || "recent") as "recent" | "backfill";
+    const isBackfill = mode === "backfill";
+    const limit = isBackfill ? 500 : 200;
+    const ascending = isBackfill; // oldest-first when backfilling so old labels actually get filled
+
     // Find completed matches without post-match reviews
     const { data: unreviewed, error } = await supabase
       .from("matches")
       .select("id, goals_home, goals_away, league")
       .eq("status", "completed")
       .not("goals_home", "is", null)
-      .order("match_date", { ascending: false })
-      .limit(200);
+      .order("match_date", { ascending })
+      .limit(limit);
 
     if (error) throw error;
     if (!unreviewed || unreviewed.length === 0) {
@@ -136,8 +143,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Also trigger AI post-match reviews for unreviewed matches (limited)
-    const unreviewedAI = unreviewed.filter((m: any) =>
+    // Also trigger AI post-match reviews for unreviewed matches (limited).
+    // Skipped entirely in backfill mode — Lovable AI rate limits would kill a 1700-row pass,
+    // and we only need the structured prediction_reviews label for ML.
+    const unreviewedAI = isBackfill ? [] : unreviewed.filter((m: any) =>
       predMap.has(m.id) && !m.ai_post_match_review
     );
 
@@ -178,6 +187,8 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({
       success: true,
+      mode,
+      processed: newReviews.length,
       prediction_reviews_created: newReviews.length,
       ai_reviews_processed: aiProcessed,
       total_completed: unreviewed.length,
