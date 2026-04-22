@@ -628,20 +628,22 @@ Deno.serve(async (req) => {
     const btts = poissonBtts >= 0.5 ? "yes" : "no";
 
     // ── P6: Publish gate (graduated) ──
-    // Hard hide only on truly empty inputs. Soft band publishes with a capped confidence
-    // and a "Limited stats" caveat so newly-added leagues surface while their stats backfill.
+    // Only "low_quality" when truly broken: missing both team IDs OR league reliability collapsed.
+    // For thin data (new leagues, etc.) publish in "partial" mode with capped confidence + caveat.
     const qualityScore = Math.round(
       (0.55 * dataQuality + 0.30 * leagueRelFactor + 0.15 * Math.min(1, confidence / 0.6)) * 1000
     ) / 1000;
+    const isPartial = dataQuality < 0.30;
     const isSoftBand = dataQuality >= 0.30 && dataQuality < 0.45;
-    const computedPublishStatus =
-      dataQuality < 0.30 || leagueRelFactor < 0.75 || confidence < 0.30
-        ? "low_quality"
-        : "published";
-    // Soft band: cap confidence at 0.45 so the UI doesn't overstate.
-    if (isSoftBand && computedPublishStatus === "published") {
+    const isBroken = leagueRelFactor < 0.50 || (!match.team_home_id && !match.team_away_id);
+    const computedPublishStatus = isBroken ? "low_quality" : "published";
+    // Cap confidence so the UI doesn't overstate when data is thin.
+    if (isPartial && computedPublishStatus === "published") {
+      confidence = Math.min(confidence, 0.40);
+    } else if (isSoftBand && computedPublishStatus === "published") {
       confidence = Math.min(confidence, 0.45);
     }
+    const generationStatus = isBroken ? "failed" : (isPartial ? "partial" : "success");
     // Training-mode predictions are never user-visible.
     const publishStatus = isTraining ? "training_only" : computedPublishStatus;
 
