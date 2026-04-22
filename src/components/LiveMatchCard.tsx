@@ -1,9 +1,11 @@
 import { useRef, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Zap, Circle } from "lucide-react";
-import { useLiveFixture, useFixtureEvents, type MatchEvent } from "@/hooks/useFixtureData";
+import { Zap, Circle, AlertCircle, RefreshCw, Clock } from "lucide-react";
+import { useLiveFixture, useFixtureEvents, QuotaExhaustedError, type MatchEvent } from "@/hooks/useFixtureData";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface LiveMatchCardProps {
   apiFootballId: number | null | undefined;
@@ -42,11 +44,22 @@ function EventRow({ event }: { event: MatchEvent }) {
 }
 
 export function LiveMatchCard({ apiFootballId, matchStatus, homeTeamName, awayTeamName }: LiveMatchCardProps) {
-  const { data: fixture, isLoading: fixtureLoading } = useLiveFixture(apiFootballId, matchStatus);
-  const { data: events = [], isLoading: eventsLoading } = useFixtureEvents(apiFootballId, matchStatus);
+  const queryClient = useQueryClient();
+  const { data: fixture, isLoading: fixtureLoading, error: fixtureError } = useLiveFixture(apiFootballId, matchStatus);
+  const { data: events = [], isLoading: eventsLoading, error: eventsError } = useFixtureEvents(apiFootballId, matchStatus);
 
   const isLive = matchStatus === "live" || matchStatus === "1H" || matchStatus === "2H" || matchStatus === "HT";
   const isCompleted = matchStatus === "completed" || matchStatus === "FT";
+  const isTransition = matchStatus === "transition_live";
+
+  // Trust live API status if present
+  const apiStatusShort = fixture?.fixture?.status?.short;
+  const apiSaysLive = !!apiStatusShort && ["LIVE", "1H", "2H", "HT", "ET", "BT", "P"].includes(apiStatusShort);
+  const showLive = isLive || isTransition || apiSaysLive;
+
+  const quotaExhausted =
+    (fixtureError instanceof QuotaExhaustedError) ||
+    (eventsError instanceof QuotaExhaustedError);
 
   // Flash animation on goal change
   const [flash, setFlash] = useState(false);
@@ -62,25 +75,84 @@ export function LiveMatchCard({ apiFootballId, matchStatus, homeTeamName, awayTe
     if (currentScore) prevScoreRef.current = currentScore;
   }, [currentScore]);
 
-  if (!isLive && !isCompleted) return null;
+  // Don't render anything if not live-ish and not completed
+  if (!showLive && !isCompleted) return null;
+
   if (fixtureLoading || eventsLoading) return <Skeleton className="h-24" />;
-  if (!fixture && events.length === 0) return null;
 
   const status = fixture?.fixture?.status;
   const elapsed = status?.elapsed ?? 0;
   const statusShort = status?.short ?? matchStatus;
 
-  const significantEvents = events.filter((e: MatchEvent) =>
+  const significantEvents = (events as MatchEvent[]).filter((e) =>
     e.type === "Goal" || e.type === "Card" || e.type === "subst"
   );
 
+  const hasAnyData = !!fixture || significantEvents.length > 0;
+
+  // Empty state: explain why
+  if (!hasAnyData) {
+    if (quotaExhausted) {
+      return (
+        <Card className="border-border/50">
+          <CardContent className="py-4 flex items-start gap-3 text-sm">
+            <AlertCircle className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium">Live updates paused</p>
+              <p className="text-xs text-muted-foreground">Provider daily quota reached. Live data resumes after reset.</p>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+    if (isLive) {
+      return (
+        <Card className="border-border/50">
+          <CardContent className="py-4 flex items-center justify-between gap-3 text-sm">
+            <div className="flex items-start gap-3">
+              <Clock className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+              <div>
+                <p className="font-medium">Waiting for live data…</p>
+                <p className="text-xs text-muted-foreground">Provider returned no events yet.</p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                queryClient.invalidateQueries({ queryKey: ["live-fixture", apiFootballId] });
+                queryClient.invalidateQueries({ queryKey: ["fixture-events", apiFootballId] });
+              }}
+            >
+              <RefreshCw className="h-3 w-3 mr-1" /> Retry
+            </Button>
+          </CardContent>
+        </Card>
+      );
+    }
+    if (isTransition) {
+      return (
+        <Card className="border-border/50">
+          <CardContent className="py-4 flex items-start gap-3 text-sm">
+            <Clock className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium">Match has kicked off</p>
+              <p className="text-xs text-muted-foreground">Waiting for first update from the provider.</p>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+    return null;
+  }
+
   return (
-    <Card className={`border-border/50 transition-all duration-500 ${isLive ? "ring-1 ring-green-500/30" : ""} ${flash ? "ring-2 ring-green-400 bg-green-500/5" : ""}`}>
+    <Card className={`border-border/50 transition-all duration-500 ${showLive ? "ring-1 ring-green-500/30" : ""} ${flash ? "ring-2 ring-green-400 bg-green-500/5" : ""}`}>
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
-          <Zap className={`h-4 w-4 ${isLive ? "text-green-500" : "text-primary"}`} />
-          {isLive ? "Live Match" : "Match Events"}
-          {isLive && (
+          <Zap className={`h-4 w-4 ${showLive ? "text-green-500" : "text-primary"}`} />
+          {showLive ? "Live Match" : "Match Events"}
+          {showLive && (
             <Badge className="bg-green-500/20 text-green-500 text-[10px] animate-pulse">
               {statusShort} {elapsed}'
             </Badge>
@@ -88,7 +160,7 @@ export function LiveMatchCard({ apiFootballId, matchStatus, homeTeamName, awayTe
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {isLive && fixture && (
+        {showLive && fixture && (
           <div className={`flex items-center justify-center gap-4 py-2 transition-all duration-500 ${flash ? "scale-110" : ""}`}>
             <span className="text-sm font-bold">{homeTeamName}</span>
             <span className="text-2xl font-bold tabular-nums px-3 py-1 rounded-lg bg-muted">
@@ -100,13 +172,13 @@ export function LiveMatchCard({ apiFootballId, matchStatus, homeTeamName, awayTe
 
         {significantEvents.length > 0 && (
           <div className="divide-y divide-border/30 max-h-60 overflow-y-auto">
-            {significantEvents.map((event: MatchEvent, i: number) => (
+            {significantEvents.map((event, i) => (
               <EventRow key={i} event={event} />
             ))}
           </div>
         )}
 
-        {significantEvents.length === 0 && isLive && (
+        {significantEvents.length === 0 && showLive && (
           <p className="text-xs text-muted-foreground text-center py-2">No significant events yet</p>
         )}
       </CardContent>
