@@ -729,7 +729,7 @@ Deno.serve(async (req) => {
 
     // Caveat for partial / soft-band predictions so the UI shows the user why confidence is capped.
     let caveat = "";
-    if (computedPublishStatus === "published" && (isPartial || isSoftBand)) {
+    if (publishStatus === "published" && (isPartial || isSoftBand)) {
       caveat = "⚠️ Limited stats — early signal only. ";
     }
 
