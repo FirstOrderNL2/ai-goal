@@ -83,10 +83,14 @@ export default function MatchDetail() {
   }, [match, id, prediction]);
 
   const matchPhase = match ? deriveMatchPhase(match.status, match.match_date) : null;
-  const isLive = matchPhase ? isPhaseLive(matchPhase) : false;
+  const phaseSaysLive = matchPhase ? isPhaseLive(matchPhase) : false;
   // Pass derived status hint so useLiveFixture activates for transition_live too
-  const liveStatusHint = isLive ? "live" : match?.status;
+  const liveStatusHint = phaseSaysLive ? "live" : match?.status;
   const { data: liveFixture } = useLiveFixture(match?.api_football_id, liveStatusHint);
+  // Trust the live API response over stale DB status
+  const apiStatusShort = liveFixture?.fixture?.status?.short;
+  const apiSaysLive = !!apiStatusShort && ["LIVE", "1H", "2H", "HT", "ET", "BT", "P"].includes(apiStatusShort);
+  const isLive = phaseSaysLive || apiSaysLive;
 
   // Compute estimated elapsed minutes from kickoff time
   const getEstimatedElapsed = () => {
