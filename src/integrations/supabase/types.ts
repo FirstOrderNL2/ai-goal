@@ -637,6 +637,39 @@ export type Database = {
           },
         ]
       }
+      prediction_logs: {
+        Row: {
+          action: string
+          created_at: string
+          error: string | null
+          id: string
+          latency_ms: number | null
+          match_id: string | null
+          status: string
+          update_reason: string | null
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          latency_ms?: number | null
+          match_id?: string | null
+          status: string
+          update_reason?: string | null
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          latency_ms?: number | null
+          match_id?: string | null
+          status?: string
+          update_reason?: string | null
+        }
+        Relationships: []
+      }
       prediction_reviews: {
         Row: {
           actual_outcome: string | null
@@ -747,10 +780,12 @@ export type Database = {
           expected_goals_away: number
           expected_goals_home: number
           feature_snapshot: Json | null
+          generation_status: string
           goal_distribution: Json | null
           goal_lines: Json | null
           home_win: number
           id: string
+          last_error: string | null
           last_prediction_at: string | null
           match_id: string
           model_confidence: number
@@ -761,7 +796,9 @@ export type Database = {
           prediction_intervals: Json | null
           publish_status: string
           quality_score: number | null
+          retry_count: number
           training_only: boolean
+          update_reason: string | null
         }
         Insert: {
           ai_reasoning?: string | null
@@ -774,10 +811,12 @@ export type Database = {
           expected_goals_away: number
           expected_goals_home: number
           feature_snapshot?: Json | null
+          generation_status?: string
           goal_distribution?: Json | null
           goal_lines?: Json | null
           home_win: number
           id?: string
+          last_error?: string | null
           last_prediction_at?: string | null
           match_id: string
           model_confidence?: number
@@ -788,7 +827,9 @@ export type Database = {
           prediction_intervals?: Json | null
           publish_status?: string
           quality_score?: number | null
+          retry_count?: number
           training_only?: boolean
+          update_reason?: string | null
         }
         Update: {
           ai_reasoning?: string | null
@@ -801,10 +842,12 @@ export type Database = {
           expected_goals_away?: number
           expected_goals_home?: number
           feature_snapshot?: Json | null
+          generation_status?: string
           goal_distribution?: Json | null
           goal_lines?: Json | null
           home_win?: number
           id?: string
+          last_error?: string | null
           last_prediction_at?: string | null
           match_id?: string
           model_confidence?: number
@@ -815,7 +858,9 @@ export type Database = {
           prediction_intervals?: Json | null
           publish_status?: string
           quality_score?: number | null
+          retry_count?: number
           training_only?: boolean
+          update_reason?: string | null
         }
         Relationships: [
           {
