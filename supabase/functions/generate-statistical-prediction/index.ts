@@ -164,7 +164,7 @@ Deno.serve(async (req) => {
     }
 
     // Fetch data in parallel (including model_performance for calibration + enrichment)
-    const [
+    let [
       { data: odds },
       { data: features },
       { data: homeMatches },
@@ -177,8 +177,8 @@ Deno.serve(async (req) => {
       { data: enrichmentRaw },
       { data: intelligenceRaw },
     ] = await Promise.all([
-      supabase.from("odds").select("*").eq("match_id", match_id).single(),
-      supabase.from("match_features").select("*").eq("match_id", match_id).single(),
+      supabase.from("odds").select("*").eq("match_id", match_id).maybeSingle(),
+      supabase.from("match_features").select("*").eq("match_id", match_id).maybeSingle(),
       supabase.from("matches")
         .select("goals_home, goals_away, team_home_id, team_away_id")
         .or(`team_home_id.eq.${match.team_home_id},team_away_id.eq.${match.team_home_id}`)
@@ -198,6 +198,25 @@ Deno.serve(async (req) => {
       supabase.from("match_enrichment").select("*").eq("match_id", match_id).maybeSingle(),
       supabase.from("match_intelligence").select("confidence_adjustment, momentum_home, momentum_away, generated_at").eq("match_id", match_id).maybeSingle(),
     ]);
+
+    // Lazy compute-features: if no row exists, invoke compute-features inline (5s timeout) so we don't fall back
+    // to default lambdas for ~85% of matches. Result is then re-fetched.
+    if (!features) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 5000);
+        await fetch(`${supabaseUrl}/functions/v1/compute-features`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+          body: JSON.stringify({ match_id }),
+          signal: ctrl.signal,
+        }).catch(() => {});
+        clearTimeout(t);
+        const { data: refetched } = await supabase
+          .from("match_features").select("*").eq("match_id", match_id).maybeSingle();
+        if (refetched) features = refetched;
+      } catch { /* swallow — fall through to defaults */ }
+    }
 
     // ── Temporal-cutoff guard (anti-leakage) ──
     // For training/backfill, enrichment & intelligence must be strictly pre-match.
@@ -825,27 +844,27 @@ Deno.serve(async (req) => {
   } catch (error) {
     const msg = (error as any)?.message ?? String(error);
     console.error("Statistical prediction error:", msg);
-    // Best-effort failure record + log
+    // No placeholder upsert — polluting the predictions table with fake 0.33/0.34/0.33 rows
+    // makes the calibration loop and analytics worse. Just bump retry_count if a row exists,
+    // and write a failure log so the watchdog can retry.
     try {
       const { data: existing } = await supabase
         .from("predictions")
         .select("retry_count")
         .eq("match_id", match_id)
         .maybeSingle();
-      const nextRetry = ((existing as any)?.retry_count ?? 0) + 1;
-      await supabase.from("predictions").upsert({
-        match_id,
-        home_win: 0.33, draw: 0.34, away_win: 0.33,
-        expected_goals_home: 1.4, expected_goals_away: 1.1,
-        over_under_25: "under",
-        model_confidence: 0.10,
-        publish_status: "low_quality",
-        generation_status: "failed",
-        retry_count: nextRetry,
-        last_error: msg.slice(0, 500),
-        update_reason: reason,
-        last_prediction_at: new Date().toISOString(),
-      }, { onConflict: "match_id" });
+      if (existing) {
+        const nextRetry = ((existing as any)?.retry_count ?? 0) + 1;
+        await supabase
+          .from("predictions")
+          .update({
+            generation_status: "failed",
+            retry_count: nextRetry,
+            last_error: msg.slice(0, 500),
+            update_reason: `error_${reason}`,
+          })
+          .eq("match_id", match_id);
+      }
     } catch { /* swallow */ }
     await writeLog(match_id, "failed", msg);
     return new Response(JSON.stringify({ error: msg }), {

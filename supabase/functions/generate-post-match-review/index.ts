@@ -185,6 +185,21 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Skip — and log — when the final score never landed. Generating a review against
+    // null goals produces useless "X 0 - 0 Y" garbage and burns AI credits.
+    if (match.goals_home == null || match.goals_away == null) {
+      await supabase.from("prediction_logs").insert({
+        match_id,
+        action: "post_match_review",
+        status: "skipped",
+        update_reason: "no_final_score",
+      });
+      return new Response(JSON.stringify({ skipped: true, reason: "no_final_score" }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const [{ data: prediction }, { data: odds }] = await Promise.all([
       supabase.from("predictions").select("*").eq("match_id", match_id).maybeSingle(),
       supabase.from("odds").select("*").eq("match_id", match_id).maybeSingle(),

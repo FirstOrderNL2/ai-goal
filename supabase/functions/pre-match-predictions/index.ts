@@ -72,12 +72,27 @@ Deno.serve(async (req) => {
       if (backoffs[attempt]) await new Promise((r) => setTimeout(r, backoffs[attempt]));
       const ok = await callStatisticalPredict(matchId, reason);
       if (ok) {
-        await writeLog(matchId, "generate", "success", reason);
+        await writeLog(matchId, "generate", "success", `${reason}_attempt_${attempt + 1}`);
         return true;
       }
-      await writeLog(matchId, "retry", "failed", reason, `attempt=${attempt + 1}`);
+      await writeLog(matchId, "retry", "failed", `${reason}_attempt_${attempt + 1}`, `predict call returned non-ok (attempt ${attempt + 1}/${maxRetries})`);
     }
+    await writeLog(matchId, "retry_exhausted", "failed", reason, `gave up after ${maxRetries} attempts`);
     return false;
+  }
+
+  // Cap and dedupe prediction_intervals to prevent unbounded growth.
+  function normalizeIntervals(arr: any[], cap = 20): any[] {
+    if (!Array.isArray(arr)) return [];
+    const seen = new Set<string>();
+    const out: any[] = [];
+    for (const it of arr) {
+      const key = it?.label ?? it?.window ?? JSON.stringify(it);
+      if (seen.has(String(key))) continue;
+      seen.add(String(key));
+      out.push(it);
+    }
+    return out.slice(-cap);
   }
 
   // ── Phase A: Initial predictions for matches without any ──
@@ -167,7 +182,7 @@ Deno.serve(async (req) => {
       const ids = imminent.map((m: any) => m.id);
       const { data: preds } = await supabase
         .from("predictions")
-        .select("match_id, last_prediction_at, prediction_intervals, update_reason")
+        .select("match_id, last_prediction_at, prediction_intervals, update_reason, pre_match_snapshot, home_win, draw, away_win, expected_goals_home, expected_goals_away, over_under_25, model_confidence, predicted_score_home, predicted_score_away, btts, ai_reasoning, best_pick, best_pick_confidence, goal_distribution, goal_lines")
         .in("match_id", ids);
 
       const predMap = new Map((preds ?? []).map((p: any) => [p.match_id, p]));
@@ -194,10 +209,29 @@ Deno.serve(async (req) => {
         await callImportance(match.id).catch(() => {});
         await callFIL(match.id).catch(() => {});
 
+        // Capture pre_match_snapshot ONCE on the first T-60 refresh, before generation overwrites the row.
+        // This becomes the canonical "what we predicted before kickoff" baseline for the comparison card.
+        const shouldSnapshot = win.reason === "recheck_60" && pred && !pred.pre_match_snapshot;
+        if (shouldSnapshot) {
+          const snapshot = {
+            home_win: pred.home_win, draw: pred.draw, away_win: pred.away_win,
+            expected_goals_home: pred.expected_goals_home, expected_goals_away: pred.expected_goals_away,
+            over_under_25: pred.over_under_25, model_confidence: pred.model_confidence,
+            predicted_score_home: pred.predicted_score_home, predicted_score_away: pred.predicted_score_away,
+            btts: pred.btts, ai_reasoning: pred.ai_reasoning,
+            best_pick: pred.best_pick, best_pick_confidence: pred.best_pick_confidence,
+            goal_distribution: pred.goal_distribution, goal_lines: pred.goal_lines,
+            snapshot_at: now.toISOString(), snapshot_phase: "T-60",
+          };
+          await supabase.from("predictions").update({ pre_match_snapshot: snapshot }).eq("match_id", match.id);
+        }
+
         const ok = await predictWithRetry(match.id, win.reason);
         if (ok) {
-          const intervals = pred?.prediction_intervals ?? [];
-          intervals.push({ at: now.toISOString(), minutesBefore: minutesLeft, window: win.reason });
+          const intervals = normalizeIntervals([
+            ...(pred?.prediction_intervals ?? []),
+            { at: now.toISOString(), minutesBefore: minutesLeft, window: win.reason },
+          ]);
           await supabase
             .from("predictions")
             .update({
@@ -208,7 +242,7 @@ Deno.serve(async (req) => {
             .eq("match_id", match.id);
           refreshed++;
           totalProcessed++;
-          log.push(`phase-b ${win.reason}: ${match.id} (${minutesLeft}m left)`);
+          log.push(`phase-b ${win.reason}: ${match.id} (${minutesLeft}m left)${shouldSnapshot ? " +snapshot" : ""}`);
         } else {
           log.push(`phase-b ${win.reason}: ${match.id} FAILED after retries`);
         }
@@ -257,11 +291,11 @@ Deno.serve(async (req) => {
 
         const ok = await callAIPredict(match.id);
         if (ok) {
-          intervals.push({ label: "HT", at: now.toISOString() });
+          const newIntervals = normalizeIntervals([...intervals, { label: "HT", at: now.toISOString() }]);
           await supabase
             .from("predictions")
             .update({
-              prediction_intervals: intervals,
+              prediction_intervals: newIntervals,
               last_prediction_at: now.toISOString(),
               update_reason: "ht",
             })

@@ -54,21 +54,25 @@ Deno.serve(async (req) => {
   }
 
   // ── Post-match review coverage (last 24h completed matches missing AI review) ──
+  // Exclude rows with NULL goals — those are sync-gap stragglers, not legitimate misses.
   const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
   const { data: completedRecent } = await supabase
     .from("matches")
-    .select("id, match_date, league, ai_post_match_review")
+    .select("id, match_date, league, ai_post_match_review, goals_home, goals_away")
     .eq("status", "completed")
     .gte("match_date", dayAgo)
     .lte("match_date", now.toISOString())
     .limit(500);
 
-  const missingReviews = (completedRecent ?? []).filter((m: any) => !m.ai_post_match_review);
+  const reviewable = (completedRecent ?? []).filter(
+    (m: any) => m.goals_home != null && m.goals_away != null
+  );
+  const missingReviews = reviewable.filter((m: any) => !m.ai_post_match_review);
   if (missingReviews.length > 5) {
     await supabase.from("prediction_logs").insert({
       action: "coverage_alert",
       status: "missing_post_match_reviews",
-      update_reason: `count=${missingReviews.length} of ${completedRecent?.length ?? 0}`,
+      update_reason: `count=${missingReviews.length} of ${reviewable.length} reviewable (${completedRecent?.length ?? 0} completed)`,
     });
   }
 
