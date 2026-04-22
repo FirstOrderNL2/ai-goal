@@ -1,82 +1,114 @@
 
 
-# ML Evolution → Production Path: Phases 1–2 + 5.3
+# Subscription System: 30-day trial → Stripe €10/mo (with Stripe Tax)
 
-## Scope decision
+## Provider switch
 
-Your plan is large (6 phases). Most of Phases 3–6 require capabilities that don't exist yet (LightGBM training inside an edge function, ONNX runtime, A/B framework) and shouldn't be built until the data foundation is verified clean for several weeks. So this run delivers the **foundation phases** that make everything else safe:
+Paddle is out (their AUP excludes sports prediction / betting-tips SaaS). Replacing with **Lovable's built-in Stripe payments + Stripe Tax** for automatic VAT collection across EU/UK/US. No Stripe account needed to test — sandbox provisions immediately. Product framing stays as-is ("predictions / probabilities / intelligence"); Value Bets remain.
 
-- **Phase 1** (data cleanliness) — fully implementable now
-- **Phase 2.1 + 2.2** (coverage guarantee + nightly reconciliation) — extends what already exists
-- **Phase 5.3** (recheck logging verification) — re-check the fix from last pass actually fires
-- **Phase 5.1** (leakage detection view) — read-only monitoring
+Everything else from the previously approved plan (DB schema, trial logic, paywall UX, access control) stays identical — only the payment integration layer changes.
 
-Phases 2.3 (timeline engine), 3 (ML pipeline), 4 (hybrid weights), 5.2 (full dashboard), and 6 (live inference / A/B) are **out of scope** for this run — they need either more data (≥1,000 clean samples; we have 296) or architectural decisions worth their own plans.
+## What this run delivers
 
-## Current state (verified live)
+### 1. DB — `subscriptions` table
 
-- `ml_readiness_v` was fixed last pass → reports 296 clean labels (correct).
-- `predictions.feature_snapshot` has no `snapshot_version` field. Adding one now is cheap; backfilling old rows as `v0` lets us train only on `v1+` going forward.
-- `enrich-match-context` and `football-intelligence` already reject post-kickoff writes (last pass). `predictions` table has no equivalent guard — `generate-statistical-prediction` can still write after kickoff.
-- `prediction_logs.update_reason` distribution last 24h is unknown until we re-query post-deploy; the fix landed but needs verification.
-- Nightly safety-net for missing predictions doesn't exist; coverage relies on the auto-sync cron.
+| Column | Purpose |
+|---|---|
+| `user_id` (FK auth.users, unique) | One row per user |
+| `tier` enum: `trial` / `active` / `past_due` / `canceled` / `expired` | Source of truth |
+| `trial_started_at`, `trial_ends_at` (default `now() + 30 days`) | Auto-set on signup |
+| `stripe_customer_id`, `stripe_subscription_id` | Set after first checkout |
+| `current_period_end` | Mirrored from Stripe |
+| `updated_at` | Touched by webhook |
 
-## Changes
+- Trigger on `auth.users` insert → auto-creates row with 30-day trial, no card required
+- RLS: each user reads only own row; writes service-role only (trigger + webhook)
+- Helper function `public.has_access(_user_id uuid) returns boolean` (security definer): true when `(tier='trial' AND now() < trial_ends_at) OR (tier='active' AND now() < current_period_end)`
 
-### Phase 1.1 — `ml_ready_predictions` view
-New SQL view (read-only, public-readable) returning only rows where `p.created_at <= m.match_date AND p.feature_snapshot IS NOT NULL`. This becomes the canonical training source — `ml_readiness_v` already counts the same set; the view exposes the rows themselves.
+### 2. Stripe integration (Lovable built-in, sandbox-first)
 
-### Phase 1.2 — Freeze `predictions` after kickoff
-Add to `generate-statistical-prediction/index.ts`: before the upsert, fetch `matches.match_date`. If `Date.now() > match_date` AND a row already exists (any status), refuse to overwrite. Insert a `prediction_logs` row with `update_reason='post_kickoff_blocked'` and return `{ skipped: true }`. Mirrors the guard added to `enrich-match-context` last pass.
+- Enable via `enable_stripe_payments` — provisions Lovable-managed sandbox immediately
+- One product: **GoalGPT Premium**, recurring **€10/month**
+- **Stripe Tax enabled** on the price → automatic VAT calculation/collection across EU/UK/US (~0.5% extra). User/you still file/remit (or use Stripe filing partners later)
+- Three new edge functions:
+  - `create-checkout-session` — returns Stripe Checkout URL for logged-in user; passes `client_reference_id = user_id`
+  - `stripe-webhook` — handles `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed` → mirrors state into `subscriptions`
+  - `stripe-customer-portal` — returns hosted billing portal URL for cancel / payment-method / invoices
 
-### Phase 1.3 — Schema versioning
-Migration: add column `predictions.snapshot_version text default 'v1'`. Backfill historical rows: every existing row → `'v0'` (so they're identifiable as the legacy schema). Update `generate-statistical-prediction` to stamp `'v1'` on every new write, and add `snapshot_version: 'v1'` inside `feature_snapshot` itself for redundancy. Update `ml_ready_predictions` view to expose this column. **No ML training change yet** — versioning just becomes available for when training resumes.
+### 3. Client — `useSubscription()` hook
 
-### Phase 1.4 — Backfill classification
-Audit query: confirm zero rows with `training_only=true` are also `created_at <= match_date` (would be a misclassification). If any exist, flip them to `false` via insert tool. The backfill rows from earlier (`created_at > match_date`) are already excluded from `ml_ready_predictions` by the timestamp filter, so no extra flag is needed.
+Single source of truth: `{ tier, daysLeft, hasAccess, loading, currentPeriodEnd }`. Subscribes to realtime changes on the user's row so UI flips instantly after webhook write.
 
-### Phase 2.1 + 2.2 — Coverage + nightly reconciliation
-- Phase E in `pre-match-predictions` (added last pass) already covers the 15-min window. Extend it: also force-generate for any match in **next 24h** with no row at all (currently only handles `failed`/`pending`).
-- New edge function `nightly-prediction-reconcile/index.ts`: scans next 48h for matches missing predictions, calls `generate-statistical-prediction` for each (capped at 100/run). Cron schedule: 02:30 Berlin daily.
+### 4. UI surfaces
 
-### Phase 5.1 — Leakage detection view
-New SQL view `data_integrity_v` exposing single-row health metrics:
-- `late_enrichment_count` — `match_enrichment` rows where `enriched_at > match_date AND frozen_at IS NULL`
-- `late_intelligence_count` — same for `match_intelligence`
-- `late_predictions_count` — `predictions` where `created_at > match_date`
-- `prediction_coverage_24h_pct` — % of next-24h matches with a row
-- `recheck_distribution_24h` — JSON of `update_reason` counts from last 24h
+**a) `<TrialBanner />`** — sticky in `Header.tsx`
+- Trial: green, "Free trial — N days left · Upgrade →"
+- ≤5 days: amber tone
+- Expired/canceled: red, "Trial ended. Upgrade for €10/mo →"
+- Active paid: hidden
 
-### Phase 5.3 — Recheck verification
-SQL probe (read-only) post-deploy to confirm `recheck_60/30/15/10/5` are firing. If still all-`initial`, dig into `pre-match-predictions` Phase B logic. No code change unless the probe shows it's still broken.
+**b) `/upgrade` page** — dark+neon theme matching Landing
+- Single €10/mo card, feature list (live predictions, recheck updates, AI reasoning, Confidence Engine, Value Bets, multilingual)
+- "Subscribe" → `create-checkout-session` → Stripe Checkout
+- After return: `/upgrade/success` polls `subscriptions.tier` until `active` → redirects to `/dashboard`
 
-### PipelineHealthCard extension
-Add a "Data Integrity" sub-card reading from `data_integrity_v`: late-write counts, coverage %, and a small badge per recheck window. This is the user-facing version of Phase 5.2 — minimal, just the critical signals, not a full dashboard.
+**c) `<PaywallOverlay />` on `/match/:id`** (your choice: blurred + overlay)
+- When `!hasAccess`: ProbabilityBar, AIReasoning, OverUnderCard, ValueBetCard, ConfidenceEngineCard rendered with `blur-sm pointer-events-none` + centered card "Upgrade to see this prediction · €10/mo"
+- Match metadata (teams, kickoff, league, lineups) remains visible — user understands what's behind the paywall
+- Dashboard cards stay clickable; locked detail page is the conversion surface
+
+**d) Profile page** — subscription panel
+- Tier badge, trial countdown OR next billing date
+- "Manage subscription" → opens Stripe Customer Portal (cancel handled there)
+
+### 5. Edge function access guard
+
+New `_shared/access-guard.ts` exporting `assertHasAccess(userId)` → calls `has_access()` RPC. Mounted in **user-triggered** entrypoints only:
+- `generate-statistical-prediction` (when called from match-detail on-demand)
+- `football-intelligence` (user-triggered AI calls)
+- `generate-post-match-review` (already credit-gated; align with subscription)
+
+Cron-triggered jobs (auto-sync, batch-generate, nightly-reconcile) bypass — they're system, not user-bound.
+
+### 6. Routing
+
+- `/:lang/upgrade`, `/:lang/upgrade/success` (logged-in only; redirect to `/login` otherwise)
+- All existing routes unchanged; gating happens at component level
 
 ## Files touched
 
-- New migration — `ml_ready_predictions` view, `data_integrity_v` view, `predictions.snapshot_version` column + `'v0'` backfill
-- `supabase/functions/generate-statistical-prediction/index.ts` — post-kickoff guard, stamp `snapshot_version='v1'`
-- `supabase/functions/pre-match-predictions/index.ts` — extend Phase E to cover missing-row case in next 24h
-- New `supabase/functions/nightly-prediction-reconcile/index.ts` + cron at 02:30 Berlin
-- `src/components/PipelineHealthCard.tsx` — Data Integrity sub-card
-- One-shot SQL probe for recheck distribution (no committed file)
+**New**
+- Migration: `subscriptions` table, RLS, `has_access()` function, signup trigger
+- `src/hooks/useSubscription.tsx`
+- `src/components/PaywallOverlay.tsx`, `src/components/TrialBanner.tsx`
+- `src/pages/Upgrade.tsx`, `src/pages/UpgradeSuccess.tsx`
+- `supabase/functions/_shared/access-guard.ts`
+- `supabase/functions/stripe-webhook/index.ts`
+- `supabase/functions/create-checkout-session/index.ts`
+- `supabase/functions/stripe-customer-portal/index.ts`
+
+**Edited**
+- `src/App.tsx` — register 2 new routes
+- `src/components/Header.tsx` — mount `<TrialBanner />`
+- `src/pages/MatchDetail.tsx` — wrap prediction sections in `<PaywallOverlay />`
+- `src/pages/Profile.tsx` — subscription card
+- `supabase/functions/generate-statistical-prediction/index.ts`, `football-intelligence/index.ts`, `generate-post-match-review/index.ts` — `assertHasAccess` on user-triggered paths
+- i18n EN/DE — banner, upgrade page, paywall copy
 
 ## Out of scope (intentional)
 
-- **Phase 2.3 timeline engine** — current Phase B already handles 60→5min rechecks; rebuilding as discrete T-N actions adds complexity without proven gain.
-- **Phase 3 (ML training pipeline)** — only 296 clean samples; training infrastructure premature until ≥1,000.
-- **Phase 4 (hybrid weights)** — same data-volume blocker. Last pass's offline benchmark stands as the reference until more data lands.
-- **Phase 5.2 full dashboard** — the sub-card covers the critical signals; full dashboard is UI work that can wait.
-- **Phase 6 (ONNX / live inference / A/B)** — needs trained production model first.
+- Annual plan / promo codes (single €10/mo SKU; add later in Stripe catalog without code changes)
+- Email / push notifications, favorites, ML-vs-Poisson toggle (your Phase 8)
+- Granular role tiers beyond trial/active/expired (admin/moderator stays separate)
+- Going live on Stripe (requires you to claim the Lovable-managed account and complete Stripe verification — sandbox works for full testing now)
 
-## Success criteria (verifiable post-deploy)
+## Success criteria
 
-- `SELECT count(*) FROM ml_ready_predictions` returns ~296 (same as `ml_readiness_v.labeled_samples`).
-- `predictions.snapshot_version` populated: existing rows = `'v0'`, new rows = `'v1'`.
-- New `generate-statistical-prediction` call after kickoff returns `{ skipped: true }` and does not overwrite.
-- `data_integrity_v.late_predictions_count` = 0 within 24h of deploy.
-- `nightly-prediction-reconcile` runs at 02:30 Berlin and logs processed count.
-- PipelineHealthCard shows a Data Integrity panel with all four metrics live.
-- Recheck probe shows non-`initial` distribution; if not, raise as P0 in the same run.
+- New signup → `tier='trial'`, `trial_ends_at = signup + 30d`, no card prompt
+- Trial user sees green banner with countdown; full match detail visible
+- Force `trial_ends_at` to past → banner red, match detail blurred with overlay
+- Subscribing in Stripe sandbox → webhook flips `tier='active'` within seconds, blur lifted
+- Cancel in Customer Portal → `tier='canceled'`, access until `current_period_end`, then auto-`expired`
+- User-triggered edge functions return 403 without access; cron jobs unaffected
+- VAT line appears on Stripe invoice for EU test customer (Stripe Tax verification)
 
