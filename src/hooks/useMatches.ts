@@ -14,12 +14,15 @@ export function useDashboardMatches(league?: string) {
     queryFn: async () => {
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 
-      // Fetch all non-completed matches that could be live or upcoming
+      // Fetch all non-completed matches that could be live or upcoming.
+      // Exclude misclassified German regional women's matches (Niedersachsenliga)
+      // that API-Football groups under "Women's Champions League".
       let query = supabase
         .from("matches")
         .select("*")
         .in("status", ["upcoming", "live", "1H", "2H", "HT", "ET"])
         .gte("match_date", twoHoursAgo)
+        .or("round.is.null,round.not.ilike.Niedersachsen%")
         .order("match_date", { ascending: true })
         .limit(200);
 
