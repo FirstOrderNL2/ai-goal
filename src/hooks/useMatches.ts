@@ -55,15 +55,24 @@ export function useDashboardMatches(league?: string) {
   });
 }
 
-export function useCompletedMatches(league?: string) {
+export function useCompletedMatches(league?: string, aggressive = false) {
   return useQuery({
     queryKey: ["matches", "completed", league],
-    refetchInterval: (query) => query.state.error ? false : 5 * 60 * 1000,
+    refetchInterval: (query) => {
+      if (query.state.error) return false;
+      return aggressive ? 60_000 : 5 * 60 * 1000;
+    },
     queryFn: async () => {
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      // Treat as "completed" if status is a finished marker, OR a final score exists
+      // and kickoff was at least 2h ago (covers the lag between kickoff and the
+      // sync flipping status to 'completed').
       let query = supabase
         .from("matches")
         .select("*")
-        .eq("status", "completed")
+        .or(
+          `status.in.(completed,FT,AET,PEN),and(goals_home.not.is.null,goals_away.not.is.null,match_date.lt.${twoHoursAgo})`
+        )
         .or("round.is.null,round.not.ilike.Niedersachsen%")
         .order("match_date", { ascending: false })
         .limit(12);

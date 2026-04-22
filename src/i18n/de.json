@@ -98,7 +98,8 @@
     "upcoming_matches": "Kommende Spiele",
     "recent_results": "Aktuelle Ergebnisse",
     "no_upcoming": "Keine kommenden Spiele gefunden.",
-    "no_recent": "Keine aktuellen Spiele."
+    "no_recent": "Keine aktuellen Spiele.",
+    "load_more": "Mehr laden"
   },
   "seo": {
     "landing_title": "GoalGPT — Intelligente Fußball-Vorhersagen mit KI",

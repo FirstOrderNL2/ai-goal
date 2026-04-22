@@ -98,7 +98,8 @@
     "upcoming_matches": "Upcoming Matches",
     "recent_results": "Recent Results",
     "no_upcoming": "No upcoming matches found.",
-    "no_recent": "No recent matches."
+    "no_recent": "No recent matches.",
+    "load_more": "Load more"
   },
   "seo": {
     "landing_title": "GoalGPT — Smart Football Predictions Powered by AI",
