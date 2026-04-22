@@ -303,67 +303,80 @@ Deno.serve(async (req) => {
   }
 
   // ── Phase E: Coverage guarantee — no kickoff without a successful prediction ──
-  // Any upcoming match starting within the next 15 minutes that has no prediction row,
+  // Any upcoming match starting within the next 30 minutes that has no prediction row,
   // or a non-success generation_status, gets force-generated regardless of per-tick caps.
+  // Bounded parallelism (5 concurrent) to avoid sequential timeout on busy windows.
   {
-    const in15m = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+    const in30m = new Date(now.getTime() + 30 * 60 * 1000).toISOString();
     const { data: imminent } = await supabase
       .from("matches")
       .select("id, predictions(generation_status)")
       .eq("status", "upcoming")
       .gte("match_date", now.toISOString())
-      .lte("match_date", in15m)
-      .limit(50);
+      .lte("match_date", in30m)
+      .limit(100);
 
     if (imminent && imminent.length > 0) {
-      for (const m of imminent as any[]) {
+      const needsForce = (imminent as any[]).filter((m) => {
         const pred = Array.isArray(m.predictions) ? m.predictions[0] : m.predictions;
         const status = pred?.generation_status;
-        const needsForce = !pred || status === "failed" || status === "pending";
-        if (!needsForce) continue;
+        return !pred || status === "failed" || status === "pending";
+      });
 
-        await callEnrich(m.id).catch(() => {});
-        await callImportance(m.id).catch(() => {});
-        await callFIL(m.id).catch(() => {});
-        const ok = await predictWithRetry(m.id, "retry");
-        log.push(`phase-e coverage-guard: ${m.id} → ${ok ? "FORCED" : "STILL MISSING"}`);
-        if (ok) totalProcessed++;
-        await new Promise((r) => setTimeout(r, 800));
+      const CONCURRENCY = 5;
+      for (let i = 0; i < needsForce.length; i += CONCURRENCY) {
+        const slice = needsForce.slice(i, i + CONCURRENCY);
+        const results = await Promise.all(slice.map(async (m: any) => {
+          await callEnrich(m.id).catch(() => {});
+          await callImportance(m.id).catch(() => {});
+          await callFIL(m.id).catch(() => {});
+          const ok = await predictWithRetry(m.id, "retry");
+          log.push(`phase-e coverage-guard: ${m.id} → ${ok ? "FORCED" : "STILL MISSING"}`);
+          return ok;
+        }));
+        totalProcessed += results.filter(Boolean).length;
       }
     }
   }
 
   // ── Phase F: 24h coverage sweep — every upcoming match in next 24h must have a prediction row ──
   // Catches matches that slipped past Phase A's 300-match cap or were created mid-cycle.
+  // CRITICAL: Matches kicking off within 6h are NEVER capped (must be covered).
+  // Matches in the 6h–24h window have a soft cap of 50 to bound runtime.
   {
+    const in6h = new Date(now.getTime() + 6 * 60 * 60 * 1000);
     const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
     const { data: next24h } = await supabase
       .from("matches")
-      .select("id, predictions(match_id)")
+      .select("id, match_date, predictions(match_id)")
       .eq("status", "upcoming")
       .gte("match_date", now.toISOString())
       .lte("match_date", in24h)
       .order("match_date", { ascending: true })
-      .limit(200);
+      .limit(400);
 
     if (next24h && next24h.length > 0) {
-      let coverageFilled = 0;
-      const COVERAGE_CAP = 20;
-      for (const m of next24h as any[]) {
-        if (coverageFilled >= COVERAGE_CAP) break;
+      const missing = (next24h as any[]).filter((m) => {
         const hasPred = Array.isArray(m.predictions) ? m.predictions.length > 0 : !!m.predictions;
-        if (hasPred) continue;
+        return !hasPred;
+      });
 
-        await callEnrich(m.id).catch(() => {});
-        await callImportance(m.id).catch(() => {});
-        await callFIL(m.id).catch(() => {});
-        const ok = await predictWithRetry(m.id, "coverage_24h");
-        log.push(`phase-f coverage-24h: ${m.id} → ${ok ? "FILLED" : "FAILED"}`);
-        if (ok) {
-          coverageFilled++;
-          totalProcessed++;
-        }
-        await new Promise((r) => setTimeout(r, 600));
+      const within6h = missing.filter((m) => new Date(m.match_date) <= in6h);
+      const beyond6h = missing.filter((m) => new Date(m.match_date) > in6h).slice(0, 50);
+      const targets = [...within6h, ...beyond6h];
+
+      const CONCURRENCY = 5;
+      for (let i = 0; i < targets.length; i += CONCURRENCY) {
+        const slice = targets.slice(i, i + CONCURRENCY);
+        const results = await Promise.all(slice.map(async (m: any) => {
+          await callEnrich(m.id).catch(() => {});
+          await callImportance(m.id).catch(() => {});
+          await callFIL(m.id).catch(() => {});
+          const ok = await predictWithRetry(m.id, "coverage_24h");
+          log.push(`phase-f coverage-24h: ${m.id} → ${ok ? "FILLED" : "FAILED"}`);
+          return ok;
+        }));
+        totalProcessed += results.filter(Boolean).length;
       }
     }
   }
