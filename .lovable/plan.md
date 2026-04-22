@@ -1,82 +1,103 @@
 
 
-# ML System Verification (Phase 1–3) — re-run on the new 2,023-label dataset
+# Fix the bugs surfaced by the Phase 1–6 audit
 
-## Why re-run now
+## What's actually broken (verified live)
 
-Last verification ran when the dataset was 290 labels — too small to draw real conclusions. After the Data Growth Engine backfill landed, we now have **2,023 labeled samples**, which crosses the user's own ≥2,000 success bar. The pipeline can finally be benchmarked with statistically meaningful numbers.
+1. **Recheck windows never fire.** `prediction_logs` for the last 6h: 316 rows, **100% `update_reason='initial'`** — zero `recheck_60/30/15/10/5`. Root cause is in `pre-match-predictions/index.ts:183`. The window-match condition `minutesLeft <= w.minutesBefore + 2 && minutesLeft >= w.minutesBefore - 4` produces 7-minute bands at {61–56, 32–26, 17–11, 12–6, 7–1} that **overlap** (recheck_15 vs recheck_10 both claim minutes 11–12) and **leave huge gaps** (minutes 55–33 and 25–18 belong to nobody). Most matches sail through Phase B without ever matching a window, so they only get the initial prediction and never refresh.
 
-## What this run will deliver
+2. **`ml_readiness_v` overcounts usable labels.** View reports 2,023 labeled samples, but only **296** are true pre-kickoff predictions (the other 1,727 are post-match backfill snapshots and would leak into ML training if used). The view doesn't filter `predictions.created_at <= matches.match_date`.
 
-A single end-to-end audit covering all seven phases requested, with concrete metrics and a written report — same structure as last pass, but with real numbers instead of caveats.
+3. **7 leaked enrichment / 7 leaked intelligence rows.** Confirmed: rows where `enriched_at > match_date` by 1–103 minutes. The freeze guard in `enrich-match-context:308` (and same in `football-intelligence:329`) only freezes when `isPreMatch=true`, so a call that arrives 1 minute after kickoff writes the row unfrozen, and any further call up to ~100 minutes later overwrites it again. Need a hard reject when `now > match_date` and the row isn't already frozen.
 
-### Phase 1 — Dataset validation (read-only SQL + script)
-- Total labeled samples, class balance H/D/A, % missing per `feature_snapshot` field
-- Schema-drift check: count of distinct snapshot key-sets across all rows
-- Leakage probe: assert `match_enrichment.enriched_at`, `match_intelligence.generated_at`, `predictions.created_at` all `<= matches.match_date`. Report violation counts.
-- Join health: orphan rows in `predictions`, `prediction_reviews`, `match_features`
-- Output: `/mnt/documents/phase1_validation_report.json` + markdown summary
+## Fixes
 
-### Phase 2 — ML baseline (LightGBM multiclass, run via `code--exec`)
-- Pull labeled rows via SQL → pandas
-- Feature set: numeric fields from `feature_snapshot` (lambdas, Poisson probs, league_reliability, position_diff, h2h, volatility, ref_strictness, market_agreement, bookmaker_probs, momentum, key_player_missing). Mean-impute NaN.
-- **Strict chronological 80/20 split** by `matches.match_date` — assert `train.max_date < val.min_date`
-- Model: `LGBMClassifier(objective='multiclass', num_class=3, n_estimators=300, learning_rate=0.05)`
-- Metrics: logloss (primary), accuracy, ECE (10-bin), per-class precision/recall, top-15 feature importance
-- Save: `/mnt/documents/ml_model_v1.joblib` + metrics JSON + feature-importance CSV
+### 1. `supabase/functions/pre-match-predictions/index.ts` — fix window matching
 
-### Phase 3 — Comparison engine (Poisson vs ML)
-- Same val rows: pull `poisson_home/draw/away_prob` from snapshots, ML probs from model
-- Side-by-side accuracy / logloss / ECE
-- Sanity asserts: probs sum 1.000 ± 0.001, no NaN, identical sample count
-- Per-match comparison CSV at `/mnt/documents/phase3_comparison.csv`
+Replace the buggy band-find with a contiguous, non-overlapping bucket:
 
-### Phase 4 — Hybrid simulation
-- `hybrid = w * poisson + (1-w) * ml`, sweep w ∈ {0.5, 0.6, 0.7, 0.8, 0.9}, renormalize
-- Same 3 metrics per weight, pick val-best
-- Pure analysis, no production change
+```ts
+const windows = [
+  { reason: "recheck_60", min: 31, max: 60, freshnessMinutes: 25 },
+  { reason: "recheck_30", min: 16, max: 30, freshnessMinutes: 13 },
+  { reason: "recheck_15", min: 11, max: 15, freshnessMinutes: 7  },
+  { reason: "recheck_10", min: 6,  max: 10, freshnessMinutes: 4  },
+  { reason: "recheck_5",  min: 1,  max: 5,  freshnessMinutes: 3  },
+];
+const win = windows.find(w => minutesLeft >= w.min && minutesLeft <= w.max);
+```
 
-### Phase 5 — Bug detection
-Auto-flag in the script:
-- Snapshots with all-null numeric features
-- `home_win + draw + away_win ≠ 1.000 ± 0.005`
-- `feature_snapshot.poisson_*` mismatching the row's `home_win/draw/away_win`
-- `actual_outcome` not in {home, draw, away}
-- Predictions with `generation_status='failed'` in last 24h
+Result: every match in the next 60 min lands in exactly one bucket. Phase B will start tagging `recheck_*` immediately on the next cron tick.
 
-### Phase 6 — Production-flow verification (read-only)
-- % next-48h matches with predictions row → must be 100%
-- `update_reason` distribution in `prediction_logs` for kickoff-imminent matches → expect `recheck_60/30/15/10/5` entries (verifying the Data Growth Engine fix actually works in production)
-- `training_only=true` rows modified in last 24h → must be 0
-- Generation success rate over last 6h (post-hotfix verification)
+### 2. New migration — fix `ml_readiness_v` to count only leak-free labels
 
-### Phase 7 — Final report
-`/mnt/documents/ml_verification_v2.md` with the user's exact requested structure:
-- System Status (per-phase OK/WARNING/FAIL)
-- Metrics table: Poisson vs ML vs Hybrid (accuracy, logloss, ECE)
-- Issues Found (bug list)
-- Fixes Applied (or "no fix needed — already healthy")
+```sql
+CREATE OR REPLACE VIEW public.ml_readiness_v AS
+WITH true_labels AS (
+  SELECT pr.id
+  FROM public.prediction_reviews pr
+  JOIN public.predictions p ON p.match_id = pr.match_id
+  JOIN public.matches m ON m.id = pr.match_id
+  WHERE pr.actual_outcome IS NOT NULL
+    AND p.feature_snapshot IS NOT NULL
+    AND p.created_at <= m.match_date  -- strict pre-kickoff
+),
+true_snaps AS (
+  SELECT p.id FROM public.predictions p
+  JOIN public.matches m ON m.id = p.match_id
+  WHERE p.feature_snapshot IS NOT NULL AND p.created_at <= m.match_date
+)
+SELECT
+  (SELECT count(*) FROM true_labels)::int AS labeled_samples,
+  (SELECT count(*) FROM true_snaps)::int  AS feature_snapshots,
+  CASE WHEN (SELECT count(*) FROM true_snaps)=0 THEN 0::float
+       ELSE (SELECT count(*) FROM true_labels)::float / (SELECT count(*) FROM true_snaps) END AS label_coverage,
+  CASE WHEN (SELECT count(*) FROM true_labels) >= 2000 THEN 'ready' ELSE 'collecting' END AS ml_status,
+  GREATEST(0, 2000 - (SELECT count(*) FROM true_labels))::int AS samples_to_target;
+ALTER VIEW public.ml_readiness_v SET (security_invoker = true);
+GRANT SELECT ON public.ml_readiness_v TO anon, authenticated;
+```
+
+`PipelineHealthCard` reads from this view → its progress bar will honestly show ~296/2000 ("collecting"), not the misleading "ready". No frontend change needed.
+
+### 3. `enrich-match-context/index.ts` + `football-intelligence/index.ts` — reject post-kickoff writes
+
+Right after the existing `frozen_at` early-return (~line 35 in both files), add:
+
+```ts
+const matchDateMs = new Date((match as any).match_date).getTime();
+if (Date.now() > matchDateMs && !existing?.frozen_at) {
+  // Late-arriving call after kickoff and we never froze pre-match → do not write.
+  // Mark whatever we have as frozen-as-of-now to prevent future overwrites.
+  if (existing) {
+    await supabase.from("match_enrichment")  // or match_intelligence
+      .update({ frozen_at: new Date().toISOString(), frozen_for_match_date: (match as any).match_date })
+      .eq("match_id", match_id);
+  }
+  return new Response(JSON.stringify({ success: true, skipped: true, reason: "post-kickoff, refusing late write" }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+```
+
+Eliminates the leakage class. Existing 7 leaked rows are historical and don't affect future training (the new `ml_readiness_v` filter handles them).
 
 ## Files touched
 
-- `/tmp/ml_verification_v2.py` — one-shot Python (LightGBM + scikit-learn, not committed)
-- Deliverables in `/mnt/documents/`: `phase1_validation_report.json`, `ml_model_v1.joblib`, `phase3_comparison.csv`, `ml_verification_v2.md`
-
-**No edge function or schema changes** unless Phase 5/6 surfaces a real bug. If they do, fixes will be applied in the same run and listed in the report.
+- `supabase/functions/pre-match-predictions/index.ts` — windows array + `find()` predicate (lines 146–184)
+- `supabase/functions/enrich-match-context/index.ts` — post-kickoff guard
+- `supabase/functions/football-intelligence/index.ts` — same guard
+- New migration — replace `ml_readiness_v`
 
 ## Out of scope
 
-- Productionizing ML inference into an edge function (separate decision — needs ONNX export or Python service architecture)
-- Creating an `ml_predictions` DB table
-- Retraining production weights in `model_performance`
-- Building a model-trigger automation (the `ml_readiness_v` view already signals "ready"; the user decides when to wire it)
+- Backfilling/cleaning the 7 already-leaked rows (small impact, would need targeted re-fetch with `as_of` cutoff).
+- Productionizing the LightGBM model — separate decision.
+- Building a UI badge that distinguishes "true labels" from "backfill labels" — view fix already corrects the headline number.
 
-## Success criteria
+## Success criteria (verifiable within 1 cron cycle)
 
-- Phase 1 report shows ≥2,000 usable labels, 0 leakage violations, 0 orphan joins
-- Phase 2 produces a trained `.joblib` model with logloss reported on a held-out chronological val set
-- Phase 3 delivers identical-sample-size Poisson vs ML metrics
-- Phase 4 reports best hybrid weight + its delta vs pure Poisson and pure ML
-- Phase 6 confirms `update_reason` is now populating (not all-NULL like last audit) and 100% next-48h coverage holds
-- Final markdown is one document, includes every metric, and explicitly states whether ML beats Poisson on this dataset
+- Within 5 min of deploy: `prediction_logs` for the next hour shows non-zero `recheck_60/30/15/10/5` entries.
+- `ml_readiness_v.labeled_samples` drops from 2,023 → ~296 and `ml_status` flips to `collecting`.
+- New `enrich-match-context` / `football-intelligence` calls after kickoff return `{skipped: true, reason: "post-kickoff..."}` instead of writing.
+- 24h after deploy: count of `match_enrichment` rows with `enriched_at > match_date` should not increase beyond the current 7.
 
