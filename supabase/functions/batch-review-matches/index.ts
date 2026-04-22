@@ -203,6 +203,7 @@ Deno.serve(async (req) => {
       prediction_reviews_created: newReviews.length,
       ai_reviews_processed: aiProcessed,
       total_completed: unreviewed.length,
+      next_cursor: lastMatchDate,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
