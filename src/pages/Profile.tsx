@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Camera, Loader2 } from "lucide-react";
+import { useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, Camera, Loader2, Sparkles, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,13 +12,32 @@ import { useToast } from "@/hooks/use-toast";
 import { Header } from "@/components/Header";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
-import { Trophy, Target, TrendingUp, CheckCircle } from "lucide-react";
+import { Trophy, Target, CheckCircle } from "lucide-react";
+import { useSubscription } from "@/hooks/useSubscription";
+import { getStripeEnvironment } from "@/lib/stripe";
 
 export default function Profile() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { lang } = useParams<{ lang: string }>();
+  const langPrefix = `/${lang || "en"}`;
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
+  const subscription = useSubscription();
+  const [portalLoading, setPortalLoading] = useState(false);
+
+  const openCustomerPortal = async () => {
+    setPortalLoading(true);
+    const { data, error } = await supabase.functions.invoke("create-portal-session", {
+      body: { returnUrl: window.location.href, environment: getStripeEnvironment() },
+    });
+    setPortalLoading(false);
+    if (error || !data?.url) {
+      toast({ title: "Couldn't open portal", description: error?.message || "Try again later", variant: "destructive" });
+      return;
+    }
+    window.open(data.url, "_blank", "noopener");
+  };
 
   const [displayName, setDisplayName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -185,7 +204,59 @@ export default function Profile() {
             )}
           </CardContent>
         </Card>
+
+        {/* Subscription */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              Subscription
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {subscription.loading ? (
+              <div className="text-sm text-muted-foreground">Loading…</div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <Badge variant="outline" className="capitalize">
+                    {subscription.tier === "active" ? "Premium" : subscription.tier ?? "—"}
+                  </Badge>
+                  {subscription.daysLeft != null && subscription.tier === "trial" && (
+                    <span className="text-sm text-muted-foreground">
+                      {subscription.daysLeft} day{subscription.daysLeft === 1 ? "" : "s"} of trial left
+                    </span>
+                  )}
+                  {subscription.tier === "active" && subscription.currentPeriodEnd && (
+                    <span className="text-sm text-muted-foreground">
+                      Next bill: {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
+                    </span>
+                  )}
+                  {subscription.tier === "canceled" && subscription.currentPeriodEnd && (
+                    <span className="text-sm text-muted-foreground">
+                      Access until {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+
+                {subscription.tier === "active" || subscription.tier === "canceled" || subscription.tier === "past_due" ? (
+                  <Button onClick={openCustomerPortal} disabled={portalLoading} variant="outline" className="w-full">
+                    {portalLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ExternalLink className="h-4 w-4 mr-2" />}
+                    Manage subscription
+                  </Button>
+                ) : (
+                  <Button asChild className="w-full">
+                    <Link to={`${langPrefix}/upgrade`}>
+                      <Sparkles className="h-4 w-4 mr-2" /> Upgrade to Premium · €10/mo
+                    </Link>
+                  </Button>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
 }
+

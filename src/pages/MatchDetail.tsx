@@ -21,6 +21,7 @@ import { AICommunityComparisonCard } from "@/components/AICommunityComparisonCar
 import { ValueBetCard } from "@/components/ValueBetCard";
 import { ConfidenceEngineCard } from "@/components/ConfidenceEngineCard";
 import { LiveMatchCard } from "@/components/LiveMatchCard";
+import { PaywallOverlay } from "@/components/PaywallOverlay";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -250,72 +251,69 @@ export default function MatchDetail() {
           awayTeamName={away_team?.name}
         />
 
-        {/* 3. AI Verdict */}
-        {isGenerating && isPredictionIncomplete ? (
-          <AIVerdictGenerating />
-        ) : prediction && !isPredictionIncomplete ? (
-          <AIVerdictCard
-            prediction={prediction}
-            homeTeamName={home_team?.name || "Home"}
-            awayTeamName={away_team?.name || "Away"}
-            odds={odds}
-          />
-        ) : null}
+        {/* 3. Premium prediction surfaces (paywalled) */}
+        <PaywallOverlay>
+          <div className="space-y-6">
+            {isGenerating && isPredictionIncomplete ? (
+              <AIVerdictGenerating />
+            ) : prediction && !isPredictionIncomplete ? (
+              <AIVerdictCard
+                prediction={prediction}
+                homeTeamName={home_team?.name || "Home"}
+                awayTeamName={away_team?.name || "Away"}
+                odds={odds}
+              />
+            ) : null}
 
-        {/* 3b. Confidence Engine 2.0 */}
-        {prediction && !isPredictionIncomplete && (
-          <ConfidenceEngineCard
-            prediction={prediction}
-            features={features}
-            matchContext={matchContext as any}
-            matchId={match.id}
-          />
-        )}
+            {prediction && !isPredictionIncomplete && (
+              <ConfidenceEngineCard
+                prediction={prediction}
+                features={features}
+                matchContext={matchContext as any}
+                matchId={match.id}
+              />
+            )}
 
-        {/* 3c. Pre-Match vs HT Comparison */}
-        {prediction && !isPredictionIncomplete && (
-          <PredictionComparisonCard
-            prediction={prediction}
-            homeTeamName={home_team?.name || "Home"}
-            awayTeamName={away_team?.name || "Away"}
-          />
-        )}
+            {prediction && !isPredictionIncomplete && (
+              <PredictionComparisonCard
+                prediction={prediction}
+                homeTeamName={home_team?.name || "Home"}
+                awayTeamName={away_team?.name || "Away"}
+              />
+            )}
 
-        {/* 3c. Prediction History */}
-        {prediction && !isPredictionIncomplete && <PredictionHistoryCard prediction={prediction} />}
+            {prediction && !isPredictionIncomplete && <PredictionHistoryCard prediction={prediction} />}
 
-        {/* 3d. Community Feedback */}
-        {prediction && !isPredictionIncomplete && (
-          <CommunityVoteBar predictionId={prediction.id} />
-        )}
+            {prediction && !isPredictionIncomplete && (
+              <CommunityVoteBar predictionId={prediction.id} />
+            )}
 
-        {/* 3e. AI vs Community Comparison */}
-        {prediction && !isPredictionIncomplete && (
-          <AICommunityComparisonCard
-            predictionId={prediction.id}
-            prediction={prediction}
-            homeTeamName={home_team?.name || "Home"}
-            awayTeamName={away_team?.name || "Away"}
-          />
-        )}
+            {prediction && !isPredictionIncomplete && (
+              <AICommunityComparisonCard
+                predictionId={prediction.id}
+                prediction={prediction}
+                homeTeamName={home_team?.name || "Home"}
+                awayTeamName={away_team?.name || "Away"}
+              />
+            )}
 
-        {/* 3f. Value Bet Detection */}
-        {prediction && !isPredictionIncomplete && odds && (
-          <ValueBetCard
-            prediction={prediction}
-            odds={odds}
-            homeTeamName={home_team?.name || "Home"}
-            awayTeamName={away_team?.name || "Away"}
-          />
-        )}
+            {prediction && !isPredictionIncomplete && odds && (
+              <ValueBetCard
+                prediction={prediction}
+                odds={odds}
+                homeTeamName={home_team?.name || "Home"}
+                awayTeamName={away_team?.name || "Away"}
+              />
+            )}
 
-        {/* 3g. Community Pulse + Discussion */}
-        {prediction && !isPredictionIncomplete && (
-          <>
-            <CommentSummaryCard predictionId={prediction.id} />
-            <CommentsSection predictionId={prediction.id} />
-          </>
-        )}
+            {prediction && !isPredictionIncomplete && (
+              <>
+                <CommentSummaryCard predictionId={prediction.id} />
+                <CommentsSection predictionId={prediction.id} />
+              </>
+            )}
+          </div>
+        </PaywallOverlay>
 
         {/* 4. Team Comparison */}
         {features && (

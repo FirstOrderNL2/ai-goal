@@ -16,6 +16,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useTranslation } from "react-i18next";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { TrialBanner } from "@/components/TrialBanner";
 
 export function Header() {
   const location = useLocation();
@@ -70,6 +71,7 @@ export function Header() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
+      <TrialBanner />
       <div className="container flex h-14 items-center justify-between">
         <Link to={`${prefix}/dashboard`} className="flex items-center gap-2">
           <img src={logoImg} alt="GoalGPT logo" className="h-8 w-8 rounded" />

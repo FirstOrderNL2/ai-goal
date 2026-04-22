@@ -21,6 +21,8 @@ import Profile from "./pages/Profile";
 import Leaderboard from "./pages/Leaderboard";
 import Login from "./pages/Login";
 import AuthCallback from "./pages/AuthCallback";
+import Upgrade from "./pages/Upgrade";
+import UpgradeSuccess from "./pages/UpgradeSuccess";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -125,6 +127,8 @@ function LangRoutes() {
         <Route path="standings" element={<ProtectedRoute><Standings /></ProtectedRoute>} />
         <Route path="leaderboard" element={<ProtectedRoute><Leaderboard /></ProtectedRoute>} />
         <Route path="profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+        <Route path="upgrade" element={<ProtectedRoute><Upgrade /></ProtectedRoute>} />
+        <Route path="upgrade/success" element={<ProtectedRoute><UpgradeSuccess /></ProtectedRoute>} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </LocaleSync>
