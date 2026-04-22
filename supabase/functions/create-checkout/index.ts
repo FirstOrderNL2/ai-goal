@@ -69,7 +69,7 @@ serve(async (req) => {
         `${req.headers.get("origin")}/en/upgrade/success?session_id={CHECKOUT_SESSION_ID}`,
       ...(existingSub?.stripe_customer_id
         ? { customer: existingSub.stripe_customer_id }
-        : { customer_email: user.email ?? undefined, customer_creation: "always" }),
+        : { customer_email: user.email ?? undefined }),
       client_reference_id: user.id,
       metadata: { userId: user.id },
       ...(isRecurring && { subscription_data: { metadata: { userId: user.id } } }),
