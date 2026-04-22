@@ -167,6 +167,31 @@ export function PipelineHealthCard() {
             </div>
           </div>
         )}
+
+        {ml && (
+          <div className="mt-6 rounded-lg border bg-card p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Brain className="h-4 w-4 text-primary" />
+                ML Readiness
+              </div>
+              <Badge variant={ml.ml_status === "ready" ? "default" : "secondary"} className="text-xs">
+                {ml.ml_status === "ready" ? "Ready" : "Collecting"}
+              </Badge>
+            </div>
+            <Progress value={Math.min(100, (ml.labeled_samples / 2000) * 100)} className="h-2" />
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+              <span>
+                {ml.labeled_samples.toLocaleString()} / 2,000 labeled samples
+                {ml.ml_status === "collecting" && ` · ${ml.samples_to_target.toLocaleString()} to go`}
+              </span>
+              <span>
+                {ml.feature_snapshots.toLocaleString()} snapshots ·{" "}
+                {Math.round((ml.label_coverage ?? 0) * 100)}% coverage
+              </span>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
