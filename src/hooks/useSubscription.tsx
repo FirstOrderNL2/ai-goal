@@ -71,9 +71,9 @@ export function useSubscription(): SubscriptionState {
 
     load();
 
-    // Realtime: react to webhook writes
+    // Realtime: react to webhook writes (unique channel per hook instance to avoid collisions)
     const channel = supabase
-      .channel(`subscription-${user.id}`)
+      .channel(`subscription-${user.id}-${Math.random().toString(36).slice(2)}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "subscriptions", filter: `user_id=eq.${user.id}` },
