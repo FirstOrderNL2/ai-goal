@@ -353,6 +353,9 @@ export default function Accuracy() {
               </Card>
             </div>
 
+            {/* Pipeline Health — generation/recheck reliability */}
+            <PipelineHealthCard />
+
             {/* ML Readiness — Phase 1–5 data foundation */}
             <MLReadinessPanel />
 
