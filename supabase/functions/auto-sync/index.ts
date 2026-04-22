@@ -89,7 +89,13 @@ Deno.serve(async (req) => {
 
   log.push(`detected mode: ${effectiveMode}`);
 
+  let quotaTripped = false;
+
   async function callFunction(name: string, body: Record<string, unknown> = {}) {
+    if (quotaTripped) {
+      log.push(`${name}: SKIPPED (provider quota exhausted)`);
+      return null;
+    }
     const start = Date.now();
     try {
       const res = await fetch(`${supabaseUrl}/functions/v1/${name}`, {
@@ -102,10 +108,17 @@ Deno.serve(async (req) => {
       });
       const data = await res.json().catch(() => ({}));
       const ms = Date.now() - start;
+      // Detect quota-exhausted upstream error
+      const dataStr = JSON.stringify(data);
+      if (dataStr.includes("reached the request limit") || dataStr.includes("rateLimit")) {
+        quotaTripped = true;
+        errors.push(`${name}: provider quota reached, backing off (${ms}ms)`);
+        return data;
+      }
       if (!res.ok) {
         errors.push(`${name}: HTTP ${res.status} (${ms}ms)`);
       } else {
-        log.push(`${name}: OK (${ms}ms) ${JSON.stringify(data).slice(0, 200)}`);
+        log.push(`${name}: OK (${ms}ms) ${dataStr.slice(0, 200)}`);
       }
       return data;
     } catch (e) {

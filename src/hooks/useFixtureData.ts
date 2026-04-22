@@ -3,6 +3,14 @@ import { supabase } from "@/integrations/supabase/client";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
+export class QuotaExhaustedError extends Error {
+  isQuotaError = true;
+  constructor(msg = "Provider quota reached") {
+    super(msg);
+    this.name = "QuotaExhaustedError";
+  }
+}
+
 async function fetchFromProxy(endpoint: string, params: Record<string, string>) {
   const searchParams = new URLSearchParams({ endpoint, ...params });
   const url = `${SUPABASE_URL}/functions/v1/get-football-data?${searchParams.toString()}`;
@@ -13,7 +21,16 @@ async function fetchFromProxy(endpoint: string, params: Record<string, string>) 
     },
   });
   if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
+  const data = await res.json();
+  // Detect quota-exhausted response from API-Football
+  if (data?.errors?.requests || (typeof data?.errors === "object" && data?.errors?.rateLimit)) {
+    throw new QuotaExhaustedError(String(data.errors.requests ?? data.errors.rateLimit));
+  }
+  return data;
+}
+
+function isQuotaError(err: unknown): boolean {
+  return !!err && typeof err === "object" && (err as any).isQuotaError === true;
 }
 
 export interface LineupPlayer {
@@ -81,6 +98,7 @@ export function useLineups(apiFootballId: number | null | undefined) {
     },
     enabled: !!apiFootballId,
     staleTime: 5 * 60 * 1000,
+    retry: (count, err) => !isQuotaError(err) && count < 1,
   });
 }
 
@@ -95,8 +113,16 @@ export function useLiveFixture(apiFootballId: number | null | undefined, matchSt
       return response[0] ?? null;
     },
     enabled: !!apiFootballId,
-    refetchInterval: (query) => query.state.error ? false : (isLive ? 5_000 : false),
+    refetchInterval: (query) => {
+      // Stop polling if quota error, otherwise empty response, otherwise normal cadence
+      if (query.state.error && isQuotaError(query.state.error)) return false;
+      if (query.state.error) return false;
+      // If response was empty, slow down to once per 60s
+      if (query.state.data === null) return isLive ? 60_000 : false;
+      return isLive ? 5_000 : false;
+    },
     staleTime: isLive ? 3_000 : 5 * 60 * 1000,
+    retry: (count, err) => !isQuotaError(err) && count < 1,
   });
 }
 
@@ -110,7 +136,15 @@ export function useFixtureEvents(apiFootballId: number | null | undefined, match
       return data.response ?? [];
     },
     enabled: !!apiFootballId,
-    refetchInterval: (query) => query.state.error ? false : (isLive ? 5_000 : false),
+    refetchInterval: (query) => {
+      if (query.state.error && isQuotaError(query.state.error)) return false;
+      if (query.state.error) return false;
+      if (Array.isArray(query.state.data) && query.state.data.length === 0) {
+        return isLive ? 60_000 : false;
+      }
+      return isLive ? 5_000 : false;
+    },
     staleTime: isLive ? 3_000 : 5 * 60 * 1000,
+    retry: (count, err) => !isQuotaError(err) && count < 1,
   });
 }
