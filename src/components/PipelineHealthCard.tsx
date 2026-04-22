@@ -117,6 +117,7 @@ function usePipelineHealth() {
 export function PipelineHealthCard() {
   const { data, isLoading } = usePipelineHealth();
   const { data: ml } = useMLReadiness();
+  const { data: integrity } = useDataIntegrity();
 
   const successPct = data ? Math.round(data.successPct * 1000) / 10 : 0;
   const failRatePct = data ? Math.round(data.failRate * 1000) / 10 : 0;
