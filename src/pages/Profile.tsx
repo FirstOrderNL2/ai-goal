@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Camera, Loader2 } from "lucide-react";
+import { useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, Camera, Loader2, Sparkles, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,13 +12,32 @@ import { useToast } from "@/hooks/use-toast";
 import { Header } from "@/components/Header";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
-import { Trophy, Target, TrendingUp, CheckCircle } from "lucide-react";
+import { Trophy, Target, CheckCircle } from "lucide-react";
+import { useSubscription } from "@/hooks/useSubscription";
+import { getStripeEnvironment } from "@/lib/stripe";
 
 export default function Profile() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { lang } = useParams<{ lang: string }>();
+  const langPrefix = `/${lang || "en"}`;
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
+  const subscription = useSubscription();
+  const [portalLoading, setPortalLoading] = useState(false);
+
+  const openCustomerPortal = async () => {
+    setPortalLoading(true);
+    const { data, error } = await supabase.functions.invoke("create-portal-session", {
+      body: { returnUrl: window.location.href, environment: getStripeEnvironment() },
+    });
+    setPortalLoading(false);
+    if (error || !data?.url) {
+      toast({ title: "Couldn't open portal", description: error?.message || "Try again later", variant: "destructive" });
+      return;
+    }
+    window.open(data.url, "_blank", "noopener");
+  };
 
   const [displayName, setDisplayName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
