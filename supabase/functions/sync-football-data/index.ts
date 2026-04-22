@@ -30,6 +30,20 @@ const LEAGUES = [
   { id: 4, name: "Euro Championship", country: "World", type: "cup" },
   { id: 9, name: "Copa America", country: "World", type: "cup" },
   { id: 10, name: "Friendlies", country: "World", type: "cup" },
+  { id: 94, name: "Primeira Liga", country: "Portugal", type: "league" },
+  { id: 144, name: "Jupiler Pro League", country: "Belgium", type: "league" },
+  { id: 203, name: "Süper Lig", country: "Turkey", type: "league" },
+  { id: 179, name: "Premiership", country: "Scotland", type: "league" },
+  { id: 207, name: "Super League", country: "Switzerland", type: "league" },
+  { id: 218, name: "Bundesliga Austria", country: "Austria", type: "league" },
+  { id: 197, name: "Super League 1", country: "Greece", type: "league" },
+  { id: 119, name: "Superliga", country: "Denmark", type: "league" },
+  { id: 113, name: "Allsvenskan", country: "Sweden", type: "league" },
+  { id: 103, name: "Eliteserien", country: "Norway", type: "league" },
+  { id: 106, name: "Ekstraklasa", country: "Poland", type: "league" },
+  { id: 345, name: "Chance Liga", country: "Czech Republic", type: "league" },
+  { id: 210, name: "HNL", country: "Croatia", type: "league" },
+  { id: 235, name: "Premier League Ukraine", country: "Ukraine", type: "league" },
 ];
 
 const LEAGUE_IDS_STRING = LEAGUES.map(l => l.id).join("-");

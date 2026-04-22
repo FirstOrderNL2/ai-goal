@@ -14,6 +14,21 @@ const LEAGUE_IDS: Record<string, number> = {
   "Serie A": 135,
   "Bundesliga": 78,
   "Ligue 1": 61,
+  "Eredivisie": 88,
+  "Primeira Liga": 94,
+  "Jupiler Pro League": 144,
+  "Süper Lig": 203,
+  "Premiership": 179,
+  "Super League": 207,
+  "Bundesliga Austria": 218,
+  "Super League 1": 197,
+  "Superliga": 119,
+  "Allsvenskan": 113,
+  "Eliteserien": 103,
+  "Ekstraklasa": 106,
+  "Chance Liga": 345,
+  "HNL": 210,
+  "Premier League Ukraine": 235,
 };
 
 async function apiFootballFetch(path: string, apiKey: string): Promise<any[]> {
