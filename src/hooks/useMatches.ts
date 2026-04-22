@@ -64,6 +64,7 @@ export function useCompletedMatches(league?: string) {
         .from("matches")
         .select("*")
         .eq("status", "completed")
+        .or("round.is.null,round.not.ilike.Niedersachsen%")
         .order("match_date", { ascending: false })
         .limit(12);
 
