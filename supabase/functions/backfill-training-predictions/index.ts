@@ -39,10 +39,15 @@ Deno.serve(async (req) => {
   } catch { /* defaults */ }
 
   // Find candidate completed matches (older than cursor if provided).
+  // CRITICAL: Only backfill matches >7 days old. Anything more recent should
+  // have received a real pre-kickoff prediction; silently writing a
+  // training_only row here would mask coverage misses from the UI and ops.
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   let q = supabase
     .from("matches")
     .select("id, match_date, predictions(id, feature_snapshot)")
     .eq("status", "completed")
+    .lt("match_date", sevenDaysAgo)
     .order("match_date", { ascending: false })
     .limit(Math.max(batchSize * 20, 200)); // big overshoot — most recent matches already have snapshots
 
