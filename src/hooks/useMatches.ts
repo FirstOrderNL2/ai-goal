@@ -211,6 +211,12 @@ async function enrichMatches(matches: Match[]): Promise<Match[]> {
       rawPred && ((rawPred as any).publish_status === "low_quality" || (rawPred as any).training_only === true)
         ? undefined
         : rawPred;
+    if (import.meta.env.DEV && rawPred && !pred) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[useMatches] Hiding prediction for match ${m.id}: publish_status=${(rawPred as any).publish_status} training_only=${(rawPred as any).training_only}`,
+      );
+    }
     const votes = pred ? votesByPred.get(pred.id) : undefined;
     const totalVotes = votes ? votes.agree + votes.disagree : 0;
     const disagreement = votes && totalVotes > 0 ? Math.min(votes.agree, votes.disagree) / totalVotes : 0;
