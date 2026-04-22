@@ -1,123 +1,94 @@
 
 
-# ML Pipeline Verification (Phase 1–3) + P0 hotfix
+# Data Growth Engine v1 — unlock the 1,744-match label goldmine + traceability
 
-## What I found before writing this plan
+## Current state (verified live)
 
-Two things up front, because they reframe the audit:
+- 4,124 completed matches with scores, only **290 reviewed** → **1,744 completed matches have predictions but no review** (the gap is real and large).
+- `batch-review-matches` already exists and works correctly, but is capped at **200 matches/run**, only runs in `auto-sync` modes `full`/`idle`, and orders by `match_date DESC` so the same recent slice gets reprocessed every cycle while older matches starve.
+- `prediction_logs.update_reason` is **NULL on all 166 rows** — `pre-match-predictions` writes logs but never stamps the recheck window (`recheck_60`/`30`/`15`/`10`/`5`). Step 3 of your plan is a real bug, not a feature gap.
+- Last 6h: 150 `failed` / 11 `success` / 5 `partial` generations — the P0 hotfix landed but failures are still dominant. Worth one more look as part of this pass.
+- Coverage guarantee (Step 4) and ML readiness tracker (Step 5) are not implemented.
 
-1. **P0 regression — statistical predictions have been failing for hours.** The last edit introduced an undefined variable: `generate-statistical-prediction/index.ts:732` references `computedPublishStatus`, but the actual binding is `publishStatus` (line 639). Edge logs show ~150 `failed` vs 11 `success` in the last 6h, and `prediction_logs` confirms it. This is why new `low_quality` rows keep appearing and HNL/Greek matches still don't get fresh predictions. Must fix **first**, before any ML verification means anything.
-2. **Phase 2 (ML model) does not exist yet.** No LightGBM/XGBoost code anywhere in the repo, no training script, no `ml_predictions` table, no model artifact. Phase 3 (comparison engine) and Phase 4 (hybrid) therefore can't be "verified" — only Phase 1 can. The audit needs to honestly report this and either (a) stop and wait for approval to build it, or (b) build the minimal Phase 2+3 stack as part of this run. Plan below does (b) with a tight scope so the user gets actual verification numbers.
+## Changes
 
-Current dataset readiness from live DB:
-- 1,886 predictions with `feature_snapshot` (1,849 training_only + 37 live)
-- 290 reviewed labels (`actual_outcome` populated): H=125 / D=86 / A=79 — usable for supervised training
-- Class balance OK (43% / 30% / 27%, no collapsed class)
-- 290 samples is **below** the user's own ≥2,000 success criterion → Phase 7 will report `WARNING: insufficient labels` and the ML metrics will be reported with that caveat, not hidden.
+### 1. Backfill the 1,744 missing labels (one-shot + permanent)
 
----
+**`supabase/functions/batch-review-matches/index.ts`**
+- Add `mode` param: `recent` (default, current behaviour) or `backfill` (oldest-first, no recency filter).
+- Raise per-run cap: 200 → **500** in backfill mode.
+- Skip the AI post-match review section entirely when `mode='backfill'` (rate limits would kill it; we only need the structured `prediction_reviews` row to label the dataset).
 
-## Step 0 — P0 hotfix (blocks everything else)
+**New function `supabase/functions/run-review-backfill/index.ts`** (mirrors `run-backfill-loop`):
+- Loops `batch-review-matches?mode=backfill` until `processed === 0` or 20 iterations hit.
+- One manual invocation post-deploy → expected to insert ~1,700 review rows in a few minutes.
 
-`supabase/functions/generate-statistical-prediction/index.ts` line 732: rename `computedPublishStatus` → `publishStatus`. One-line fix. Without it, every prediction call still throws and the audit is meaningless.
+**Cron**: add a daily `batch-review-matches` (default mode) at 03:00 Berlin to keep coverage at 100% as new matches complete. Auto-sync already calls it in full/idle but only when it triggers full mode — making it explicit removes the dependency.
 
-Then re-run failed predictions: one-shot invocation of `pre-match-predictions` (Phase D watchdog already re-queues `generation_status='failed'`).
+### 2. Make rechecks traceable (fix Step 3)
 
----
+**`supabase/functions/pre-match-predictions/index.ts`** — every call to `generate-statistical-prediction` and every `prediction_logs` insert must pass `update_reason` based on the kickoff window:
+- T > 60min → `initial`
+- 60 ≥ T > 30 → `recheck_60`
+- 30 ≥ T > 15 → `recheck_30`
+- 15 ≥ T > 10 → `recheck_15`
+- 10 ≥ T > 5 → `recheck_10`
+- T ≤ 5 → `recheck_5`
+- HT phase → `ht_snapshot`
+- Phase D watchdog → `retry`
 
-## Step 1 — Phase 1 dataset validation (read-only)
+**`supabase/functions/generate-statistical-prediction/index.ts`** — accept `update_reason` from request body, persist on the `predictions` row AND in the `prediction_logs` insert. Also stamp `last_prediction_at` on every successful write so freshness is queryable.
 
-Add `dataset-validation-report` already exists; extend it (or wrap with a thin reporter) to emit:
+### 3. Coverage guarantee — "no kickoff without prediction"
 
-- **Total snapshots** / **usable supervised samples** (snapshot ∧ review with `actual_outcome`)
-- **Class distribution** of `y` (H/D/A counts + %)
-- **Per-feature missingness** — top 10 fields with NULL % across `feature_snapshot`
-- **Schema drift** — count of distinct snapshot key-sets (should be 1; >1 means schema changed mid-collection)
-- **Leakage probe** — for each reviewed sample, assert:
-  - `match_enrichment.enriched_at <= matches.match_date`
-  - `match_intelligence.generated_at <= matches.match_date`
-  - `predictions.created_at <= matches.match_date` (the snapshot itself)
-  Report violation counts. Any non-zero → flag `LEAKAGE RISK`.
-- **Join health** — orphan counts: predictions without matches, reviews without predictions, snapshots whose matches are not `completed`.
+Add a **Phase E final-call** to `pre-match-predictions`: any match starting in **next 15 minutes** with no `predictions` row OR `generation_status IN ('failed','pending')` → force-generate immediately, bypassing the per-tick caps. Caps stay for normal load; emergencies don't.
 
-Output: `/mnt/documents/phase1_validation_report.json` + a short markdown summary.
+This is the formal version of Step 4. We already had Phase D for failures; Phase E is the kickoff-imminent safety net.
 
-## Step 2 — Phase 2 minimal ML baseline (build, since nothing exists)
+### 4. Investigate residual generation failures
 
-Run **outside the edge runtime** as a one-shot Python script via `code--exec`. Edge functions are the wrong place for model training (no persistent FS, 150s timeout, no scikit/xgboost). This matches the user's "ML-ready infrastructure" goal without prematurely committing to an in-app inference path.
+Quick read of `prediction_logs.error` distribution + 1-2 representative edge-function log lines for the 150 failures. Either fix the root cause or document it. Done in the same pass — no separate plan needed.
 
-- Pull labeled rows via `supabase--read_query` → pandas DataFrame.
-- Feature set: numeric fields from `feature_snapshot` (lambda_home/away, poisson probs, league_reliability, position_diff, h2h counts, volatility, ref_strictness, market_agreement, bookmaker_probs, momentum, key_player_missing). Drop sparse string fields. Mean-impute remaining NaNs.
-- **Strict time-based split** — sort by `matches.match_date`, 80/20 chronological (no shuffle). Verify train.max_date < val.min_date.
-- Model: `lightgbm.LGBMClassifier(objective='multiclass', num_class=3, n_estimators=300, learning_rate=0.05)`. Light, fast, calibrated by default — no GPU.
-- Metrics on val set: **logloss** (primary), **accuracy**, **ECE** (10-bin), per-class precision/recall, **top-15 feature importance**.
-- Save model: `/mnt/documents/ml_model_v1.joblib` + metrics JSON + feature-importance CSV.
+### 5. ML readiness tracker
 
-## Step 3 — Phase 3 comparison engine (build alongside)
+**Migration**: new view `ml_readiness_v` (no table; just a SQL view RLS-public):
+```sql
+SELECT 
+  (SELECT COUNT(*) FROM prediction_reviews WHERE actual_outcome IS NOT NULL) AS labeled_samples,
+  (SELECT COUNT(*) FROM predictions WHERE feature_snapshot IS NOT NULL) AS feature_snapshots,
+  (labeled_samples::float / NULLIF(feature_snapshots,0)) AS label_coverage,
+  CASE WHEN labeled_samples >= 2000 THEN 'ready' ELSE 'collecting' END AS ml_status,
+  GREATEST(0, 2000 - labeled_samples) AS samples_to_target
+```
 
-Same script, no separate function:
+**`src/components/PipelineHealthCard.tsx`** — extend with a "ML Readiness" sub-section: progress bar (current / 2000), label coverage %, and an `ml_status` badge. No model trigger yet — that's a separate decision when the bar fills.
 
-- For every val sample, the snapshot already contains the Poisson probs (`poisson_home_prob/draw/away_prob`). No recomputation needed.
-- ML probs come from the trained model on the same val rows.
-- Compute side-by-side: accuracy, logloss, ECE for **Poisson vs ML**.
-- Sanity asserts: probs sum to 1.000 ± 0.001, no NaN, identical sample count in both arrays.
-- Output: `/mnt/documents/phase3_comparison.csv` (per-match) + summary in the report.
+### 6. Optional cleanup
 
-## Step 4 — Phase 4 hybrid simulation (cheap, do it)
-
-In the same script: `hybrid = 0.7 * poisson + 0.3 * ml`, renormalize, compute the same 3 metrics. Also sweep weights `[0.5, 0.6, 0.7, 0.8, 0.9]` and pick the val-best — pure analysis, no production change.
-
-## Step 5 — Phase 5 bug detection
-
-The script + Phase 1 report cover this. Specifically auto-flag:
-- Snapshots with all-null numeric features
-- Predictions where `home_win + draw + away_win` ≠ 1.000 ± 0.005
-- `feature_snapshot.poisson_*` mismatching the row's `home_win/draw/away_win` (consistency)
-- Any `prediction_reviews.actual_outcome` not in {home, draw, away}
-
-## Step 6 — Phase 6 production-flow verification (read-only)
-
-Query-only checks against current state:
-- % of next-48h upcoming matches with `predictions` row → must be 100%
-- Distribution of `predictions.update_reason` for matches starting in <60min → expect `recheck_60`/`recheck_30`/`recheck_15`/`recheck_10`/`recheck_5` to actually appear in `prediction_logs`
-- `training_only=true` rows that were modified in the last 24h → must be 0 (no live overwrite of training data)
-
-No code changes here unless a violation is found; in that case I'll add a one-line guard to `pre-match-predictions` upsert to skip rows where `training_only=true`.
-
-## Step 7 — Final report
-
-`/mnt/documents/ml_verification_phase1_3.md` with the user's exact requested structure: System Status, Metrics (Poisson/ML/Hybrid table), Issues Found, Fixes Applied. Honest WARNING on dataset size (<2000) — not hidden.
-
----
+`useMatches.ts` defensive `console.warn` from the previous pass — leave it; harmless and useful.
 
 ## Files touched
 
-- `supabase/functions/generate-statistical-prediction/index.ts` — one-line P0 fix
-- `supabase/functions/dataset-validation-report/index.ts` — extend to emit leakage + schema-drift + class-balance fields the user asked for
-- `/tmp/ml_phase2_3.py` (one-shot, not committed) — train + compare + hybrid
-- Deliverables in `/mnt/documents/`: `phase1_validation_report.json`, `ml_model_v1.joblib`, `phase3_comparison.csv`, `ml_verification_phase1_3.md`
+- `supabase/functions/batch-review-matches/index.ts` — add `mode`, raise cap, skip AI in backfill
+- New `supabase/functions/run-review-backfill/index.ts` — loop driver
+- `supabase/functions/pre-match-predictions/index.ts` — window→reason tagging + Phase E coverage guard
+- `supabase/functions/generate-statistical-prediction/index.ts` — accept and persist `update_reason`, stamp `last_prediction_at`
+- Migration: `ml_readiness_v` view
+- `src/components/PipelineHealthCard.tsx` — ML readiness sub-card
+- One-shot invocation of `run-review-backfill` post-deploy
+- New daily cron for `batch-review-matches`
 
-## Out of scope
+## Out of scope (intentional)
 
-- Productionizing ML inference into an edge function (separate phase — needs ONNX export or Python-based inference service decision).
-- New `ml_predictions` DB table or schema changes — verification only.
-- Retraining `model_performance` weights — orthogonal.
-- Building Phase 2/3 if the user prefers to wait until ≥2,000 labels exist (see decision below).
+- Building the actual ML training trigger — only the readiness signal. You'll decide what to do at 2,000 labels (likely the Python pipeline from last pass, productionized).
+- Changes to the publish gate (already aligned).
+- Schema changes to `predictions` or `prediction_logs` — both already have the columns we need.
 
-## One decision needed
+## Success criteria (verifiable within minutes of deploy)
 
-Dataset has **290 labeled samples**, well below the user's own ≥2,000 success bar. Two honest paths:
-
-- **A. Run the full audit now** with the small dataset. Numbers will be noisy but you'll see directionally whether ML beats Poisson, and the pipeline + script are reusable when labels grow.
-- **B. Run Phase 1 + Phase 6 only** (the dataset/leakage/production checks). Skip Phase 2/3/4 until labels reach ≥2,000 (current rate ~30-50/week → ~6 weeks). Avoids reporting metrics that look statistically meaningless.
-
-Default in this plan = **A** (matches the "verify, don't plan" tone of your prompt). Reply "B" if you'd rather wait.
-
-## Success criteria
-
-- P0 fix deployed, `prediction_logs` shows ≥95% `success` for the next hour.
-- Phase 1 report generated, leakage violations explicitly enumerated.
-- Phase 3 comparison table delivered with Poisson vs ML logloss/accuracy/ECE on identical val sample.
-- Hybrid weight sweep delivered.
-- Final markdown lists every bug found with the exact fix applied (or `not applicable - no changes needed`).
+- `prediction_reviews` row count jumps from 290 → ~2,000 after the one-shot backfill.
+- `prediction_logs.update_reason` shows non-NULL distribution across `initial`, `recheck_*`, `retry` within one pre-match cycle.
+- Any upcoming match within 15 min of kickoff with no prediction triggers a force-gen and appears in logs as `update_reason='retry'` `action='generate'`.
+- `/accuracy` PipelineHealthCard shows an ML Readiness bar at ~2000/2000 (or close) and `ml_status='ready'`.
+- Generation failure rate drops below 20% for the next hour (post root-cause look).
 
