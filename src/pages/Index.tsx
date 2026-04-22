@@ -5,25 +5,33 @@ import { MatchCard } from "@/components/MatchCard";
 import { LeagueFilter } from "@/components/LeagueFilter";
 import { useDashboardMatches, useCompletedMatches } from "@/hooks/useMatches";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { Activity, Clock, Flame } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useTranslation } from "react-i18next";
 
 const HEAL_COOLDOWN_MS = 2 * 60 * 1000;
+const UPCOMING_PAGE_SIZE = 9;
 
 const Index = () => {
   const [league, setLeague] = useState("all");
+  const [upcomingLimit, setUpcomingLimit] = useState(UPCOMING_PAGE_SIZE);
   const queryClient = useQueryClient();
   const lastHealRef = useRef(0);
   const { t } = useTranslation();
 
   const { data: dashboard, isLoading: loadingDash } = useDashboardMatches(league);
-  const { data: completed, isLoading: loadingDone } = useCompletedMatches(league);
-
   const live = dashboard?.live ?? [];
   const upcoming = dashboard?.upcoming ?? [];
   const transitionIds = dashboard?.transitionIds ?? [];
+
+  const { data: completed, isLoading: loadingDone } = useCompletedMatches(league, live.length > 0);
+
+  // Reset pagination when league filter changes
+  useEffect(() => {
+    setUpcomingLimit(UPCOMING_PAGE_SIZE);
+  }, [league]);
 
   useEffect(() => {
     if (transitionIds.length === 0) return;
@@ -35,10 +43,14 @@ const Index = () => {
       .then(() => {
         setTimeout(() => {
           queryClient.invalidateQueries({ queryKey: ["matches"] });
+          queryClient.invalidateQueries({ queryKey: ["matches", "completed"] });
         }, 3000);
       })
       .catch(() => {});
   }, [transitionIds, queryClient]);
+
+  const visibleUpcoming = upcoming.slice(0, upcomingLimit);
+  const hasMoreUpcoming = upcomingLimit < upcoming.length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -103,9 +115,21 @@ const Index = () => {
               {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-56 rounded-lg" />)}
             </div>
           ) : upcoming.length ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {upcoming.map((m) => <MatchCard key={m.id} match={m} />)}
-            </div>
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {visibleUpcoming.map((m) => <MatchCard key={m.id} match={m} />)}
+              </div>
+              {hasMoreUpcoming && (
+                <div className="flex justify-center pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setUpcomingLimit((n) => n + UPCOMING_PAGE_SIZE)}
+                  >
+                    {t("dashboard.load_more")}
+                  </Button>
+                </div>
+              )}
+            </>
           ) : (
             <p className="text-sm text-muted-foreground">{t("dashboard.no_upcoming")}</p>
           )}
