@@ -733,6 +733,26 @@ Deno.serve(async (req) => {
       generated_at: new Date().toISOString(),
     };
 
+    // Caveat for partial / soft-band predictions so the UI shows the user why confidence is capped.
+    let caveat = "";
+    if (computedPublishStatus === "published" && (isPartial || isSoftBand)) {
+      caveat = "⚠️ Limited stats — early signal only. ";
+    }
+
+    // Preserve existing AI reasoning if present, otherwise leave null. The caveat is prepended
+    // by the AI prediction path; here we only set it when no reasoning exists yet.
+    const { data: existingPred } = await supabase
+      .from("predictions")
+      .select("ai_reasoning")
+      .eq("match_id", match_id)
+      .maybeSingle();
+    const existingReasoning = (existingPred as any)?.ai_reasoning ?? null;
+    const newReasoning = caveat
+      ? (existingReasoning && existingReasoning.startsWith("⚠️")
+          ? existingReasoning
+          : `${caveat}${existingReasoning ?? ""}`.trim())
+      : existingReasoning;
+
     // Upsert prediction
     const { error: upsertErr } = await supabase.from("predictions").upsert({
       match_id,
@@ -755,9 +775,16 @@ Deno.serve(async (req) => {
       quality_score: qualityScore,
       feature_snapshot,
       training_only: isTraining,
+      generation_status: generationStatus,
+      retry_count: 0,
+      last_error: null,
+      update_reason: reason,
+      ai_reasoning: newReasoning,
     }, { onConflict: "match_id" });
 
     if (upsertErr) throw upsertErr;
+
+    await writeLog(match_id, generationStatus);
 
     return new Response(JSON.stringify({
       success: true,
@@ -773,13 +800,38 @@ Deno.serve(async (req) => {
         btts,
         best_pick: bestPickResult.pick,
         confidence,
+        generation_status: generationStatus,
       },
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
-    console.error("Statistical prediction error:", error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    const msg = (error as any)?.message ?? String(error);
+    console.error("Statistical prediction error:", msg);
+    // Best-effort failure record + log
+    try {
+      const { data: existing } = await supabase
+        .from("predictions")
+        .select("retry_count")
+        .eq("match_id", match_id)
+        .maybeSingle();
+      const nextRetry = ((existing as any)?.retry_count ?? 0) + 1;
+      await supabase.from("predictions").upsert({
+        match_id,
+        home_win: 0.33, draw: 0.34, away_win: 0.33,
+        expected_goals_home: 1.4, expected_goals_away: 1.1,
+        over_under_25: "under",
+        model_confidence: 0.10,
+        publish_status: "low_quality",
+        generation_status: "failed",
+        retry_count: nextRetry,
+        last_error: msg.slice(0, 500),
+        update_reason: reason,
+        last_prediction_at: new Date().toISOString(),
+      }, { onConflict: "match_id" });
+    } catch { /* swallow */ }
+    await writeLog(match_id, "failed", msg);
+    return new Response(JSON.stringify({ error: msg }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
