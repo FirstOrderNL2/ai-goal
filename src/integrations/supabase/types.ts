@@ -1120,7 +1120,16 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      ml_readiness_v: {
+        Row: {
+          feature_snapshots: number | null
+          label_coverage: number | null
+          labeled_samples: number | null
+          ml_status: string | null
+          samples_to_target: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       [_ in never]: never

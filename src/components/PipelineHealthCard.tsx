@@ -1,10 +1,32 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Activity, AlertTriangle, CheckCircle2, Clock, RefreshCw } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Activity, AlertTriangle, Brain, CheckCircle2, Clock, RefreshCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 type Status = "success" | "partial" | "failed" | "pending";
+
+function useMLReadiness() {
+  return useQuery({
+    queryKey: ["ml-readiness"],
+    refetchInterval: 120_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("ml_readiness_v")
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+      return data as {
+        labeled_samples: number;
+        feature_snapshots: number;
+        label_coverage: number;
+        ml_status: "collecting" | "ready";
+        samples_to_target: number;
+      } | null;
+    },
+  });
+}
 
 function usePipelineHealth() {
   return useQuery({
@@ -72,6 +94,7 @@ function usePipelineHealth() {
 
 export function PipelineHealthCard() {
   const { data, isLoading } = usePipelineHealth();
+  const { data: ml } = useMLReadiness();
 
   const successPct = data ? Math.round(data.successPct * 1000) / 10 : 0;
   const failRatePct = data ? Math.round(data.failRate * 1000) / 10 : 0;
@@ -141,6 +164,31 @@ export function PipelineHealthCard() {
                   <Badge variant="outline" className="text-xs">{data.counts.pending} pending</Badge>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {ml && (
+          <div className="mt-6 rounded-lg border bg-card p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Brain className="h-4 w-4 text-primary" />
+                ML Readiness
+              </div>
+              <Badge variant={ml.ml_status === "ready" ? "default" : "secondary"} className="text-xs">
+                {ml.ml_status === "ready" ? "Ready" : "Collecting"}
+              </Badge>
+            </div>
+            <Progress value={Math.min(100, (ml.labeled_samples / 2000) * 100)} className="h-2" />
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+              <span>
+                {ml.labeled_samples.toLocaleString()} / 2,000 labeled samples
+                {ml.ml_status === "collecting" && ` · ${ml.samples_to_target.toLocaleString()} to go`}
+              </span>
+              <span>
+                {ml.feature_snapshots.toLocaleString()} snapshots ·{" "}
+                {Math.round((ml.label_coverage ?? 0) * 100)}% coverage
+              </span>
             </div>
           </div>
         )}

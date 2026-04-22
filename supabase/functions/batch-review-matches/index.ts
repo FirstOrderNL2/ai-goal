@@ -42,32 +42,50 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    // Find completed matches without post-match reviews
-    const { data: unreviewed, error } = await supabase
+    const url = new URL(req.url);
+    const body = await req.json().catch(() => ({}));
+    const mode = (body?.mode || url.searchParams.get("mode") || "recent") as "recent" | "backfill";
+    const isBackfill = mode === "backfill";
+    const limit = isBackfill ? 1000 : 200;
+    const ascending = isBackfill; // oldest-first when backfilling so old labels actually get filled
+    const cursor: string | undefined = body?.after_date || url.searchParams.get("after_date") || undefined;
+
+    // Find completed matches. In backfill mode we cursor forward by match_date so each
+    // iteration progresses instead of re-scanning the same 500 oldest matches.
+    let q = supabase
       .from("matches")
-      .select("id, goals_home, goals_away, league")
+      .select("id, goals_home, goals_away, league, match_date")
       .eq("status", "completed")
       .not("goals_home", "is", null)
-      .order("match_date", { ascending: false })
-      .limit(200);
+      .order("match_date", { ascending })
+      .limit(limit);
+    if (cursor) {
+      q = ascending ? q.gt("match_date", cursor) : q.lt("match_date", cursor);
+    }
+    const { data: unreviewed, error } = await q;
 
     if (error) throw error;
     if (!unreviewed || unreviewed.length === 0) {
-      return new Response(JSON.stringify({ message: "No completed matches", processed: 0 }), {
+      return new Response(JSON.stringify({ message: "No completed matches", processed: 0, next_cursor: null }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const matchIds = unreviewed.map((m: any) => m.id);
+    const lastMatchDate = unreviewed[unreviewed.length - 1].match_date;
 
-    // Fetch predictions and existing reviews in chunks
+    // Fetch predictions and existing reviews in chunks.
+    // In backfill mode we include low_quality predictions — the actual outcome is ground
+    // truth regardless of how confident the model was at prediction time.
     const chunkSize = 200;
     const allPreds: any[] = [];
     const allReviews: any[] = [];
     for (let i = 0; i < matchIds.length; i += chunkSize) {
       const chunk = matchIds.slice(i, i + chunkSize);
+      let predQ = supabase.from("predictions").select("*").in("match_id", chunk);
+      if (!isBackfill) predQ = predQ.neq("publish_status", "low_quality");
       const [{ data: preds }, { data: reviews }] = await Promise.all([
-        supabase.from("predictions").select("*").neq("publish_status", "low_quality").in("match_id", chunk),
+        predQ,
         supabase.from("prediction_reviews").select("match_id").in("match_id", chunk),
       ]);
       if (preds) allPreds.push(...preds);
@@ -136,8 +154,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Also trigger AI post-match reviews for unreviewed matches (limited)
-    const unreviewedAI = unreviewed.filter((m: any) =>
+    // Also trigger AI post-match reviews for unreviewed matches (limited).
+    // Skipped entirely in backfill mode — Lovable AI rate limits would kill a 1700-row pass,
+    // and we only need the structured prediction_reviews label for ML.
+    const unreviewedAI = isBackfill ? [] : unreviewed.filter((m: any) =>
       predMap.has(m.id) && !m.ai_post_match_review
     );
 
@@ -178,9 +198,12 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({
       success: true,
+      mode,
+      processed: newReviews.length,
       prediction_reviews_created: newReviews.length,
       ai_reviews_processed: aiProcessed,
       total_completed: unreviewed.length,
+      next_cursor: lastMatchDate,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
