@@ -1,35 +1,64 @@
 
 
-# Dashboard: paginate upcoming + immediate recent results
+# Add European top-flight leagues + Turkey
 
-## Change 1 — Upcoming matches: show 9 + "Load more"
+## Scope
 
-In `src/pages/Index.tsx`:
-- Add `const [upcomingLimit, setUpcomingLimit] = useState(9);`
-- Render `upcoming.slice(0, upcomingLimit)` instead of all `upcoming`.
-- Below the grid, when `upcomingLimit < upcoming.length`, render a centered "Load more" button that does `setUpcomingLimit((n) => n + 9)`.
-- Reset limit to 9 whenever the league filter changes (via `useEffect` on `league`).
-- Translation keys: add `dashboard.load_more` to `src/i18n/en.json` and `src/i18n/de.json`.
+Add the **top-tier league of every major European football country** that's not already covered, plus **Turkey**. The current sync covers England, Spain, Italy, Germany, France, Netherlands + UEFA cups. Missing top divisions to add:
 
-## Change 2 — Recent Results show completed matches immediately
+| Country | League | API-Football ID |
+|---|---|---|
+| Portugal | Primeira Liga | 94 |
+| Belgium | Jupiler Pro League | 144 |
+| Turkey | Süper Lig | 203 |
+| Scotland | Premiership | 179 |
+| Switzerland | Super League | 207 |
+| Austria | Bundesliga | 218 |
+| Greece | Super League 1 | 197 |
+| Denmark | Superliga | 119 |
+| Sweden | Allsvenskan | 113 |
+| Norway | Eliteserien | 103 |
+| Poland | Ekstraklasa | 106 |
+| Czech Republic | Chance Liga | 345 |
+| Croatia | HNL | 210 |
+| Ukraine | Premier League | 235 |
+| Russia | Premier League | 235 → **excluded** (sanctioned, sparse data) |
 
-**Root cause:** `useCompletedMatches` only queries `status = 'completed'`. A match that has just finished sits in `live`/`2H`/`ET` status until the next `auto-sync` run flips it to `completed` — which can lag 2–3 hours depending on cron cadence and API-Football's status update.
+Final list = **14 new leagues** (Russia excluded).
 
-**Fix in `src/hooks/useMatches.ts` (`useCompletedMatches`):**
-1. Broaden the query to include matches with a real final score regardless of status:
-   - `status IN ('completed','FT','AET','PEN')` **OR** (`goals_home IS NOT NULL AND goals_away IS NOT NULL AND match_date < now() - interval '2 hours'`).
-   - Use `.or(...)` to express this in a single Supabase query.
-2. Keep the existing `Niedersachsen` exclusion and `match_date DESC` ordering, limit 12.
-3. Keep refetch interval at 5 min — but also bump it to 60 s when the dashboard's `live` array is non-empty so a freshly-finished match appears within a minute. Implemented by passing an `aggressive` boolean from `Index.tsx` into `useCompletedMatches`.
+## Implementation
 
-**Bonus safety:** in `Index.tsx`, when a match transitions out of live (already detected via `transitionIds`), also invalidate the `["matches","completed"]` query alongside `["matches"]` so the recent-results grid refreshes the moment a match ends.
+**1. `supabase/functions/sync-football-data/index.ts`**
+Append the 14 entries to the `LEAGUES` array (lines 11–33). The existing code already uses `LEAGUE_IDS_STRING` for the live-fixtures call and iterates `LEAGUES` for season fixtures, so they'll be picked up automatically on the next cron run.
 
-## Files touched
-- `src/pages/Index.tsx` — pagination state, Load more button, completed-query invalidation, pass `aggressive` flag.
-- `src/hooks/useMatches.ts` — broaden completed query, accept `aggressive` arg for refetch interval.
-- `src/i18n/en.json`, `src/i18n/de.json` — `dashboard.load_more` key.
+**2. `supabase/functions/fetch-match-context/index.ts`**
+Add the same league IDs to the `LEAGUE_IDS` map (lines 11–17) so injuries/lineups/predictions endpoints can resolve a league ID when a match has no `api_football_id` yet.
+
+**3. `src/components/LeagueFilter.tsx`**
+Add filter chips for the 14 new leagues using short labels (e.g. "Süper Lig", "Primeira", "Pro League", "Premiership", "Super League", "Bundesliga AT" to disambiguate from German Bundesliga, "Super League GR", "Superliga", "Allsvenskan", "Eliteserien", "Ekstraklasa", "Chance Liga", "HNL", "Ukraine PL").
+
+**4. `src/lib/seasons.ts`**
+Add the same leagues to `LEAGUE_SEASONS` and to `TEAM_NAME_ALIASES` only the most common alias overlaps (e.g. "galatasaray sk" → "galatasaray", "fenerbahçe sk" → "fenerbahce", "fc porto" → "porto", "sl benfica" → "benfica", "sporting cp" → "sporting", "club brugge kv" → "club brugge", "rsc anderlecht" → "anderlecht", "celtic fc" → "celtic", "rangers fc" → "rangers"). Sportradar season IDs left blank — only required for the StatsBomb/Sportradar paths, which these leagues won't use.
+
+**5. Initial backfill (one-shot trigger)**
+After deploy, the next scheduled `sync-football-data` run will pull the new leagues. No manual migration needed; matches arrive within the regular cron tick (≤ 30 min). I'll also invoke the function once after deploy to seed immediately.
 
 ## Out of scope
-- No backend / sync cadence changes. The fix is purely a smarter client read so freshly-finished matches surface without waiting for the `status='completed'` flip.
-- No change to live or trending sections.
+
+- Standings page integration — `Standings.tsx` already reads from the `leagues` table; new leagues will appear automatically once `sync-football-data` populates them.
+- StatsBomb/Sportradar coverage for these leagues (those providers don't cover most of them anyway).
+- Russia (excluded for data-quality reasons; can revisit if requested).
+
+## Files touched
+
+- `supabase/functions/sync-football-data/index.ts`
+- `supabase/functions/fetch-match-context/index.ts`
+- `src/components/LeagueFilter.tsx`
+- `src/lib/seasons.ts`
+
+## Success criteria
+
+- Within ~30 min of deploy, `SELECT DISTINCT league FROM matches` includes the 14 new leagues.
+- League filter chips on `/dashboard` show the new leagues and filter the match grid correctly.
+- Match cards for new-league fixtures render with team logos, predictions, and (where API-Football provides it) lineups & injuries.
 
