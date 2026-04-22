@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Activity, AlertTriangle, Brain, CheckCircle2, Clock, RefreshCw } from "lucide-react";
+import { Activity, AlertTriangle, Brain, CheckCircle2, Clock, RefreshCw, ShieldCheck, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 type Status = "success" | "partial" | "failed" | "pending";
@@ -23,6 +23,28 @@ function useMLReadiness() {
         label_coverage: number;
         ml_status: "collecting" | "ready";
         samples_to_target: number;
+      } | null;
+    },
+  });
+}
+
+function useDataIntegrity() {
+  return useQuery({
+    queryKey: ["data-integrity"],
+    refetchInterval: 120_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("data_integrity_v")
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+      return data as {
+        late_enrichment_count: number;
+        late_intelligence_count: number;
+        late_predictions_count: number;
+        prediction_coverage_24h_pct: number;
+        upcoming_24h_total: number;
+        recheck_distribution_24h: Record<string, number>;
       } | null;
     },
   });
