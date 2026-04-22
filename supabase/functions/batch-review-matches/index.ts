@@ -46,35 +46,46 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const mode = (body?.mode || url.searchParams.get("mode") || "recent") as "recent" | "backfill";
     const isBackfill = mode === "backfill";
-    const limit = isBackfill ? 500 : 200;
+    const limit = isBackfill ? 1000 : 200;
     const ascending = isBackfill; // oldest-first when backfilling so old labels actually get filled
+    const cursor: string | undefined = body?.after_date || url.searchParams.get("after_date") || undefined;
 
-    // Find completed matches without post-match reviews
-    const { data: unreviewed, error } = await supabase
+    // Find completed matches. In backfill mode we cursor forward by match_date so each
+    // iteration progresses instead of re-scanning the same 500 oldest matches.
+    let q = supabase
       .from("matches")
-      .select("id, goals_home, goals_away, league")
+      .select("id, goals_home, goals_away, league, match_date")
       .eq("status", "completed")
       .not("goals_home", "is", null)
       .order("match_date", { ascending })
       .limit(limit);
+    if (cursor) {
+      q = ascending ? q.gt("match_date", cursor) : q.lt("match_date", cursor);
+    }
+    const { data: unreviewed, error } = await q;
 
     if (error) throw error;
     if (!unreviewed || unreviewed.length === 0) {
-      return new Response(JSON.stringify({ message: "No completed matches", processed: 0 }), {
+      return new Response(JSON.stringify({ message: "No completed matches", processed: 0, next_cursor: null }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const matchIds = unreviewed.map((m: any) => m.id);
+    const lastMatchDate = unreviewed[unreviewed.length - 1].match_date;
 
-    // Fetch predictions and existing reviews in chunks
+    // Fetch predictions and existing reviews in chunks.
+    // In backfill mode we include low_quality predictions — the actual outcome is ground
+    // truth regardless of how confident the model was at prediction time.
     const chunkSize = 200;
     const allPreds: any[] = [];
     const allReviews: any[] = [];
     for (let i = 0; i < matchIds.length; i += chunkSize) {
       const chunk = matchIds.slice(i, i + chunkSize);
+      let predQ = supabase.from("predictions").select("*").in("match_id", chunk);
+      if (!isBackfill) predQ = predQ.neq("publish_status", "low_quality");
       const [{ data: preds }, { data: reviews }] = await Promise.all([
-        supabase.from("predictions").select("*").neq("publish_status", "low_quality").in("match_id", chunk),
+        predQ,
         supabase.from("prediction_reviews").select("match_id").in("match_id", chunk),
       ]);
       if (preds) allPreds.push(...preds);
