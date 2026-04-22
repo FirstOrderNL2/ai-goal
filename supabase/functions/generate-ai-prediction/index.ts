@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { computePublishGate, getLeagueReliability } from "../_shared/publish-gate.ts";
+import { checkAccess } from "../_shared/access-guard.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -383,7 +384,18 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { match_id } = await req.json();
+    const { match_id, system: systemCall } = await req.json();
+    // System/cron callers pass `system: true` with the service role key; user-triggered
+    // calls (from MatchDetail) require an active subscription or trial.
+    if (!systemCall) {
+      const access = await checkAccess(req);
+      if (!access.ok) {
+        return new Response(JSON.stringify({ error: access.message }), {
+          status: access.status,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
     if (!match_id) {
       return new Response(JSON.stringify({ error: "match_id required" }), {
         status: 400,
