@@ -53,6 +53,19 @@ serve(async (req) => {
     const stripePrice = prices.data[0];
     const isRecurring = stripePrice.type === "recurring";
 
+    // Ensure product has a tax_code so automatic_tax can compute (SaaS = txcd_10000000)
+    const productId = typeof stripePrice.product === "string" ? stripePrice.product : stripePrice.product?.id;
+    if (productId) {
+      try {
+        const product = await stripe.products.retrieve(productId);
+        if (!product.tax_code) {
+          await stripe.products.update(productId, { tax_code: "txcd_10000000" });
+        }
+      } catch (err) {
+        console.warn("Could not ensure product tax_code:", (err as Error).message);
+      }
+    }
+
     // Reuse existing customer if present
     const { data: existingSub } = await supabase
       .from("subscriptions")
