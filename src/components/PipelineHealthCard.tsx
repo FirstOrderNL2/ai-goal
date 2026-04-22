@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Activity, AlertTriangle, Brain, CheckCircle2, Clock, RefreshCw } from "lucide-react";
+import { Activity, AlertTriangle, Brain, CheckCircle2, Clock, RefreshCw, ShieldCheck, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 type Status = "success" | "partial" | "failed" | "pending";
@@ -23,6 +23,28 @@ function useMLReadiness() {
         label_coverage: number;
         ml_status: "collecting" | "ready";
         samples_to_target: number;
+      } | null;
+    },
+  });
+}
+
+function useDataIntegrity() {
+  return useQuery({
+    queryKey: ["data-integrity"],
+    refetchInterval: 120_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("data_integrity_v")
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+      return data as {
+        late_enrichment_count: number;
+        late_intelligence_count: number;
+        late_predictions_count: number;
+        prediction_coverage_24h_pct: number;
+        upcoming_24h_total: number;
+        recheck_distribution_24h: Record<string, number>;
       } | null;
     },
   });
@@ -95,6 +117,7 @@ function usePipelineHealth() {
 export function PipelineHealthCard() {
   const { data, isLoading } = usePipelineHealth();
   const { data: ml } = useMLReadiness();
+  const { data: integrity } = useDataIntegrity();
 
   const successPct = data ? Math.round(data.successPct * 1000) / 10 : 0;
   const failRatePct = data ? Math.round(data.failRate * 1000) / 10 : 0;
@@ -189,6 +212,92 @@ export function PipelineHealthCard() {
                 {ml.feature_snapshots.toLocaleString()} snapshots ·{" "}
                 {Math.round((ml.label_coverage ?? 0) * 100)}% coverage
               </span>
+            </div>
+          </div>
+        )}
+
+        {integrity && (
+          <div className="mt-4 rounded-lg border bg-card p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                {integrity.late_predictions_count === 0 &&
+                integrity.late_enrichment_count === 0 &&
+                integrity.late_intelligence_count === 0 ? (
+                  <ShieldCheck className="h-4 w-4 text-primary" />
+                ) : (
+                  <ShieldAlert className="h-4 w-4 text-destructive" />
+                )}
+                Data Integrity
+              </div>
+              <Badge
+                variant={
+                  integrity.late_predictions_count === 0 &&
+                  integrity.late_enrichment_count === 0 &&
+                  integrity.late_intelligence_count === 0
+                    ? "default"
+                    : "destructive"
+                }
+                className="text-xs"
+              >
+                {integrity.late_predictions_count +
+                  integrity.late_enrichment_count +
+                  integrity.late_intelligence_count}{" "}
+                leaks
+              </Badge>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <div>
+                <div className="text-muted-foreground">Coverage 24h</div>
+                <div className="text-base font-semibold">
+                  {integrity.prediction_coverage_24h_pct}%
+                </div>
+                <div className="text-muted-foreground">
+                  {integrity.upcoming_24h_total} matches
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Late predictions</div>
+                <div className="text-base font-semibold">
+                  {integrity.late_predictions_count}
+                </div>
+                <div className="text-muted-foreground">historical leaks</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Late enrichment</div>
+                <div className="text-base font-semibold">
+                  {integrity.late_enrichment_count}
+                </div>
+                <div className="text-muted-foreground">unfrozen post-KO</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Late intelligence</div>
+                <div className="text-base font-semibold">
+                  {integrity.late_intelligence_count}
+                </div>
+                <div className="text-muted-foreground">unfrozen post-KO</div>
+              </div>
+            </div>
+
+            <div className="mt-3 pt-3 border-t">
+              <div className="text-xs text-muted-foreground mb-1.5">
+                Recheck distribution (24h)
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {["initial", "recheck_60", "recheck_30", "recheck_15", "recheck_10", "recheck_5", "ht", "retry", "coverage_24h", "nightly_reconcile", "post_kickoff_blocked"].map((reason) => {
+                  const count = integrity.recheck_distribution_24h?.[reason] ?? 0;
+                  if (count === 0 && !["initial", "recheck_60", "recheck_30", "recheck_15", "recheck_10", "recheck_5"].includes(reason)) return null;
+                  return (
+                    <Badge
+                      key={reason}
+                      variant={count > 0 ? "secondary" : "outline"}
+                      className="text-xs"
+                    >
+                      {reason}: {count}
+                    </Badge>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}

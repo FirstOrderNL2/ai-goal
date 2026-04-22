@@ -632,6 +632,13 @@ export type Database = {
             foreignKeyName: "prediction_comments_prediction_id_fkey"
             columns: ["prediction_id"]
             isOneToOne: false
+            referencedRelation: "ml_ready_predictions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_comments_prediction_id_fkey"
+            columns: ["prediction_id"]
+            isOneToOne: false
             referencedRelation: "predictions"
             referencedColumns: ["id"]
           },
@@ -731,6 +738,13 @@ export type Database = {
             foreignKeyName: "prediction_reviews_prediction_id_fkey"
             columns: ["prediction_id"]
             isOneToOne: false
+            referencedRelation: "ml_ready_predictions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_reviews_prediction_id_fkey"
+            columns: ["prediction_id"]
+            isOneToOne: false
             referencedRelation: "predictions"
             referencedColumns: ["id"]
           },
@@ -759,6 +773,13 @@ export type Database = {
           vote_type?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "prediction_votes_prediction_id_fkey"
+            columns: ["prediction_id"]
+            isOneToOne: false
+            referencedRelation: "ml_ready_predictions"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "prediction_votes_prediction_id_fkey"
             columns: ["prediction_id"]
@@ -797,6 +818,7 @@ export type Database = {
           publish_status: string
           quality_score: number | null
           retry_count: number
+          snapshot_version: string
           training_only: boolean
           update_reason: string | null
         }
@@ -828,6 +850,7 @@ export type Database = {
           publish_status?: string
           quality_score?: number | null
           retry_count?: number
+          snapshot_version?: string
           training_only?: boolean
           update_reason?: string | null
         }
@@ -859,6 +882,7 @@ export type Database = {
           publish_status?: string
           quality_score?: number | null
           retry_count?: number
+          snapshot_version?: string
           training_only?: boolean
           update_reason?: string | null
         }
@@ -1120,6 +1144,17 @@ export type Database = {
       }
     }
     Views: {
+      data_integrity_v: {
+        Row: {
+          late_enrichment_count: number | null
+          late_intelligence_count: number | null
+          late_predictions_count: number | null
+          prediction_coverage_24h_pct: number | null
+          recheck_distribution_24h: Json | null
+          upcoming_24h_total: number | null
+        }
+        Relationships: []
+      }
       ml_readiness_v: {
         Row: {
           feature_snapshots: number | null
@@ -1129,6 +1164,39 @@ export type Database = {
           samples_to_target: number | null
         }
         Relationships: []
+      }
+      ml_ready_predictions: {
+        Row: {
+          away_win: number | null
+          btts: string | null
+          created_at: string | null
+          draw: number | null
+          expected_goals_away: number | null
+          expected_goals_home: number | null
+          feature_snapshot: Json | null
+          goals_away: number | null
+          goals_home: number | null
+          home_win: number | null
+          id: string | null
+          league: string | null
+          match_date: string | null
+          match_id: string | null
+          match_status: string | null
+          model_confidence: number | null
+          over_under_25: string | null
+          predicted_score_away: number | null
+          predicted_score_home: number | null
+          snapshot_version: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "predictions_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: true
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Functions: {

@@ -143,6 +143,26 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Post-kickoff guard: refuse to overwrite an existing prediction once the match has started.
+    // Backfill/training calls bypass this (they explicitly intend post-match writes).
+    if (!isTraining && !isBackfill) {
+      const matchDateMs = new Date((match as any).match_date).getTime();
+      if (Date.now() > matchDateMs) {
+        const { data: existingRow } = await supabase
+          .from("predictions")
+          .select("id")
+          .eq("match_id", match_id)
+          .maybeSingle();
+        if (existingRow) {
+          await writeLog(match_id, "skipped", "post_kickoff_blocked");
+          return new Response(
+            JSON.stringify({ success: true, skipped: true, reason: "post-kickoff, refusing to overwrite" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      }
+    }
+
     // Fetch data in parallel (including model_performance for calibration + enrichment)
     const [
       { data: odds },
@@ -767,7 +787,10 @@ Deno.serve(async (req) => {
       last_prediction_at: new Date().toISOString(),
       publish_status: publishStatus,
       quality_score: qualityScore,
-      feature_snapshot,
+      feature_snapshot: feature_snapshot
+        ? { ...(feature_snapshot as any), snapshot_version: "v1" }
+        : feature_snapshot,
+      snapshot_version: "v1",
       training_only: isTraining,
       generation_status: generationStatus,
       retry_count: 0,

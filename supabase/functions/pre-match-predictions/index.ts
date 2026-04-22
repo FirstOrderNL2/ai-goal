@@ -333,6 +333,41 @@ Deno.serve(async (req) => {
     }
   }
 
+  // ── Phase F: 24h coverage sweep — every upcoming match in next 24h must have a prediction row ──
+  // Catches matches that slipped past Phase A's 300-match cap or were created mid-cycle.
+  {
+    const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    const { data: next24h } = await supabase
+      .from("matches")
+      .select("id, predictions(match_id)")
+      .eq("status", "upcoming")
+      .gte("match_date", now.toISOString())
+      .lte("match_date", in24h)
+      .order("match_date", { ascending: true })
+      .limit(200);
+
+    if (next24h && next24h.length > 0) {
+      let coverageFilled = 0;
+      const COVERAGE_CAP = 20;
+      for (const m of next24h as any[]) {
+        if (coverageFilled >= COVERAGE_CAP) break;
+        const hasPred = Array.isArray(m.predictions) ? m.predictions.length > 0 : !!m.predictions;
+        if (hasPred) continue;
+
+        await callEnrich(m.id).catch(() => {});
+        await callImportance(m.id).catch(() => {});
+        await callFIL(m.id).catch(() => {});
+        const ok = await predictWithRetry(m.id, "coverage_24h");
+        log.push(`phase-f coverage-24h: ${m.id} → ${ok ? "FILLED" : "FAILED"}`);
+        if (ok) {
+          coverageFilled++;
+          totalProcessed++;
+        }
+        await new Promise((r) => setTimeout(r, 600));
+      }
+    }
+  }
+
   return new Response(
     JSON.stringify({ processed: totalProcessed, log }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
