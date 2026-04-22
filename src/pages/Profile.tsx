@@ -204,7 +204,59 @@ export default function Profile() {
             )}
           </CardContent>
         </Card>
+
+        {/* Subscription */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              Subscription
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {subscription.loading ? (
+              <div className="text-sm text-muted-foreground">Loading…</div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <Badge variant="outline" className="capitalize">
+                    {subscription.tier === "active" ? "Premium" : subscription.tier ?? "—"}
+                  </Badge>
+                  {subscription.daysLeft != null && subscription.tier === "trial" && (
+                    <span className="text-sm text-muted-foreground">
+                      {subscription.daysLeft} day{subscription.daysLeft === 1 ? "" : "s"} of trial left
+                    </span>
+                  )}
+                  {subscription.tier === "active" && subscription.currentPeriodEnd && (
+                    <span className="text-sm text-muted-foreground">
+                      Next bill: {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
+                    </span>
+                  )}
+                  {subscription.tier === "canceled" && subscription.currentPeriodEnd && (
+                    <span className="text-sm text-muted-foreground">
+                      Access until {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+
+                {subscription.tier === "active" || subscription.tier === "canceled" || subscription.tier === "past_due" ? (
+                  <Button onClick={openCustomerPortal} disabled={portalLoading} variant="outline" className="w-full">
+                    {portalLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ExternalLink className="h-4 w-4 mr-2" />}
+                    Manage subscription
+                  </Button>
+                ) : (
+                  <Button asChild className="w-full">
+                    <Link to={`${langPrefix}/upgrade`}>
+                      <Sparkles className="h-4 w-4 mr-2" /> Upgrade to Premium · €10/mo
+                    </Link>
+                  </Button>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
 }
+
