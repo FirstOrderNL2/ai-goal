@@ -12,7 +12,24 @@ interface Props {
 
 export function PredictionComparisonCard({ prediction, homeTeamName, awayTeamName }: Props) {
   const snapshot = prediction.pre_match_snapshot as Record<string, unknown> | null;
-  if (!snapshot) return null;
+  if (!snapshot) {
+    return (
+      <Card className="border-border/50">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <GitCompareArrows className="h-4 w-4 text-primary" />
+            Pre-Match vs Halftime Prediction
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            A pre-match snapshot is captured ~60 minutes before kickoff. Once the match reaches
+            halftime, the live model is compared side-by-side here.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const pre = {
     home_win: Number(snapshot.home_win ?? 0),
