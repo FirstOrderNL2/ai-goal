@@ -22,6 +22,20 @@ const leagues = [
   { value: "Euro Championship", label: "Euro" },
   { value: "Copa America", label: "Copa América" },
   { value: "Women's Champions League", label: "UWCL" },
+  { value: "Primeira Liga", label: "Primeira" },
+  { value: "Jupiler Pro League", label: "Pro League" },
+  { value: "Süper Lig", label: "Süper Lig" },
+  { value: "Premiership", label: "Premiership" },
+  { value: "Super League", label: "Super League CH" },
+  { value: "Bundesliga Austria", label: "Bundesliga AT" },
+  { value: "Super League 1", label: "Super League GR" },
+  { value: "Superliga", label: "Superliga" },
+  { value: "Allsvenskan", label: "Allsvenskan" },
+  { value: "Eliteserien", label: "Eliteserien" },
+  { value: "Ekstraklasa", label: "Ekstraklasa" },
+  { value: "Chance Liga", label: "Chance Liga" },
+  { value: "HNL", label: "HNL" },
+  { value: "Premier League Ukraine", label: "Ukraine PL" },
 ];
 
 interface LeagueFilterProps {

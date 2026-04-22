@@ -72,6 +72,20 @@ export const LEAGUE_SEASONS: Record<string, { label: string; seasonId: string; l
     league: "Eredivisie",
     country: "Netherlands",
   },
+  primeira_liga: { label: "Primeira Liga", seasonId: "", league: "Primeira Liga", country: "Portugal" },
+  jupiler_pro_league: { label: "Jupiler Pro League", seasonId: "", league: "Jupiler Pro League", country: "Belgium" },
+  super_lig: { label: "Süper Lig", seasonId: "", league: "Süper Lig", country: "Turkey" },
+  scottish_premiership: { label: "Premiership", seasonId: "", league: "Premiership", country: "Scotland" },
+  swiss_super_league: { label: "Super League", seasonId: "", league: "Super League", country: "Switzerland" },
+  austrian_bundesliga: { label: "Bundesliga Austria", seasonId: "", league: "Bundesliga Austria", country: "Austria" },
+  greek_super_league: { label: "Super League 1", seasonId: "", league: "Super League 1", country: "Greece" },
+  danish_superliga: { label: "Superliga", seasonId: "", league: "Superliga", country: "Denmark" },
+  allsvenskan: { label: "Allsvenskan", seasonId: "", league: "Allsvenskan", country: "Sweden" },
+  eliteserien: { label: "Eliteserien", seasonId: "", league: "Eliteserien", country: "Norway" },
+  ekstraklasa: { label: "Ekstraklasa", seasonId: "", league: "Ekstraklasa", country: "Poland" },
+  chance_liga: { label: "Chance Liga", seasonId: "", league: "Chance Liga", country: "Czech Republic" },
+  hnl: { label: "HNL", seasonId: "", league: "HNL", country: "Croatia" },
+  ukraine_premier_league: { label: "Premier League Ukraine", seasonId: "", league: "Premier League Ukraine", country: "Ukraine" },
 };
 
 // Sportradar competition ID → season key mapping
@@ -234,6 +248,72 @@ export const TEAM_NAME_ALIASES: Record<string, string> = {
   "as saint-etienne": "saint-etienne",
   "angers sco": "angers",
   "aj auxerre": "auxerre",
+  // Portugal
+  "fc porto": "porto",
+  "sl benfica": "benfica",
+  "sporting cp": "sporting",
+  "sc braga": "braga",
+  "vitória sc": "vitoria sc",
+  // Belgium
+  "club brugge kv": "club brugge",
+  "rsc anderlecht": "anderlecht",
+  "kaa gent": "gent",
+  "royal antwerp fc": "antwerp",
+  "kr genk": "genk",
+  "rc genk": "genk",
+  // Turkey
+  "galatasaray sk": "galatasaray",
+  "fenerbahçe sk": "fenerbahce",
+  "fenerbahce sk": "fenerbahce",
+  "beşiktaş jk": "besiktas",
+  "besiktas jk": "besiktas",
+  "trabzonspor": "trabzonspor",
+  // Scotland
+  "celtic fc": "celtic",
+  "rangers fc": "rangers",
+  "heart of midlothian": "hearts",
+  "hibernian fc": "hibernian",
+  // Switzerland
+  "bsc young boys": "young boys",
+  "fc basel 1893": "basel",
+  "fc zürich": "zurich",
+  "fc zurich": "zurich",
+  // Austria
+  "fc red bull salzburg": "red bull salzburg",
+  "sk rapid wien": "rapid wien",
+  "sk sturm graz": "sturm graz",
+  // Greece
+  "olympiacos fc": "olympiacos",
+  "panathinaikos fc": "panathinaikos",
+  "paok fc": "paok",
+  "aek athens fc": "aek athens",
+  // Denmark
+  "fc copenhagen": "copenhagen",
+  "fc midtjylland": "midtjylland",
+  "brøndby if": "brondby",
+  "brondby if": "brondby",
+  // Sweden
+  "malmö ff": "malmo",
+  "malmo ff": "malmo",
+  "aik stockholm": "aik",
+  "djurgårdens if": "djurgardens",
+  // Norway
+  "molde fk": "molde",
+  "rosenborg bk": "rosenborg",
+  "bodø/glimt": "bodo glimt",
+  "fk bodø/glimt": "bodo glimt",
+  // Poland
+  "legia warszawa": "legia warsaw",
+  "lech poznań": "lech poznan",
+  // Czech Republic
+  "ac sparta praha": "sparta prague",
+  "sk slavia praha": "slavia prague",
+  // Croatia
+  "gnk dinamo zagreb": "dinamo zagreb",
+  "hnk hajduk split": "hajduk split",
+  // Ukraine
+  "fc shakhtar donetsk": "shakhtar donetsk",
+  "fc dynamo kyiv": "dynamo kyiv",
 };
 
 // Resolve a team name to its canonical form
