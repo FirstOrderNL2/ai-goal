@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { computePublishGate, getLeagueReliability } from "../_shared/publish-gate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -393,13 +394,8 @@ Deno.serve(async (req) => {
       lambdaAway *= 0.97;
     }
 
-    // League strength reliability factor (scales confidence later)
-    const leagueReliability: Record<string, number> = {
-      "premier league": 1.0, "bundesliga": 1.0, "la liga": 0.95,
-      "serie a": 0.95, "ligue 1": 0.9, "eredivisie": 0.85,
-      "championship": 0.75, "keuken kampioen divisie": 0.7,
-    };
-    const leagueRelFactor = leagueReliability[match.league.toLowerCase()] ?? 0.85;
+    // League strength reliability factor (scales confidence later) — shared with generate-ai-prediction
+    const leagueRelFactor = getLeagueReliability(match.league);
 
     // Championship special handling: 30% lambda regression toward league means
     if (match.league.toLowerCase().includes("championship") || match.league.toLowerCase().includes("keuken kampioen")) {
@@ -627,25 +623,23 @@ Deno.serve(async (req) => {
     const overUnder = goalLines.over_2_5 > 0.5 ? "over" : "under";
     const btts = poissonBtts >= 0.5 ? "yes" : "no";
 
-    // ── P6: Publish gate (graduated) ──
-    // Only "low_quality" when truly broken: missing both team IDs OR league reliability collapsed.
-    // For thin data (new leagues, etc.) publish in "partial" mode with capped confidence + caveat.
+    // ── P6: Publish gate (shared with generate-ai-prediction) ──
+    const gate = computePublishGate({
+      dataQuality,
+      leagueRelFactor,
+      hasAnyTeamId: !!(match.team_home_id || match.team_away_id),
+      confidence,
+    });
+    confidence = gate.cappedConfidence;
+    const isPartial = gate.isPartial;
+    const isSoftBand = gate.isSoftBand;
+    const isBroken = gate.isBroken;
+    const generationStatus = gate.generationStatus;
+    // Training-mode predictions are never user-visible.
+    const publishStatus = isTraining ? "training_only" : gate.publishStatus;
     const qualityScore = Math.round(
       (0.55 * dataQuality + 0.30 * leagueRelFactor + 0.15 * Math.min(1, confidence / 0.6)) * 1000
     ) / 1000;
-    const isPartial = dataQuality < 0.30;
-    const isSoftBand = dataQuality >= 0.30 && dataQuality < 0.45;
-    const isBroken = leagueRelFactor < 0.50 || (!match.team_home_id && !match.team_away_id);
-    const computedPublishStatus = isBroken ? "low_quality" : "published";
-    // Cap confidence so the UI doesn't overstate when data is thin.
-    if (isPartial && computedPublishStatus === "published") {
-      confidence = Math.min(confidence, 0.40);
-    } else if (isSoftBand && computedPublishStatus === "published") {
-      confidence = Math.min(confidence, 0.45);
-    }
-    const generationStatus = isBroken ? "failed" : (isPartial ? "partial" : "success");
-    // Training-mode predictions are never user-visible.
-    const publishStatus = isTraining ? "training_only" : computedPublishStatus;
 
     // ── ML feature snapshot (Phase 1) ──
     // Immutable record of every input used at prediction time, for offline ML training.

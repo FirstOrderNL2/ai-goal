@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { computePublishGate, getLeagueReliability } from "../_shared/publish-gate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1124,26 +1125,21 @@ IMPORTANT:
       statsAnchors.poisson_btts ?? null
     );
 
-    // ── Recompute publish gate (mirrors generate-statistical-prediction P6 logic) ──
-    // Inline league reliability table — keep in sync with statistical prediction.
-    const leagueReliabilityTable: Record<string, number> = {
-      "premier league": 1.0, "bundesliga": 1.0, "la liga": 0.95,
-      "serie a": 0.95, "ligue 1": 0.9, "eredivisie": 0.85,
-      "championship": 0.75, "keuken kampioen divisie": 0.7,
-    };
-    const leagueRelFactor = leagueReliabilityTable[(match.league || "").toLowerCase()] ?? 0.85;
-    const isSoftBand = dataQuality >= 0.30 && dataQuality < 0.45;
-    const publishStatus =
-      dataQuality < 0.30 || leagueRelFactor < 0.75 || blendedConfidence < 0.30
-        ? "low_quality"
-        : "published";
-    if (isSoftBand && publishStatus === "published") {
-      blendedConfidence = Math.min(blendedConfidence, 0.45);
-    }
+    // ── Publish gate (shared with generate-statistical-prediction) ──
+    const leagueRelFactor = getLeagueReliability(match.league);
+    const hasAnyTeamId = !!(match.team_home_id || match.team_away_id);
+    const gate = computePublishGate({
+      dataQuality,
+      leagueRelFactor,
+      hasAnyTeamId,
+      confidence: blendedConfidence,
+    });
+    blendedConfidence = gate.cappedConfidence;
+    const publishStatus = gate.publishStatus;
     const qualityScore = Math.round(
       (0.55 * dataQuality + 0.30 * leagueRelFactor + 0.15 * Math.min(1, blendedConfidence / 0.6)) * 1000
     ) / 1000;
-    const finalReasoning = isSoftBand
+    const finalReasoning = (gate.isPartial || gate.isSoftBand)
       ? `⚠️ Limited stats — early signal only. Confidence capped while team data backfills.\n\n${reasoning}`
       : reasoning;
 
