@@ -1,101 +1,84 @@
 
 
-# Reliability hardening + 100% prediction visibility
+# Fix: AI prediction overwrites publish gate too strictly, hiding valid matches
 
-## What I found in the audit
+## Root cause
 
-- **Coverage:** All 222 upcoming matches in the next 7 days already have a prediction. There is no missing-prediction problem at the generation layer.
-- **The real problem:** 10 matches today are hidden because `publish_status='low_quality'` — every one of them is in a newly-added league (Super League 1, HNL, Ukraine PL, Superliga, Bundesliga AT) with `data_quality ∈ {0, 0.25}` because `team_statistics` for those leagues haven't been backfilled yet. The publish gate kills them even though a prediction exists.
-- **Cadence:** `pre-match-predictions` already runs every 10 min and covers Phase A (initial), Phase B (T-60 refresh, 9-min cooldown), Phase C (HT snapshot). Auto-sync runs every 4 h.
-- **Missing observability:** no `prediction_logs` table, no per-match status (`pending|success|failed`), no retry tracking, no surfaced metrics on the Accuracy page.
+`generate-ai-prediction/index.ts` (lines 1127–1145) has its own **stricter** publish gate that overwrites the one from `generate-statistical-prediction`. For HNK Gorica vs Vukovar (HNL):
 
-The plan below is scoped to what is actually broken and what unlocks the user's stated goal: **every match visibly predicted before kickoff, with self-healing + observability**. I am intentionally not building a separate `ensure-predictions` watchdog — `pre-match-predictions` already does that job; I'll harden it instead.
+- Statistical pass: `data_quality=0.475`, `league_reliability=0.85`, `confidence=0.338` → **published** ✅
+- AI pass runs after, recomputes `blendedConfidence ≈ 0.28` (drops below 0.30 because predictionCertainty is low when max prob ≈ 38%) → **stamps `low_quality`** ❌
 
----
+Three concrete bugs in the AI gate:
 
-## Changes
+1. **Stricter `blendedConfidence < 0.30` floor** that the statistical gate doesn't have. Any match where the model is uncertain (close 3-way race) gets killed even with good data.
+2. **Stricter `leagueRelFactor < 0.75`** vs statistical's `< 0.50`. Auto-kills Championship-tier and below.
+3. **Hardcoded league reliability table** drifting out of sync with `generate-statistical-prediction`'s authoritative table — every league not listed silently defaults to 0.85 (works by luck, but invites future regressions).
 
-### 1. Visibility — show predictions for new-league matches (the user's core complaint)
+The statistical function's gate (line 638) is the correct one. The AI function should **mirror it exactly**, not invent its own.
 
-**`supabase/functions/generate-statistical-prediction/index.ts`**
-- When `data_quality < 0.30`, instead of stamping `low_quality`, publish with `data_quality = "partial"` flag in `feature_snapshot`, cap `model_confidence` at 0.40, and prepend `⚠️ Limited stats — early signal only` to `ai_reasoning`. This matches what we already do for the 0.30–0.45 soft band.
-- Keep `low_quality` only for the genuinely broken case: `leagueRelFactor < 0.50` **or** missing both team IDs.
+## Fix
 
-**One-shot SQL update:** flip the 10 currently-hidden `low_quality` rows to `published` (with capped confidence + caveat) so today's matches surface immediately.
+### `supabase/functions/generate-ai-prediction/index.ts` (lines 1127–1148)
 
-### 2. Self-healing — retry + status tracking on the predictions table
+Replace the AI-side publish gate with the **same** logic as `generate-statistical-prediction` P6:
 
-**Migration:** add to `predictions`:
-- `generation_status text default 'success'` — `pending | success | failed | partial`
-- `retry_count int default 0`
-- `last_error text`
-- `update_reason text` — `initial | recheck_60 | recheck_30 | recheck_10 | ht | manual`
+```ts
+const isSoftBand = dataQuality >= 0.30 && dataQuality < 0.45;
+const isPartial  = dataQuality < 0.30;
+const isBroken   = leagueRelFactor < 0.50 || (!match.team_home_id && !match.team_away_id);
+const publishStatus = isBroken ? "low_quality" : "published";
 
-**`generate-statistical-prediction`:** wrap the main pipeline in try/catch. On failure, upsert a row with `generation_status='failed'`, `last_error`, `retry_count++`. On success set `generation_status` to `success` or `partial`. Stamp `update_reason` from the request body (default `initial`).
-
-### 3. Tighter recheck windows + dependency readiness
-
-**`supabase/functions/pre-match-predictions/index.ts`** — Phase B currently uses one window (T-60) with a 9-min cooldown. Replace with explicit checkpoints:
-- T-60, T-30, T-15, T-10, T-5 (skip if already refreshed in the matching window).
-- Before each refresh, do a fast readiness probe: `match_features` row exists? If not, call `compute-features` first, then proceed regardless (fallback mode → `data_quality='partial'`).
-- On failure, increment `retry_count` (max 3 with exponential backoff handled inside the same loop tick: 0s → 5s → 15s).
-
-Also raise the per-tick caps: `needsInitialPrediction` 15→30, Phase B refresh 5→10. The function easily fits in the 10-min cron window.
-
-### 4. Watchdog safety net (lightweight — no new function)
-
-Add a Phase D to `pre-match-predictions`: any upcoming match in the next 24h with `generation_status IN ('failed','pending')` AND `retry_count < 3` → re-queue immediately. This is the "no match without a prediction" guarantee, but reuses existing infra.
-
-### 5. Observability
-
-**Migration:** new `prediction_logs` table:
+// Cap confidence so UI doesn't overstate when data is thin (matches statistical pass)
+if (isSoftBand && publishStatus === "published") {
+  blendedConfidence = Math.min(blendedConfidence, 0.45);
+}
+if (isPartial && publishStatus === "published") {
+  blendedConfidence = Math.min(blendedConfidence, 0.40);
+}
 ```
-id uuid pk, match_id uuid, action text, status text, error text,
-update_reason text, latency_ms int, created_at timestamptz default now()
+
+Drop the `blendedConfidence < 0.30` and `leagueRelFactor < 0.75` clauses entirely — they're not in the statistical gate and they're what's incorrectly hiding this match.
+
+### Also: import the shared league reliability table instead of hardcoding it
+
+Read it from the same source `generate-statistical-prediction` uses (or pull both into a small shared helper file `supabase/functions/_shared/publish-gate.ts`). Pragmatic approach: extract the table + gate into one shared module both functions import. Eliminates drift permanently.
+
+### One-shot SQL update
+
+Re-publish currently-hidden upcoming matches that pass the corrected gate (today only the HNL match qualifies, but it'll keep working as new ones surface):
+
+```sql
+UPDATE predictions
+SET publish_status='published',
+    model_confidence=LEAST(model_confidence, 0.45),
+    update_reason='gate_fix'
+WHERE publish_status='low_quality'
+  AND training_only=false
+  AND (feature_snapshot->>'data_quality')::numeric >= 0.30
+  AND (feature_snapshot->>'league_reliability')::numeric >= 0.50
+  AND match_id IN (SELECT id FROM matches WHERE match_date > now());
 ```
-RLS: public SELECT (it's operational data, no PII).
 
-Both `generate-statistical-prediction` and `pre-match-predictions` write one row per attempt: `action ∈ {generate, recheck, ht_snapshot, retry}`.
+### Console warning cleanup
 
-### 6. Accuracy dashboard — pipeline health card
-
-**`src/pages/Accuracy.tsx`**: add a "Prediction Pipeline Health" card showing live metrics from `prediction_logs` + `predictions`:
-- % of next-24h matches with `generation_status='success'`
-- Failure rate (last 24h)
-- Avg prediction freshness (minutes since `last_prediction_at`) for matches starting in <60 min
-- Count of matches in `partial` mode (new leagues)
-
-### 7. Backfill team_statistics for new leagues (root cause of `data_quality=0`)
-
-One-shot trigger of `auto-sync` with `mode:"full"` after deploy. Standing fix already in place via the 4-hourly cron — this just accelerates it for the 14 new leagues added last session.
-
-### 8. Frontend visibility audit (`src/hooks/useMatches.ts`)
-
-Filter logic is correct (`training_only=false AND publish_status='published'`). No change needed once the `low_quality` rows are flipped. I'll add one defensive log so future hidden predictions are visible in console during dev.
-
----
+The dev-only `console.warn` in `useMatches.ts` from the last pass should now stay quiet for valid predictions — leave it as-is to catch future regressions.
 
 ## Files touched
 
-- `supabase/functions/generate-statistical-prediction/index.ts` — partial-mode publishing + status tracking + log writes
-- `supabase/functions/pre-match-predictions/index.ts` — explicit T-60/30/15/10/5 windows, Phase D watchdog, readiness probe, retry+backoff
-- `src/pages/Accuracy.tsx` — Pipeline Health card
-- `src/hooks/useMatches.ts` — defensive console warning for hidden preds
-- Migration: add columns to `predictions`, create `prediction_logs` + RLS
-- One-shot UPDATE on existing `low_quality` rows
-- One-shot invocation of `auto-sync` with `mode:"full"`
+- `supabase/functions/generate-ai-prediction/index.ts` — replace gate (lines 1127–1148) with statistical-aligned version
+- New `supabase/functions/_shared/publish-gate.ts` — single source of truth for `leagueReliabilityTable` and `computePublishGate({dataQuality, leagueRelFactor, hasAnyTeamId, blendedConfidence})`
+- `supabase/functions/generate-statistical-prediction/index.ts` — refactor P6 to call the shared helper (no behaviour change, prevents future drift)
+- One-shot UPDATE on `predictions`
 
 ## Out of scope
 
-- New `ensure-predictions` edge function — `pre-match-predictions` already does this; adding another would just compete for the cron slot.
-- Changing the AI prediction path (`generate-ai-prediction`) — it already inherits the published flag from the statistical pass after the previous fix.
-- ML weight changes / model retraining.
+- No change to confidence thresholds elsewhere, no UI changes — once `publish_status='published'`, the existing `MatchDetail` rendering renders AI Verdict, probabilities, BTTS/OU automatically.
+- No new edge function, no schema change.
 
-## Success criteria (verifiable)
+## Success criteria
 
-- 0 upcoming matches with `publish_status='low_quality'` in the next 24h after deploy.
-- Today's Greek SL1, HNL, Ukraine, Superliga, Bundesliga AT matches show AI Verdict + probability bars on `/dashboard`.
-- `prediction_logs` table populating with at least one row per match per cron tick.
-- `/accuracy` shows ≥ 99% pipeline success rate.
-- Within 10 min of any failure, automatic retry visible in `prediction_logs`.
+- `/en/match/aca999dc-…` (HNK Gorica vs Vukovar) shows AI Verdict + probability bars within 30s of deploy (capped at 45% confidence with "Limited stats" caveat since `data_quality=0.475` is in soft band).
+- Both edge functions write identical `publish_status` for the same match — no more silent overrides.
+- Next 24h hidden count drops from 1 → 0 immediately; new mismatches surface only when truly broken (`leagueRelFactor < 0.50` or both teams missing).
 
