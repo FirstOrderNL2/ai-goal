@@ -27,6 +27,7 @@ async function fetchPipelineCounts() {
     { count: artifactsShadow },
     { count: artifactsChampion },
     { data: lastJobs },
+    { data: dailySnapshots },
   ] = await Promise.all([
     supabase.from("prediction_runs").select("id", { count: "exact", head: true }).eq("run_type", "pre_match"),
     supabase.from("prediction_runs").select("id", { count: "exact", head: true }).eq("run_type", "pre_match").gte("created_at", sinceDay),
@@ -42,6 +43,7 @@ async function fetchPipelineCounts() {
     supabase.from("model_artifacts").select("id", { count: "exact", head: true }).eq("status", "shadow"),
     supabase.from("model_artifacts").select("id", { count: "exact", head: true }).eq("status", "champion"),
     supabase.from("training_jobs").select("id, status, decision, n_train, n_holdout, created_at").order("created_at", { ascending: false }).limit(5),
+    supabase.from("pipeline_health").select("created_at, details").eq("check_type", "daily_counters").order("created_at", { ascending: false }).limit(14),
   ]);
 
   return {
