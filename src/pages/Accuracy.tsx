@@ -86,6 +86,8 @@ export default function Accuracy() {
   const { data: publishStats } = usePredictionPublishStats();
   const [computing, setComputing] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const { user } = useAuth();
+  const admin = isAdmin(user);
 
   // Local computation from completed matches (fallback when no model_performance row)
   const stats = completed
