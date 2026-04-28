@@ -748,65 +748,14 @@ Deno.serve(async (req) => {
     }
 
     // ════════════════════════════════════════════
-    // P3: Predictions — FULL mode only, use our own Poisson model
-    // Skip API predictions endpoint entirely to save calls
+    // Predictions are NO LONGER written here.
+    // sync-football-data ingests data only. The prediction pipeline
+    // (pre-match-predictions → generate-statistical-prediction →
+    // generate-ai-prediction) is responsible for all prediction writes.
+    // Writing low-fidelity fallback rows here previously blocked the
+    // richer pipeline because pre-match-predictions only generates
+    // "initial" predictions for matches with no existing row.
     // ════════════════════════════════════════════
-    if (mode === "full") {
-      const unpredicted = allUpcomingFixtures.filter((f: any) => mapStatus(f.fixture.status.short) === "upcoming");
-      // Check which already have predictions
-      const upcomingMatchIdsForPred = unpredicted
-        .map(f => matchUuidMap.get(f.fixture.id))
-        .filter(Boolean) as string[];
-      const { data: existingPreds } = await supabase.from("predictions")
-        .select("match_id").in("match_id", upcomingMatchIdsForPred.slice(0, 100));
-      const existingPredSet = new Set((existingPreds ?? []).map(r => r.match_id));
-
-      for (const f of unpredicted) {
-        const matchId = matchUuidMap.get(f.fixture.id);
-        if (!matchId || existingPredSet.has(matchId)) continue;
-
-        // Use league average goals as fallback (1.3 home, 1.1 away)
-        const homeGoalAvg = 1.3;
-        const awayGoalAvg = 1.1;
-
-        // Try to get team stats from DB for better estimates
-        const homeUuid = globalTeamUuidMap.get(f.teams.home.id);
-        const awayUuid = globalTeamUuidMap.get(f.teams.away.id);
-        let lambdaH = homeGoalAvg, lambdaA = awayGoalAvg;
-
-        if (homeUuid && awayUuid) {
-          const { data: homeStats } = await supabase.from("team_statistics")
-            .select("avg_goals_scored, avg_goals_conceded").eq("team_id", homeUuid).single();
-          const { data: awayStats } = await supabase.from("team_statistics")
-            .select("avg_goals_scored, avg_goals_conceded").eq("team_id", awayUuid).single();
-          if (homeStats && awayStats) {
-            lambdaH = (Number(homeStats.avg_goals_scored) + Number(awayStats.avg_goals_conceded)) / 2;
-            lambdaA = (Number(awayStats.avg_goals_scored) + Number(homeStats.avg_goals_conceded)) / 2;
-          }
-        }
-
-        const goalLines = computeGoalLines(lambdaH, lambdaA);
-        const homeWin = poissonHomeWin(lambdaH, lambdaA);
-        const drawProb = poissonDraw(lambdaH, lambdaA);
-        const awayWin = 1 - homeWin - drawProb;
-
-        const { error } = await supabase.from("predictions").upsert({
-          match_id: matchId,
-          home_win: Math.round(homeWin * 1000) / 1000,
-          draw: Math.round(drawProb * 1000) / 1000,
-          away_win: Math.round(awayWin * 1000) / 1000,
-          expected_goals_home: Math.round(lambdaH * 100) / 100,
-          expected_goals_away: Math.round(lambdaA * 100) / 100,
-          over_under_25: goalLines.over_2_5 > 0.5 ? "over" : "under",
-          model_confidence: Math.max(homeWin, drawProb, awayWin),
-          goal_lines: goalLines,
-          goal_distribution: computeGoalDistribution(lambdaH, lambdaA),
-          best_pick: findBestPick(goalLines),
-          best_pick_confidence: Math.max(...Object.values(goalLines)),
-        }, { onConflict: "match_id" });
-        if (!error) summary.predictions++;
-      }
-    }
 
     // ════════════════════════════════════════════
     // P3: Players — FULL mode only, domestic leagues
