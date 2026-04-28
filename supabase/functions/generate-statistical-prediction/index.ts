@@ -852,9 +852,9 @@ Deno.serve(async (req) => {
     // Upsert prediction (serving projection of latest run)
     const { error: upsertErr } = await supabase.from("predictions").upsert({
       match_id,
-      home_win: probabilities.home_win,
-      draw: probabilities.draw,
-      away_win: probabilities.away_win,
+      home_win: runProbabilities.home_win,
+      draw: runProbabilities.draw,
+      away_win: runProbabilities.away_win,
       expected_goals_home: Math.round(lambdaHome * 10) / 10,
       expected_goals_away: Math.round(lambdaAway * 10) / 10,
       predicted_score_home: bestScore.h,
@@ -866,7 +866,7 @@ Deno.serve(async (req) => {
       goal_distribution: goalDist,
       best_pick: bestPickResult.pick,
       best_pick_confidence: Math.round(bestPickResult.confidence * 1000) / 1000,
-      last_prediction_at: nowIso,
+      last_prediction_at: runNowIso,
       publish_status: publishStatus,
       quality_score: qualityScore,
       feature_snapshot: feature_snapshot
