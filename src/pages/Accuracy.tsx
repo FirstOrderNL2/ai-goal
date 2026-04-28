@@ -295,14 +295,18 @@ export default function Accuracy() {
                 )}
               </Badge>
             )}
-            <button onClick={runBatchReview} disabled={reviewing}
-              className="text-xs px-3 py-1.5 rounded-md bg-muted text-muted-foreground hover:bg-muted/80 disabled:opacity-50">
-              {reviewing ? "Reviewing…" : "Batch Review"}
-            </button>
-            <button onClick={runCompute} disabled={computing}
-              className="text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
-              {computing ? "Computing…" : "Refresh Metrics"}
-            </button>
+            {admin && (
+              <>
+                <button onClick={runBatchReview} disabled={reviewing}
+                  className="text-xs px-3 py-1.5 rounded-md bg-muted text-muted-foreground hover:bg-muted/80 disabled:opacity-50">
+                  {reviewing ? "Reviewing…" : "Batch Review"}
+                </button>
+                <button onClick={runCompute} disabled={computing}
+                  className="text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                  {computing ? "Computing…" : "Refresh Metrics"}
+                </button>
+              </>
+            )}
           </div>
         </div>
 
