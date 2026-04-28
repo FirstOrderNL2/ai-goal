@@ -188,6 +188,8 @@ function evaluateOn(
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.resp;
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
