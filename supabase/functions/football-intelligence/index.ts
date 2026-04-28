@@ -339,10 +339,11 @@ xG: ${prediction.expected_goals_home} - ${prediction.expected_goals_away}`;
     // Clamp confidence adjustment
     const confAdj = Math.max(-0.1, Math.min(0.1, fil.confidence_adjustment || 0));
 
-    // Upsert into match_intelligence — freeze if still pre-match.
+    // Upsert into match_intelligence — only freeze inside T-2h window so earlier
+    // runs don't lock in stale data and block lineup/news improvements.
     const nowMs = Date.now();
     const matchTs = (match as any).match_date ? new Date((match as any).match_date).getTime() : nowMs;
-    const isPreMatch = nowMs < matchTs;
+    const minutesToKickoff = (matchTs - nowMs) / 60000;
     const intelRow: Record<string, unknown> = {
       match_id,
       player_impacts: fil.player_impacts || [],
@@ -355,9 +356,14 @@ xG: ${prediction.expected_goals_home} - ${prediction.expected_goals_away}`;
       confidence_adjustment: Math.round(confAdj * 1000) / 1000,
       generated_at: new Date().toISOString(),
     };
-    if (isPreMatch) {
+    if (minutesToKickoff > 0 && minutesToKickoff <= 120) {
+      // Within T-2h: freeze for downstream snapshots.
       intelRow.frozen_at = new Date().toISOString();
       intelRow.frozen_for_match_date = (match as any).match_date;
+    } else {
+      // Earlier or post-kickoff: leave mutable so later runs can refresh.
+      intelRow.frozen_at = null;
+      intelRow.frozen_for_match_date = null;
     }
     const { error: upsertErr } = await supabase
       .from("match_intelligence")
