@@ -319,11 +319,12 @@ Deno.serve(async (req) => {
     }
 
     // ── Upsert enrichment data ──
-    // Freeze the row when we are still strictly pre-match. After kickoff it
-    // becomes immutable so historical training snapshots cannot be corrupted.
+    // Only freeze in the authoritative window (T-2h or later). Earlier writes
+    // remain mutable so late-arriving lineups + injuries can flow in.
     const nowMs = Date.now();
     const matchTs = (match as any).match_date ? new Date((match as any).match_date).getTime() : nowMs;
-    const isPreMatch = nowMs < matchTs;
+    const minutesToKickoffOut = (matchTs - nowMs) / 60000;
+    const shouldFreeze = minutesToKickoffOut <= 120; // T-2h or later
     const enrichment: Record<string, unknown> = {
       match_id,
       key_player_missing_home: keyPlayerMissingHome,
@@ -341,9 +342,13 @@ Deno.serve(async (req) => {
       enriched_at: new Date().toISOString(),
       sources,
     };
-    if (isPreMatch) {
+    if (shouldFreeze) {
       enrichment.frozen_at = new Date().toISOString();
       enrichment.frozen_for_match_date = (match as any).match_date;
+    } else {
+      // Explicitly clear any premature freeze so subsequent enrichment can write.
+      enrichment.frozen_at = null;
+      enrichment.frozen_for_match_date = null;
     }
 
     const { error: upsertErr } = await supabase
