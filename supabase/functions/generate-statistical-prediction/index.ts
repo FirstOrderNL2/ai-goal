@@ -800,11 +800,11 @@ Deno.serve(async (req) => {
     const MODEL_VERSION = "baseline-v1";
     const FEATURE_VERSION = "v1";
     const nowIso = new Date().toISOString();
-    const matchDateIso = (matchData as any)?.match_date ?? nowIso;
-    const cutoffIso = (as_of as string | undefined) ?? (new Date(matchDateIso) < new Date() ? matchDateIso : nowIso);
+    const runMatchDateIso = (matchData as any)?.match_date ?? nowIso;
+    const cutoffIso = (as_of as string | undefined) ?? (new Date(runMatchDateIso) < new Date() ? runMatchDateIso : nowIso);
 
     // Determine run_type from time-to-kickoff
-    const minsToKickoff = (new Date(matchDateIso).getTime() - Date.now()) / 60000;
+    const minsToKickoff = (new Date(runMatchDateIso).getTime() - Date.now()) / 60000;
     let runType: string = "pre_match";
     if (minsToKickoff <= 15 && minsToKickoff > -5) runType = "t_minus_15";
     else if (minsToKickoff <= 60 && minsToKickoff > 15) runType = "t_minus_60";
