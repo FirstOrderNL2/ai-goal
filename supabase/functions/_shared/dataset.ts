@@ -78,30 +78,33 @@ export async function buildPointInTimeDataset(
   // Collect all team IDs we need ratings for
   const teamIds = new Set<string>();
   for (const r of runRows) {
-    teamIds.add(r.matches.team_home_id);
-    teamIds.add(r.matches.team_away_id);
+    const m = matchById.get(r.match_id);
+    if (!m) continue;
+    teamIds.add(m.team_home_id);
+    teamIds.add(m.team_away_id);
   }
 
-  // Group runs by cutoff so we batch rating reads
   const out: DatasetRow[] = [];
   for (const r of runRows) {
     if (opts.excludeRunIds?.has(r.id)) continue;
+    const m = matchById.get(r.match_id);
+    if (!m) continue;
     const lbl = labelByMatch.get(r.match_id);
     if (!lbl) continue;
 
     // Defensive guard: cutoff must be <= match kickoff
-    if (r.prediction_cutoff_ts > r.matches.match_date) {
+    if (r.prediction_cutoff_ts > m.match_date) {
       console.warn(`[dataset] skipping run ${r.id}: cutoff after kickoff`);
       continue;
     }
 
     const ratings = await getRatingsAsOf(
       supabase,
-      [r.matches.team_home_id, r.matches.team_away_id],
+      [m.team_home_id, m.team_away_id],
       r.prediction_cutoff_ts,
     );
-    const home = ratings.get(r.matches.team_home_id)!;
-    const away = ratings.get(r.matches.team_away_id)!;
+    const home = ratings.get(m.team_home_id)!;
+    const away = ratings.get(m.team_away_id)!;
 
     const probs = r.probabilities ?? {};
     const xg = r.expected_goals ?? {};
@@ -111,7 +114,7 @@ export async function buildPointInTimeDataset(
       prediction_run_id: r.id,
       match_id: r.match_id,
       prediction_cutoff_ts: r.prediction_cutoff_ts,
-      league: r.matches.league ?? null,
+      league: m.league ?? null,
       feature_snapshot: {
         poisson_home: Number(probs.home_win ?? probs.home ?? 1 / 3),
         poisson_draw: Number(probs.draw ?? 1 / 3),
