@@ -421,6 +421,27 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── Post-kickoff immutability guard ──
+    // Once a match has kicked off and we already have a published prediction with a
+    // pre-match snapshot, refuse to overwrite. Live/post-match drift here was the
+    // single biggest cause of historical predictions silently mutating.
+    {
+      const matchDateMs = new Date((match as any).match_date).getTime();
+      if (Date.now() > matchDateMs) {
+        const { data: existing } = await supabase
+          .from("predictions")
+          .select("id, pre_match_snapshot, ai_reasoning")
+          .eq("match_id", match_id)
+          .maybeSingle();
+        if (existing && existing.pre_match_snapshot) {
+          return new Response(
+            JSON.stringify({ success: true, skipped: true, reason: "post-kickoff, pre-match snapshot locked" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      }
+    }
+
     // Fetch all data in parallel
     const [
       { data: prediction },
