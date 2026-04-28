@@ -12,6 +12,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MLReadinessPanel } from "@/components/MLReadinessPanel";
 import { PipelineHealthCard } from "@/components/PipelineHealthCard";
+import { LearningPipelineCard } from "@/components/LearningPipelineCard";
 import { useAuth } from "@/hooks/useAuth";
 import { isAdmin } from "@/lib/is-admin";
 
