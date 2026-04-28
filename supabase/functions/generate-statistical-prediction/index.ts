@@ -163,6 +163,12 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Anti-leakage temporal cutoff ──
+    // For backfill/training, never look at matches >= as_of.
+    // For live inference, never look at matches scheduled at/after this fixture's kickoff
+    // (prevents leakage when a same-day fixture has already finished and we're predicting the next one).
+    const cutoffIso = (as_of ?? (match as any).match_date) as string;
+
     // Fetch data in parallel (including model_performance for calibration + enrichment)
     let [
       { data: odds },
@@ -180,16 +186,21 @@ Deno.serve(async (req) => {
       supabase.from("odds").select("*").eq("match_id", match_id).maybeSingle(),
       supabase.from("match_features").select("*").eq("match_id", match_id).maybeSingle(),
       supabase.from("matches")
-        .select("goals_home, goals_away, team_home_id, team_away_id")
+        .select("goals_home, goals_away, team_home_id, team_away_id, match_date")
         .or(`team_home_id.eq.${match.team_home_id},team_away_id.eq.${match.team_home_id}`)
-        .eq("status", "completed").order("match_date", { ascending: false }).limit(20),
+        .eq("status", "completed")
+        .lt("match_date", cutoffIso)
+        .order("match_date", { ascending: false }).limit(20),
       supabase.from("matches")
-        .select("goals_home, goals_away, team_home_id, team_away_id")
+        .select("goals_home, goals_away, team_home_id, team_away_id, match_date")
         .or(`team_home_id.eq.${match.team_away_id},team_away_id.eq.${match.team_away_id}`)
-        .eq("status", "completed").order("match_date", { ascending: false }).limit(20),
+        .eq("status", "completed")
+        .lt("match_date", cutoffIso)
+        .order("match_date", { ascending: false }).limit(20),
       supabase.from("matches")
-        .select("goals_home, goals_away, league")
+        .select("goals_home, goals_away, league, match_date")
         .eq("league", match.league).eq("status", "completed")
+        .lt("match_date", cutoffIso)
         .order("match_date", { ascending: false }).limit(200),
       match.referee ? supabase.from("referees").select("*").eq("name", match.referee).maybeSingle() : Promise.resolve({ data: null }),
       supabase.from("team_discipline").select("*").eq("team_id", match.team_home_id).order("season", { ascending: false }).limit(1).maybeSingle(),
