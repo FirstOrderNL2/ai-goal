@@ -149,6 +149,26 @@ export function LearningPipelineCard() {
             </div>
           </div>
         )}
+
+        {data.dailySnapshots.length > 0 && (
+          <div>
+            <div className="text-xs font-medium text-muted-foreground mb-2">Daily counters (24h snapshots)</div>
+            <div className="space-y-1 max-h-44 overflow-auto">
+              {data.dailySnapshots.map((s: any, i: number) => {
+                const d = s.details ?? {};
+                return (
+                  <div key={i} className="flex items-center justify-between text-[11px] rounded border border-border/30 px-2 py-1 tabular-nums">
+                    <span className="text-muted-foreground">{new Date(s.created_at).toLocaleString()}</span>
+                    <span>
+                      pre {d.pre_match_runs_24h ?? 0} · lbl {d.match_labels_24h ?? 0} · ex {d.training_examples_24h ?? 0} · cal {d.calibration_events_24h ?? 0} · sh {d.shadow_predictions_24h ?? 0} · ev {d.evaluation_runs_24h ?? 0} · jobs {d.training_jobs_succeeded_24h ?? 0}/{d.training_jobs_failed_24h ?? 0}
+                      {typeof d.avg_label_lag_hours_7d === "number" && ` · lag ${d.avg_label_lag_hours_7d.toFixed(1)}h`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
