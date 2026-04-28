@@ -61,6 +61,7 @@ async function fetchPipelineCounts() {
     artifactsShadow: artifactsShadow ?? 0,
     artifactsChampion: artifactsChampion ?? 0,
     lastJobs: lastJobs ?? [],
+    dailySnapshots: dailySnapshots ?? [],
   };
 }
 
