@@ -24,24 +24,41 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    // Check existing row: refuse if frozen (Priority 1 — temporal consistency).
-    // Skip if recently enriched within 30 min as a soft cache.
-    const { data: existing } = await supabase
-      .from("match_enrichment")
-      .select("enriched_at, frozen_at")
-      .eq("match_id", match_id)
-      .maybeSingle();
+    // Read both the enrichment row and the match_date so we can decide whether
+    // a previous "frozen" snapshot is still authoritative or whether we should
+    // refresh it (e.g. lineups/injuries arrived after a too-early freeze).
+    const [{ data: existing }, { data: matchPeek }] = await Promise.all([
+      supabase
+        .from("match_enrichment")
+        .select("enriched_at, frozen_at")
+        .eq("match_id", match_id)
+        .maybeSingle(),
+      supabase
+        .from("matches")
+        .select("match_date")
+        .eq("id", match_id)
+        .maybeSingle(),
+    ]);
 
-    if (existing?.frozen_at) {
+    const matchTsPeek = matchPeek?.match_date ? new Date((matchPeek as any).match_date).getTime() : null;
+    const minutesToKickoff = matchTsPeek ? (matchTsPeek - Date.now()) / 60000 : null;
+    // Authoritative freeze window: only treat the row as immutable in the last
+    // 2 hours before kickoff and after kickoff. Earlier "freezes" are advisory
+    // and may be overwritten as lineups + injuries arrive.
+    const inAuthoritativeWindow = matchTsPeek != null && minutesToKickoff != null && minutesToKickoff < 120;
+
+    if (existing?.frozen_at && inAuthoritativeWindow) {
       return new Response(
-        JSON.stringify({ success: true, skipped: true, reason: "row frozen (post-kickoff immutable)" }),
+        JSON.stringify({ success: true, skipped: true, reason: "row frozen (within T-2h window)" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    if (existing?.enriched_at) {
+    // Soft cache: skip if very recently enriched (within 15 min) AND we're not
+    // within T-90min (lineups window) where every refresh matters.
+    if (existing?.enriched_at && (minutesToKickoff == null || minutesToKickoff > 90)) {
       const age = Date.now() - new Date(existing.enriched_at).getTime();
-      if (age < 30 * 60 * 1000) {
+      if (age < 15 * 60 * 1000) {
         return new Response(
           JSON.stringify({ success: true, skipped: true, reason: "recently enriched" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -302,11 +319,12 @@ Deno.serve(async (req) => {
     }
 
     // ── Upsert enrichment data ──
-    // Freeze the row when we are still strictly pre-match. After kickoff it
-    // becomes immutable so historical training snapshots cannot be corrupted.
+    // Only freeze in the authoritative window (T-2h or later). Earlier writes
+    // remain mutable so late-arriving lineups + injuries can flow in.
     const nowMs = Date.now();
     const matchTs = (match as any).match_date ? new Date((match as any).match_date).getTime() : nowMs;
-    const isPreMatch = nowMs < matchTs;
+    const minutesToKickoffOut = (matchTs - nowMs) / 60000;
+    const shouldFreeze = minutesToKickoffOut <= 120; // T-2h or later
     const enrichment: Record<string, unknown> = {
       match_id,
       key_player_missing_home: keyPlayerMissingHome,
@@ -324,9 +342,13 @@ Deno.serve(async (req) => {
       enriched_at: new Date().toISOString(),
       sources,
     };
-    if (isPreMatch) {
+    if (shouldFreeze) {
       enrichment.frozen_at = new Date().toISOString();
       enrichment.frozen_for_match_date = (match as any).match_date;
+    } else {
+      // Explicitly clear any premature freeze so subsequent enrichment can write.
+      enrichment.frozen_at = null;
+      enrichment.frozen_for_match_date = null;
     }
 
     const { error: upsertErr } = await supabase
