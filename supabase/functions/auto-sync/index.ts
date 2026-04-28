@@ -176,6 +176,59 @@ Deno.serve(async (req) => {
     log.push(`cleanup: marked ${staleNoScore.length} stale matches as unknown (no score)`);
   }
 
+  // Step 4c: Phase 1 — Materialize match_labels for any completed matches that don't yet have them
+  // (Covers both freshly-completed matches from 4a and any historical gaps in the last 7 days.)
+  try {
+    const lookback = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: completedMatches } = await supabase
+      .from("matches")
+      .select("id, goals_home, goals_away")
+      .eq("status", "completed")
+      .gte("match_date", lookback)
+      .not("goals_home", "is", null)
+      .not("goals_away", "is", null);
+
+    if (completedMatches?.length) {
+      const ids = completedMatches.map((m: any) => m.id);
+      const { data: existingLabels } = await supabase
+        .from("match_labels")
+        .select("match_id")
+        .in("match_id", ids);
+      const have = new Set((existingLabels ?? []).map((r: any) => r.match_id));
+      const toInsert = completedMatches
+        .filter((m: any) => !have.has(m.id))
+        .map((m: any) => {
+          const gh = m.goals_home as number;
+          const ga = m.goals_away as number;
+          const total = gh + ga;
+          const outcome = gh > ga ? "home" : gh < ga ? "away" : "draw";
+          return {
+            match_id: m.id,
+            goals_home: gh,
+            goals_away: ga,
+            outcome,
+            btts: gh > 0 && ga > 0,
+            total_goals: total,
+            over_05: total > 0,
+            over_15: total > 1,
+            over_25: total > 2,
+            over_35: total > 3,
+            source: "auto-sync",
+          };
+        });
+
+      if (toInsert.length) {
+        const { error: lblErr } = await supabase
+          .from("match_labels")
+          .upsert(toInsert, { onConflict: "match_id" });
+        if (lblErr) errors.push(`match-labels: ${lblErr.message}`);
+        else log.push(`match_labels: wrote ${toInsert.length} new label rows`);
+      }
+    }
+  } catch (e) {
+    errors.push(`match-labels: ${(e as Error).message}`);
+  }
+
   // Step 5: Compute features — full, pre_match, and live modes
   if (effectiveMode === "full" || effectiveMode === "pre_match" || effectiveMode === "live") {
     await callFunction("compute-features");
