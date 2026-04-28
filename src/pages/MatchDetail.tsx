@@ -71,12 +71,17 @@ export default function MatchDetail() {
   const away_team = match?.away_team;
   const prediction = match?.prediction;
 
-  // Auto-trigger prediction generation if prediction is missing or incomplete
+  // Auto-trigger prediction generation only for upcoming matches missing a prediction.
+  // We deliberately do NOT auto-fire after kickoff — `generate-ai-prediction` will
+  // refuse to overwrite a locked pre-match snapshot anyway, so re-firing wastes calls
+  // and risks cosmetic regenerations of completed matches.
   useEffect(() => {
     if (!match || !id || onDemandTriggered.current || generatePrediction.isPending) return;
-    
-    const isIncomplete = !prediction || !prediction.ai_reasoning || prediction.predicted_score_home == null;
-    if (isIncomplete) {
+    const kickoffMs = new Date(match.match_date).getTime();
+    const isPreMatch = Date.now() < kickoffMs;
+    const noPrediction = !prediction;
+    const reasoningMissing = !!prediction && !prediction.ai_reasoning && isPreMatch;
+    if (noPrediction || reasoningMissing) {
       onDemandTriggered.current = true;
       generatePrediction.mutate(id);
     }
