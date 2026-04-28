@@ -799,25 +799,26 @@ Deno.serve(async (req) => {
     // ----- Phase 1: write immutable prediction_run BEFORE updating serving projection -----
     const MODEL_VERSION = "baseline-v1";
     const FEATURE_VERSION = "v1";
-    const nowIso = new Date().toISOString();
-    const matchDateIso = (matchData as any)?.match_date ?? nowIso;
-    const cutoffIso = (as_of as string | undefined) ?? (new Date(matchDateIso) < new Date() ? matchDateIso : nowIso);
+    const runNowIso = new Date().toISOString();
+    const runMatchDateIso = (match as any)?.match_date ?? runNowIso;
+    // Reuse cutoffIso computed earlier (line ~170) so feature reads and the run row agree.
+    const runCutoffIso = cutoffIso ?? runMatchDateIso;
 
     // Determine run_type from time-to-kickoff
-    const minsToKickoff = (new Date(matchDateIso).getTime() - Date.now()) / 60000;
+    const runMinsToKickoff = (new Date(runMatchDateIso).getTime() - Date.now()) / 60000;
     let runType: string = "pre_match";
-    if (minsToKickoff <= 15 && minsToKickoff > -5) runType = "t_minus_15";
-    else if (minsToKickoff <= 60 && minsToKickoff > 15) runType = "t_minus_60";
-    else if (minsToKickoff <= -5) runType = "post_match";
+    if (runMinsToKickoff <= 15 && runMinsToKickoff > -5) runType = "t_minus_15";
+    else if (runMinsToKickoff <= 60 && runMinsToKickoff > 15) runType = "t_minus_60";
+    else if (runMinsToKickoff <= -5) runType = "post_match";
 
-    const probabilities = {
+    const runProbabilities = {
       home_win: Math.round(poissonHW * 1000) / 1000,
       draw: Math.round(poissonDR * 1000) / 1000,
       away_win: Math.round(poissonAW * 1000) / 1000,
       btts_yes: typeof goalLines?.btts_yes === "number" ? goalLines.btts_yes : null,
       over_25: typeof goalLines?.over_25 === "number" ? goalLines.over_25 : null,
     };
-    const expectedGoals = {
+    const runExpectedGoals = {
       home: Math.round(lambdaHome * 100) / 100,
       away: Math.round(lambdaAway * 100) / 100,
     };
@@ -827,12 +828,12 @@ Deno.serve(async (req) => {
       .insert({
         match_id,
         run_type: runType,
-        prediction_cutoff_ts: cutoffIso,
+        prediction_cutoff_ts: runCutoffIso,
         model_version: MODEL_VERSION,
         feature_version: FEATURE_VERSION,
         feature_snapshot: feature_snapshot ?? null,
-        probabilities,
-        expected_goals: expectedGoals,
+        probabilities: runProbabilities,
+        expected_goals: runExpectedGoals,
         score_distribution: goalDist ?? null,
         publish_status: publishStatus,
         training_only: isTraining,
@@ -851,9 +852,9 @@ Deno.serve(async (req) => {
     // Upsert prediction (serving projection of latest run)
     const { error: upsertErr } = await supabase.from("predictions").upsert({
       match_id,
-      home_win: probabilities.home_win,
-      draw: probabilities.draw,
-      away_win: probabilities.away_win,
+      home_win: runProbabilities.home_win,
+      draw: runProbabilities.draw,
+      away_win: runProbabilities.away_win,
       expected_goals_home: Math.round(lambdaHome * 10) / 10,
       expected_goals_away: Math.round(lambdaAway * 10) / 10,
       predicted_score_home: bestScore.h,
@@ -865,7 +866,7 @@ Deno.serve(async (req) => {
       goal_distribution: goalDist,
       best_pick: bestPickResult.pick,
       best_pick_confidence: Math.round(bestPickResult.confidence * 1000) / 1000,
-      last_prediction_at: nowIso,
+      last_prediction_at: runNowIso,
       publish_status: publishStatus,
       quality_score: qualityScore,
       feature_snapshot: feature_snapshot

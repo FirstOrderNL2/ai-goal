@@ -82,6 +82,66 @@ export type Database = {
           },
         ]
       }
+      evaluation_runs: {
+        Row: {
+          artifact_id: string
+          champion_artifact_id: string | null
+          created_at: string
+          gate_reasons: Json | null
+          id: string
+          metrics_challenger: Json
+          metrics_champion: Json | null
+          n_examples: number
+          passes_gate: boolean
+          per_league_json: Json | null
+          window_end: string
+          window_start: string
+        }
+        Insert: {
+          artifact_id: string
+          champion_artifact_id?: string | null
+          created_at?: string
+          gate_reasons?: Json | null
+          id?: string
+          metrics_challenger?: Json
+          metrics_champion?: Json | null
+          n_examples?: number
+          passes_gate?: boolean
+          per_league_json?: Json | null
+          window_end: string
+          window_start: string
+        }
+        Update: {
+          artifact_id?: string
+          champion_artifact_id?: string | null
+          created_at?: string
+          gate_reasons?: Json | null
+          id?: string
+          metrics_challenger?: Json
+          metrics_champion?: Json | null
+          n_examples?: number
+          passes_gate?: boolean
+          per_league_json?: Json | null
+          window_end?: string
+          window_start?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evaluation_runs_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "model_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evaluation_runs_champion_artifact_id_fkey"
+            columns: ["champion_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "model_artifacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       leagues: {
         Row: {
           api_football_id: number
@@ -513,6 +573,81 @@ export type Database = {
           },
         ]
       }
+      model_artifacts: {
+        Row: {
+          created_at: string
+          created_by_job_id: string | null
+          dataset_version: string
+          feature_version: string
+          holdout_window_end: string | null
+          holdout_window_start: string | null
+          hyperparameters: Json
+          id: string
+          metrics_json: Json | null
+          model_family: string
+          n_holdout: number | null
+          n_train: number | null
+          n_val: number | null
+          notes: string | null
+          promoted_at: string | null
+          rolled_back_at: string | null
+          status: string
+          train_window_end: string | null
+          train_window_start: string | null
+          validation_window_end: string | null
+          validation_window_start: string | null
+          weights: Json
+        }
+        Insert: {
+          created_at?: string
+          created_by_job_id?: string | null
+          dataset_version: string
+          feature_version: string
+          holdout_window_end?: string | null
+          holdout_window_start?: string | null
+          hyperparameters?: Json
+          id?: string
+          metrics_json?: Json | null
+          model_family: string
+          n_holdout?: number | null
+          n_train?: number | null
+          n_val?: number | null
+          notes?: string | null
+          promoted_at?: string | null
+          rolled_back_at?: string | null
+          status?: string
+          train_window_end?: string | null
+          train_window_start?: string | null
+          validation_window_end?: string | null
+          validation_window_start?: string | null
+          weights?: Json
+        }
+        Update: {
+          created_at?: string
+          created_by_job_id?: string | null
+          dataset_version?: string
+          feature_version?: string
+          holdout_window_end?: string | null
+          holdout_window_start?: string | null
+          hyperparameters?: Json
+          id?: string
+          metrics_json?: Json | null
+          model_family?: string
+          n_holdout?: number | null
+          n_train?: number | null
+          n_val?: number | null
+          notes?: string | null
+          promoted_at?: string | null
+          rolled_back_at?: string | null
+          status?: string
+          train_window_end?: string | null
+          train_window_start?: string | null
+          validation_window_end?: string | null
+          validation_window_start?: string | null
+          weights?: Json
+        }
+        Relationships: []
+      }
       model_performance: {
         Row: {
           avg_brier_1x2: number | null
@@ -597,6 +732,35 @@ export type Database = {
         }
         Relationships: []
       }
+      model_registry: {
+        Row: {
+          champion_artifact_id: string | null
+          id: string
+          model_family: string
+          updated_at: string
+        }
+        Insert: {
+          champion_artifact_id?: string | null
+          id?: string
+          model_family: string
+          updated_at?: string
+        }
+        Update: {
+          champion_artifact_id?: string | null
+          id?: string
+          model_family?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "model_registry_champion_artifact_id_fkey"
+            columns: ["champion_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "model_artifacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       odds: {
         Row: {
           away_win_odds: number
@@ -631,6 +795,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      pipeline_health: {
+        Row: {
+          acknowledged_at: string | null
+          check_type: string
+          created_at: string
+          details: Json | null
+          id: string
+          message: string
+          severity: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          check_type: string
+          created_at?: string
+          details?: Json | null
+          id?: string
+          message: string
+          severity?: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          check_type?: string
+          created_at?: string
+          details?: Json | null
+          id?: string
+          message?: string
+          severity?: string
+        }
+        Relationships: []
       }
       players: {
         Row: {
@@ -1102,6 +1296,41 @@ export type Database = {
           yellow_avg?: number | null
         }
         Relationships: []
+      }
+      shadow_predictions: {
+        Row: {
+          artifact_id: string
+          created_at: string
+          expected_goals: Json | null
+          id: string
+          prediction_run_id: string
+          probabilities: Json
+        }
+        Insert: {
+          artifact_id: string
+          created_at?: string
+          expected_goals?: Json | null
+          id?: string
+          prediction_run_id: string
+          probabilities?: Json
+        }
+        Update: {
+          artifact_id?: string
+          created_at?: string
+          expected_goals?: Json | null
+          id?: string
+          prediction_run_id?: string
+          probabilities?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shadow_predictions_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "model_artifacts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       subscriptions: {
         Row: {

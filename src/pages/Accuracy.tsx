@@ -12,6 +12,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MLReadinessPanel } from "@/components/MLReadinessPanel";
 import { PipelineHealthCard } from "@/components/PipelineHealthCard";
+import { LearningPipelineCard } from "@/components/LearningPipelineCard";
 import { useAuth } from "@/hooks/useAuth";
 import { isAdmin } from "@/lib/is-admin";
 
@@ -364,6 +365,9 @@ export default function Accuracy() {
 
             {/* Pipeline Health — generation/recheck reliability */}
             <PipelineHealthCard />
+
+            {/* Phase 3.5 — Learning loop self-feed counts */}
+            <LearningPipelineCard />
 
             {/* ML Readiness — Phase 1–5 data foundation (admin-only ops) */}
             {admin && <MLReadinessPanel />}
