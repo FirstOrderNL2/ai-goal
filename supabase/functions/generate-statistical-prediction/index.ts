@@ -412,40 +412,21 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Ensure reasonable bounds
-    lambdaHome = Math.max(0.3, Math.min(lambdaHome, 4.0));
-    lambdaAway = Math.max(0.3, Math.min(lambdaAway, 4.0));
-
-    // Compute 1X2 probabilities
-    let poissonHW = 0, poissonDR = 0, poissonAW = 0;
-    for (let h = 0; h <= 8; h++) {
-      for (let a = 0; a <= 8; a++) {
-        const p = poissonPMF(lambdaHome, h) * poissonPMF(lambdaAway, a);
-        if (h > a) poissonHW += p;
-        else if (h === a) poissonDR += p;
-        else poissonAW += p;
-      }
-    }
-
-    // ── Graduated competition & stage adjustments ──
+    // ── Graduated competition & stage adjustments (applied to lambdas BEFORE Poisson) ──
     const cupCompetitions = ["champions league", "europa league", "conference league", "world cup", "euro", "nations league"];
     const isCup = cupCompetitions.some(c => match.league.toLowerCase().includes(c));
     const matchStage = (match as any).match_stage || "regular";
     const matchImportanceVal = Number((match as any).match_importance) || 0.5;
     const competitionType = (match as any).competition_type || "league";
 
-    // Stage-based lambda & draw adjustments (graduated, replaces binary isCup)
+    // Stage-based lambda adjustments
     if (matchStage === "final" || matchStage === "semi_final") {
-      // Finals/semis: tighter, more defensive games
       lambdaHome *= 0.95;
       lambdaAway *= 0.95;
     } else if (matchStage === "quarter_final") {
       lambdaHome *= 0.97;
       lambdaAway *= 0.97;
     }
-
-    // League strength reliability factor (scales confidence later) — shared with generate-ai-prediction
-    const leagueRelFactor = getLeagueReliability(match.league);
 
     // Championship special handling: 30% lambda regression toward league means
     if (match.league.toLowerCase().includes("championship") || match.league.toLowerCase().includes("keuken kampioen")) {
@@ -461,6 +442,24 @@ Deno.serve(async (req) => {
       if ((posH && posH >= 16) || (posA && posA >= 16)) {
         lambdaHome *= 0.95;
         lambdaAway *= 0.95;
+      }
+    }
+
+    // League strength reliability factor (scales confidence later)
+    const leagueRelFactor = getLeagueReliability(match.league);
+
+    // Ensure reasonable bounds — applied AFTER all lambda mutations.
+    lambdaHome = Math.max(0.3, Math.min(lambdaHome, 4.0));
+    lambdaAway = Math.max(0.3, Math.min(lambdaAway, 4.0));
+
+    // Compute 1X2 probabilities from FINAL lambdas — keeps 1X2/xG/goal-lines consistent.
+    let poissonHW = 0, poissonDR = 0, poissonAW = 0;
+    for (let h = 0; h <= 8; h++) {
+      for (let a = 0; a <= 8; a++) {
+        const p = poissonPMF(lambdaHome, h) * poissonPMF(lambdaAway, a);
+        if (h > a) poissonHW += p;
+        else if (h === a) poissonDR += p;
+        else poissonAW += p;
       }
     }
 
@@ -482,7 +481,7 @@ Deno.serve(async (req) => {
       (refStrictness * 0.4 + teamAggression * 0.4 + matchImportanceVal * 0.2) * 1000
     ) / 1000;
 
-    // Goal lines & distribution (computed before volatility adjustments)
+    // Goal lines & distribution (derived from the SAME final lambdas as 1X2 above)
     const goalLines = computeGoalLines(lambdaHome, lambdaAway);
     const goalDist = computeGoalDistribution(lambdaHome, lambdaAway);
 
