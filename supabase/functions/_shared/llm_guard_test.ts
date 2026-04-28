@@ -75,8 +75,8 @@ Deno.test("LLM merge cannot mutate any numeric prediction field", () => {
     );
   }
   // String reasoning IS allowed to change.
-  assertEquals(merged.ai_reasoning, "Strong home win expected.");
-  assertEquals(merged.fun_facts, ["These teams last met in 2023."]);
+  assertEquals((merged as any).ai_reasoning, "Strong home win expected.");
+  assertEquals((merged as any).fun_facts, ["These teams last met in 2023."]);
 });
 
 Deno.test("LLM merge leaves enum fields (over_under_25, btts) untouched", () => {
