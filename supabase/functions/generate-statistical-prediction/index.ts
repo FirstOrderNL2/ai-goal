@@ -800,7 +800,7 @@ Deno.serve(async (req) => {
     const MODEL_VERSION = "baseline-v1";
     const FEATURE_VERSION = "v1";
     const runNowIso = new Date().toISOString();
-    const runMatchDateIso = (matchData as any)?.match_date ?? runNowIso;
+    const runMatchDateIso = (match as any)?.match_date ?? runNowIso;
     // Reuse cutoffIso computed earlier (line ~170) so feature reads and the run row agree.
     const runCutoffIso = cutoffIso ?? runMatchDateIso;
 
