@@ -20,11 +20,20 @@ export function AdminRoute({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+
+    if (authLoading) {
+      setIsAdmin(null);
+      return () => { cancelled = true; };
+    }
+
     (async () => {
       if (!session?.user) {
         if (!cancelled) setIsAdmin(false);
         return;
       }
+
+      setIsAdmin(null);
+
       // Query the admin_users table directly. RLS allows admins to view it,
       // so a returned row proves admin status; no row = not admin.
       const { data, error } = await supabase
@@ -32,10 +41,12 @@ export function AdminRoute({ children }: { children: React.ReactNode }) {
         .select("id")
         .eq("user_id", session.user.id)
         .maybeSingle();
+
       if (!cancelled) setIsAdmin(!error && !!data);
     })();
+
     return () => { cancelled = true; };
-  }, [session]);
+  }, [authLoading, session?.user?.id]);
 
   if (authLoading || isAdmin === null) {
     return <div className="min-h-screen bg-background" />;
