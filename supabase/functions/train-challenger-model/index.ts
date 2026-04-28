@@ -94,6 +94,62 @@ function trainLogReg(
   };
 }
 
+/** Train and return both predictor closure AND raw weights for artifact persistence. */
+function trainLogRegWithWeights(
+  X: number[][], y: Outcome[],
+  opts = { lr: 0.05, epochs: 60, l2: 1e-4, batch: 32 },
+): { predictor: (x: number[]) => ProbVec3; W: number[][]; b: number[] } {
+  const D = X[0].length;
+  const W: number[][] = [Array(D).fill(0), Array(D).fill(0), Array(D).fill(0)];
+  const b: number[] = [0, 0, 0];
+  const N = X.length;
+  const idx = (o: Outcome) => (o === "home" ? 0 : o === "draw" ? 1 : 2);
+  for (let ep = 0; ep < opts.epochs; ep++) {
+    const order = Array.from({ length: N }, (_, i) => i);
+    for (let i = N - 1; i > 0; i--) {
+      const j = ((ep * 9301 + i * 49297) % 233280) % (i + 1);
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    for (let bs = 0; bs < N; bs += opts.batch) {
+      const slice = order.slice(bs, bs + opts.batch);
+      const gW = [Array(D).fill(0), Array(D).fill(0), Array(D).fill(0)];
+      const gb = [0, 0, 0];
+      for (const i of slice) {
+        const z: [number, number, number] = [b[0], b[1], b[2]];
+        for (let d = 0; d < D; d++) {
+          z[0] += W[0][d] * X[i][d];
+          z[1] += W[1][d] * X[i][d];
+          z[2] += W[2][d] * X[i][d];
+        }
+        const p = softmax3(z);
+        const yi = idx(y[i]);
+        const grad = [p.home - (yi === 0 ? 1 : 0), p.draw - (yi === 1 ? 1 : 0), p.away - (yi === 2 ? 1 : 0)];
+        for (let c = 0; c < 3; c++) {
+          gb[c] += grad[c];
+          for (let d = 0; d < D; d++) gW[c][d] += grad[c] * X[i][d];
+        }
+      }
+      const m = slice.length;
+      for (let c = 0; c < 3; c++) {
+        b[c] -= opts.lr * (gb[c] / m);
+        for (let d = 0; d < D; d++) {
+          W[c][d] -= opts.lr * (gW[c][d] / m + opts.l2 * W[c][d]);
+        }
+      }
+    }
+  }
+  const predictor = (x: number[]): ProbVec3 => {
+    const z: [number, number, number] = [b[0], b[1], b[2]];
+    for (let d = 0; d < x.length; d++) {
+      z[0] += W[0][d] * x[d];
+      z[1] += W[1][d] * x[d];
+      z[2] += W[2][d] * x[d];
+    }
+    return softmax3(z);
+  };
+  return { predictor, W, b };
+}
+
 function featurize(ex: Example): number[] {
   return FEATURE_KEYS.map((k) => Number(ex.feature_snapshot[k] ?? 0));
 }
