@@ -796,12 +796,64 @@ Deno.serve(async (req) => {
           : `${caveat}${existingReasoning ?? ""}`.trim())
       : existingReasoning;
 
-    // Upsert prediction
-    const { error: upsertErr } = await supabase.from("predictions").upsert({
-      match_id,
+    // ----- Phase 1: write immutable prediction_run BEFORE updating serving projection -----
+    const MODEL_VERSION = "baseline-v1";
+    const FEATURE_VERSION = "v1";
+    const nowIso = new Date().toISOString();
+    const matchDateIso = (matchData as any)?.match_date ?? nowIso;
+    const cutoffIso = (as_of as string | undefined) ?? (new Date(matchDateIso) < new Date() ? matchDateIso : nowIso);
+
+    // Determine run_type from time-to-kickoff
+    const minsToKickoff = (new Date(matchDateIso).getTime() - Date.now()) / 60000;
+    let runType: string = "pre_match";
+    if (minsToKickoff <= 15 && minsToKickoff > -5) runType = "t_minus_15";
+    else if (minsToKickoff <= 60 && minsToKickoff > 15) runType = "t_minus_60";
+    else if (minsToKickoff <= -5) runType = "post_match";
+
+    const probabilities = {
       home_win: Math.round(poissonHW * 1000) / 1000,
       draw: Math.round(poissonDR * 1000) / 1000,
       away_win: Math.round(poissonAW * 1000) / 1000,
+      btts_yes: typeof goalLines?.btts_yes === "number" ? goalLines.btts_yes : null,
+      over_25: typeof goalLines?.over_25 === "number" ? goalLines.over_25 : null,
+    };
+    const expectedGoals = {
+      home: Math.round(lambdaHome * 100) / 100,
+      away: Math.round(lambdaAway * 100) / 100,
+    };
+
+    const { data: runRow, error: runErr } = await supabase
+      .from("prediction_runs")
+      .insert({
+        match_id,
+        run_type: runType,
+        prediction_cutoff_ts: cutoffIso,
+        model_version: MODEL_VERSION,
+        feature_version: FEATURE_VERSION,
+        feature_snapshot: feature_snapshot ?? null,
+        probabilities,
+        expected_goals: expectedGoals,
+        score_distribution: goalDist ?? null,
+        publish_status: publishStatus,
+        training_only: isTraining,
+        source_function: "generate-statistical-prediction",
+        notes: reason ?? null,
+      })
+      .select("id")
+      .single();
+
+    if (runErr) {
+      // Don't block the serving path on a run-write failure; log and continue
+      console.error("[prediction_runs] insert failed:", runErr.message);
+    }
+    const currentRunId = (runRow as any)?.id ?? null;
+
+    // Upsert prediction (serving projection of latest run)
+    const { error: upsertErr } = await supabase.from("predictions").upsert({
+      match_id,
+      home_win: probabilities.home_win,
+      draw: probabilities.draw,
+      away_win: probabilities.away_win,
       expected_goals_home: Math.round(lambdaHome * 10) / 10,
       expected_goals_away: Math.round(lambdaAway * 10) / 10,
       predicted_score_home: bestScore.h,
@@ -813,19 +865,21 @@ Deno.serve(async (req) => {
       goal_distribution: goalDist,
       best_pick: bestPickResult.pick,
       best_pick_confidence: Math.round(bestPickResult.confidence * 1000) / 1000,
-      last_prediction_at: new Date().toISOString(),
+      last_prediction_at: nowIso,
       publish_status: publishStatus,
       quality_score: qualityScore,
       feature_snapshot: feature_snapshot
-        ? { ...(feature_snapshot as any), snapshot_version: "v1" }
+        ? { ...(feature_snapshot as any), snapshot_version: FEATURE_VERSION }
         : feature_snapshot,
-      snapshot_version: "v1",
+      snapshot_version: FEATURE_VERSION,
       training_only: isTraining,
       generation_status: generationStatus,
       retry_count: 0,
       last_error: null,
       update_reason: reason,
       ai_reasoning: newReasoning,
+      current_run_id: currentRunId,
+      model_version: MODEL_VERSION,
     }, { onConflict: "match_id" });
 
     if (upsertErr) throw upsertErr;
