@@ -124,7 +124,91 @@ Deno.serve(async (req) => {
     if (!error) inserted.push(data);
   }
 
-  return new Response(JSON.stringify({ ok: true, evaluated: alerts.length, inserted }), {
+  // Phase 4.5: also collect 24h pipeline counters and store as an info snapshot.
+  const dayAgo = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const [
+    { count: c_pre_match },
+    { count: c_calibration },
+    { count: c_examples },
+    { count: c_jobs_succeeded },
+    { count: c_jobs_failed },
+    { count: c_shadow_artifacts },
+    { count: c_evaluation_runs },
+    { count: c_shadow_predictions },
+    { count: c_match_labels },
+  ] = await Promise.all([
+    supabase.from("prediction_runs").select("id", { count: "exact", head: true })
+      .eq("run_type", "pre_match").gte("created_at", dayAgo),
+    supabase.from("calibration_events").select("id", { count: "exact", head: true })
+      .gte("created_at", dayAgo),
+    supabase.from("training_examples").select("id", { count: "exact", head: true })
+      .gte("created_at", dayAgo),
+    supabase.from("training_jobs").select("id", { count: "exact", head: true })
+      .eq("status", "succeeded").gte("created_at", dayAgo),
+    supabase.from("training_jobs").select("id", { count: "exact", head: true })
+      .eq("status", "failed").gte("created_at", dayAgo),
+    supabase.from("model_artifacts").select("id", { count: "exact", head: true })
+      .eq("status", "shadow").gte("created_at", dayAgo),
+    supabase.from("evaluation_runs").select("id", { count: "exact", head: true })
+      .gte("created_at", dayAgo),
+    supabase.from("shadow_predictions").select("id", { count: "exact", head: true })
+      .gte("created_at", dayAgo),
+    supabase.from("match_labels").select("match_id", { count: "exact", head: true })
+      .gte("finalized_at", dayAgo),
+  ]);
+
+  // Avg lag (hours) prediction_runs.created_at -> match_labels.finalized_at for last 7d
+  let avg_label_lag_hours: number | null = null;
+  const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+  const { data: lagRows } = await supabase
+    .from("match_labels")
+    .select("match_id, finalized_at")
+    .gte("finalized_at", sevenDaysAgoIso)
+    .limit(500);
+  if (lagRows && lagRows.length) {
+    const matchIdsForLag = lagRows.map((l) => l.match_id);
+    const { data: firstRuns } = await supabase
+      .from("prediction_runs")
+      .select("match_id, created_at")
+      .eq("run_type", "pre_match")
+      .in("match_id", matchIdsForLag)
+      .order("created_at", { ascending: true });
+    const firstByMatch = new Map<string, string>();
+    for (const r of firstRuns ?? []) {
+      if (!firstByMatch.has(r.match_id)) firstByMatch.set(r.match_id, r.created_at);
+    }
+    const lags: number[] = [];
+    for (const l of lagRows) {
+      const t0 = firstByMatch.get(l.match_id);
+      if (!t0) continue;
+      lags.push((new Date(l.finalized_at).getTime() - new Date(t0).getTime()) / 3600000);
+    }
+    if (lags.length) {
+      avg_label_lag_hours = lags.reduce((a, b) => a + b, 0) / lags.length;
+    }
+  }
+
+  const counters = {
+    pre_match_runs_24h: c_pre_match ?? 0,
+    calibration_events_24h: c_calibration ?? 0,
+    training_examples_24h: c_examples ?? 0,
+    training_jobs_succeeded_24h: c_jobs_succeeded ?? 0,
+    training_jobs_failed_24h: c_jobs_failed ?? 0,
+    shadow_artifacts_24h: c_shadow_artifacts ?? 0,
+    evaluation_runs_24h: c_evaluation_runs ?? 0,
+    shadow_predictions_24h: c_shadow_predictions ?? 0,
+    match_labels_24h: c_match_labels ?? 0,
+    avg_label_lag_hours_7d: avg_label_lag_hours,
+  };
+
+  await supabase.from("pipeline_health").insert({
+    check_type: "daily_counters",
+    severity: "info",
+    message: "24h pipeline counters snapshot",
+    details: counters,
+  });
+
+  return new Response(JSON.stringify({ ok: true, evaluated: alerts.length, inserted, counters }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 });
