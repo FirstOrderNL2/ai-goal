@@ -1176,26 +1176,21 @@ IMPORTANT:
       ? `⚠️ Limited stats — early signal only. Confidence capped while team data backfills.\n\n${reasoning}`
       : reasoning;
 
-    await supabase.from("predictions").upsert({
-      match_id: match_id,
-      home_win: Math.round(hw * 1000) / 1000,
-      draw: Math.round(dr * 1000) / 1000,
-      away_win: Math.round(aw * 1000) / 1000,
-      expected_goals_home: Math.round(lambdaH * 10) / 10,
-      expected_goals_away: Math.round(lambdaA * 10) / 10,
-      predicted_score_home: pred.predicted_score_home ?? null,
-      predicted_score_away: pred.predicted_score_away ?? null,
-      over_under_25: goalLines.over_2_5 > 0.5 ? "over" : "under",
-      btts: pred.btts || "no",
-      model_confidence: blendedConfidence,
+    // Phase 1 + Phase 5: AI layer is EXPLANATION-ONLY.
+    // Probabilities, xG, score, BTTS, OU come from generate-statistical-prediction.
+    // Here we write only AI-derived text + non-probability metadata.
+    // We DO NOT touch home_win/draw/away_win/expected_goals_*/over_under_25/btts/predicted_score_*.
+    await supabase.from("predictions").update({
       ai_reasoning: finalReasoning,
-      goal_lines: goalLines,
-      goal_distribution: goalDist,
       best_pick: bestPickResult.pick,
       best_pick_confidence: Math.round(bestPickResult.confidence * 1000) / 1000,
+      // Confidence is allowed to be re-blended by the AI layer (Confidence Engine V2)
+      model_confidence: blendedConfidence,
+      // publish_status/quality_score may tighten based on AI gating but never relax probabilities
       publish_status: publishStatus,
       quality_score: qualityScore,
-    }, { onConflict: "match_id" });
+    }).eq("match_id", match_id);
+
 
     await supabase.from("matches").update({ ai_insights: reasoning }).eq("id", match_id);
 
