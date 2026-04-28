@@ -1,153 +1,150 @@
-# GoalGPT Learning System — Phased Implementation Plan
+# Phase 2.5 (current-state) + Phase 3 (offline training)
 
-Turn GoalGPT from a heuristic + LLM prototype into a true stateful learning system: immutable predictions, post-match online updates, point-in-time correctness, batch retraining with a model registry, and the LLM demoted to an explanation-only layer.
+Both phases ship together in one approval. Both confirmations baked in:
 
-Current state baseline (from the live DB):
-- 2,457 predictions, only 189 have a `pre_match_snapshot`, 1,800 are `training_only`.
-- 2,243 reviews, ~47.5% outcome accuracy.
-- Phase 0 leakage fixes already shipped (cutoff filtering, no fallback writes, post-kickoff guards). This plan continues from there.
+- **Confirmation 1**: `append-calibration-events` already filters `run_type='pre_match'`. We add a defensive assertion so any future change can't accidentally widen it.
+- **Confirmation 2**: The dataset builder uses `prediction_runs.prediction_cutoff_ts` as the only `as_of` source. Every team-rating, feature, and label query is gated on it.
 
 ---
 
-## Phase 1 — Immutable prediction runs (foundation)
-
-Goal: Every prediction the model emits becomes an append-only record. `predictions` becomes a serving projection only.
+## Phase 2.5 — Latest serving snapshot
 
 ### Schema (migration)
-- New table `prediction_runs` (append-only, immutable):
-  - `id`, `match_id`, `run_type` (`pre_match` | `t_minus_60` | `t_minus_15` | `halftime` | `live`),
-  - `created_at`, `prediction_cutoff_ts`,
-  - `model_version`, `feature_version`, `artifact_version`,
-  - `feature_snapshot jsonb`, `probabilities jsonb` (1X2/BTTS/OU), `expected_goals jsonb`, `score_distribution jsonb`,
-  - `publish_status`, `training_only bool`,
-  - Unique index on `(match_id, run_type, model_version)`.
-- New table `match_labels` (truth, written once at completion):
-  - `match_id` PK, `goals_home`, `goals_away`, `outcome`, `btts`, `over_05/15/25/35`, `finalized_at`.
-- Add `current_run_id uuid` to `predictions` to point to the latest serving run.
 
-### Code changes
-- `generate-statistical-prediction`: after computing, write a new row to `prediction_runs` (never UPDATE) and upsert `predictions` as a projection of the latest run.
-- `generate-ai-prediction`: read probabilities from `prediction_runs`, write only `ai_reasoning`/explanation onto `predictions`. Hard guard: cannot mutate probability columns.
-- `pre-match-predictions` and `nightly-prediction-reconcile`: emit run rows, not in-place updates.
-- All training/review readers switch source-of-truth to `prediction_runs` joined to `match_labels`.
+- **`team_rating_state`** (PK `team_id`):
+  `league`, `rating_winloss`, `attack`, `defense`, `matches_counted`, `last_match_id`, `last_match_at`, `updated_at`. Public read; writes service-role only.
+- **Backfill**: populate from existing `team_rating_history` (latest row per team) so the 600 rows already produced light it up immediately.
 
-### Done when
-- Every published prediction in the last 24h has a matching immutable `prediction_runs` row.
-- No UPDATEs to probability columns on `predictions` after kickoff (verified via `prediction_logs`).
+### Code
 
----
+- **New helper** `supabase/functions/_shared/ratings.ts`:
+  - `getCurrentRatings(supabase, teamIds)` → reads `team_rating_state` (fast serving path).
+  - `getRatingsAsOf(supabase, teamIds, asOfIso)` → reads `team_rating_history` strictly before `asOfIso` (point-in-time path, used by the dataset builder).
+  - `eloProbabilities`, `ratingExpectedGoals` — pure math.
 
-## Phase 2 — Online learning state (true post-match learning)
+- **`update-online-ratings` change**: after each `team_rating_history` upsert, **also upsert `team_rating_state`** for both teams using a "newer-wins" guard (`EXCLUDED.last_match_at >= team_rating_state.last_match_at`). This is application-level rather than a DB trigger so it stays portable and easy to test.
 
-Goal: Every completed match instantly updates team strength + calibration state.
+- **`generate-statistical-prediction` change**: read both teams' current ratings at the top, store them in `feature_snapshot.team_ratings.{home,away}` so the immutable run carries the exact strengths used. No probability change yet — Phase 4 is what consumes them in inference.
 
-### Schema
-- `team_rating_history`: `team_id`, `match_id`, `league`, `rating_winloss_before/after`, `attack_before/after`, `defense_before/after`, `home_adv_context`, `updated_at`. Indexed by `(team_id, updated_at desc)`.
-- `calibration_events`: `prediction_run_id`, `market` (`1x2`/`btts`/`ou25`/...), `predicted_probability`, `actual_outcome bool`, `league`, `bucket`, `created_at`.
+### Tests (Deno)
 
-### New edge functions
-- `finalize-match-label`: triggered when a match flips to `completed`. Writes `match_labels`, derives outcome flags.
-- `update-online-ratings`: implements Elo/Glicko + Dixon-Coles attack/defense decay per league. Writes `team_rating_history`. Idempotent per `match_id`.
-- `append-calibration-events`: emits one row per market for the matching pre-match `prediction_run`.
+`supabase/functions/update-online-ratings/index_test.ts` — talks to the live edge function via fetch using `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` from `.env`:
 
-### Wiring
-- `auto-sync` (existing match-status flip) calls these three in order. `batch-review-matches` keeps building human-readable reviews but no longer carries the learning weight.
+1. **Run-once correctness**: invoke once, snapshot `team_rating_state` rows for a sample team, assert `rating_winloss` matches the latest `team_rating_history.rating_winloss_after`.
+2. **Idempotency**: invoke a second time with the same window. Assert:
+   - row count of `team_rating_history` is unchanged (unique on `team_id+match_id`),
+   - `team_rating_state.rating_winloss` is **bit-identical** to the first run for every sampled team (no drift),
+   - `team_rating_state.matches_counted` is unchanged.
+3. **Newer-wins guard**: write a synthetic out-of-order history row with an older `updated_at`; assert `team_rating_state` does NOT regress.
 
 ### Done when
-- Every newly completed match produces: 1 `match_labels` row, ≥2 `team_rating_history` rows, ≥3 `calibration_events` rows — within minutes of FT.
-- Inference (`generate-statistical-prediction`) reads the latest team rating snapshot at `as_of` instead of recomputing rolling averages from raw matches.
+
+- `team_rating_state` row count ≈ distinct teams in `team_rating_history`.
+- All three tests pass.
 
 ---
 
 ## Phase 3 — Offline training pipeline
 
-Goal: Reproducible challenger training from immutable runs + labels.
+### Schema (same migration as 2.5)
 
-### Schema
-- `training_examples` (append-only): `prediction_run_id`, `match_id`, `feature_snapshot`, `label_snapshot`, `model_family`, `dataset_version`, `created_at`.
-- `training_jobs`: job metadata, status, metrics, dataset_version, started/finished.
+- **`training_examples`** (append-only):
+  `prediction_run_id`, `match_id`, `prediction_cutoff_ts`, `feature_snapshot jsonb`, `label_snapshot jsonb`, `model_family`, `dataset_version`, `league`. Unique on `(prediction_run_id, model_family, dataset_version)`.
+- **`training_jobs`**:
+  `model_family`, `dataset_version`, `train_window_start/end`, `holdout_window_start/end`, `n_train`, `n_holdout`, `status` (`queued`/`running`/`succeeded`/`failed`), `metrics_json`, `champion_metrics_json`, `decision` (`promote`/`keep_champion`), `error`, `started_at`, `finished_at`. Public read; service-role write.
 
-### Edge functions
-- `append-training-example`: called after `finalize-match-label`, joins the pre-match run + label.
-- `maybe-trigger-retraining`: cron + threshold (≥50 new labels OR nightly OR drift alert). Enqueues a `training_jobs` row.
-- `train-challenger-model`: reads `training_examples` with strict time-based split, fits a residual gradient-boosted model on top of the Poisson/Elo baseline. Runs in an edge function using a JS GBDT (e.g. `npm:ml-cart`/`npm:lightgbm-js` if viable) — if not, this becomes a scheduled job that POSTs to an external worker; the registry/metrics path stays the same.
-- `evaluate-challenger-model`: log loss, Brier, RPS, ECE, MAE-goals on a held-out time window.
+### New helpers
+
+- `supabase/functions/_shared/metrics.ts` — pure functions: `multiclassLogLoss`, `brier1x2`, `rankedProbabilityScore`, `expectedCalibrationError`, `maeGoals`, `accuracy1x2`.
+- `supabase/functions/_shared/dataset.ts` — `buildPointInTimeDataset({ cutoffStart, cutoffEnd, datasetVersion })`:
+  1. Pulls `prediction_runs` with `run_type='pre_match'` AND `prediction_cutoff_ts` between `cutoffStart..cutoffEnd`.
+  2. Joins on `match_labels` (only labeled matches qualify).
+  3. For each row, calls `getRatingsAsOf(supabase, [home, away], run.prediction_cutoff_ts)` — strict `< cutoff` filter prevents leakage.
+  4. Returns rows with: features `{ poisson_home, poisson_draw, poisson_away, xg_home, xg_away, elo_home, elo_away, elo_gap, atk_home, def_home, atk_away, def_away }` and labels `{ outcome, goals_home, goals_away, btts, over_25 }`.
+
+### New edge functions
+
+1. **`append-training-example`** — uses `buildPointInTimeDataset` for "all newly-labeled examples we don't yet have", upserts into `training_examples`. Idempotent. Wired into `auto-sync` after Phase 2's calibration step.
+
+2. **`maybe-trigger-retraining`** — checks: ≥50 new training examples since last `training_jobs.status='succeeded'`, OR nightly window, OR ECE drift > 5pp. Enqueues a `training_jobs` row with `status='queued'`.
+
+3. **`train-challenger-model`** — runs in-edge (180s cap, 5000-row cap):
+   - Builds the dataset window from `training_examples` only (already point-in-time correct).
+   - **Time-based 60/20/20 split**: train (oldest 60%) / val (middle 20%) / holdout (most recent 20%). No randomization.
+   - **Baseline model** (champion proxy until Phase 4): the existing Poisson probabilities already in `feature_snapshot`.
+   - **Challenger model**: lightweight residual logistic regressor (mini-batch SGD in pure JS) over `[poisson_home, poisson_draw, poisson_away, xg_home, xg_away, elo_gap, atk_home, def_home, atk_away, def_away]` → emits 3-way 1X2 probs. Hyperparams tuned on val.
+   - **Calibration**: 10-bin isotonic-style remap fit on val, applied to holdout.
+   - Computes on **holdout only**: log loss, Brier, RPS, ECE, MAE goals, accuracy.
+   - Writes `metrics_json` (challenger), `champion_metrics_json` (baseline), `decision`.
+   - **Promotion gate (this phase ships the gate but not the artifact registry)**: `decision='promote'` only if challenger beats champion on log loss AND Brier AND ECE doesn't regress > 1pp. Otherwise `decision='keep_champion'`. **No model artifact is persisted yet** — Phase 4 owns artifact storage and inference loading. So this phase produces decisions but production keeps serving the current Poisson + ratings baseline.
+
+4. **`evaluate-challenger-model`** — replays a `training_jobs` model against any window, returns the same metric set. Useful for replay/regression testing.
+
+### Wiring
+
+- `auto-sync` (full + idle modes), after the existing Phase 2 chain:
+  ```
+  append-training-example → maybe-trigger-retraining
+  ```
+- `train-challenger-model` runs only when explicitly invoked (admin trigger, or a cron once we add it). Not on every sync.
+
+### Defensive guards
+
+- `append-calibration-events`: confirm filter is `run_type='pre_match'` (already true). Add an explicit assertion + log line so it can't silently widen.
+- Dataset builder: hard assert `run_type='pre_match'` AND `prediction_cutoff_ts <= match_date`. Skip & log any row that fails.
+- `train-challenger-model`: assert `holdout_window_start > train_window_end` and `min(holdout.created_at) > max(train.created_at)`. Refuse to run otherwise.
+
+### Tests (Deno)
+
+- `_shared/metrics_test.ts` — unit tests on toy 1X2 vectors (perfect prediction → log loss ≈ 0; uniform → log loss ≈ ln 3; ECE 0 for perfectly calibrated; etc.).
+- `append-training-example/index_test.ts` — invoke twice; assert no duplicate rows (unique constraint), and assert dataset rows match the expected joined count from `prediction_runs ⨝ match_labels`.
+- `train-challenger-model/index_test.ts` — invoke with a fixed window; assert `metrics_json.holdout` contains the five required fields, and assert `decision` ∈ `{'promote', 'keep_champion'}`.
 
 ### Done when
-- One command (or one cron tick) builds a dataset, trains a challenger, and writes a metrics report to `training_jobs`.
-- Splits are strictly temporal; integration test confirms no `match_date >= cutoff` rows in the train fold.
+
+- Newly-labeled match → 1 row in `training_examples`.
+- `maybe-trigger-retraining` produces `training_jobs` rows once threshold is met.
+- A `training_jobs` row contains `metrics_json.holdout = { log_loss, brier, rps, ece, mae_goals, accuracy }` plus `champion_metrics_json` and `decision`.
+- All Deno tests pass.
 
 ---
 
-## Phase 4 — Model registry & promotion
+## Files this will create / touch
 
-Goal: Versioned artifacts, explicit champion/challenger, safe rollback.
+**Migration (1 file):**
+- `team_rating_state` + RLS + backfill
+- `training_examples` + RLS + unique index
+- `training_jobs` + RLS
 
-### Schema
-- `model_registry`: `model_version`, `model_family`, `artifact_path`, `feature_version`, `train_window_start/end`, `holdout_window_start/end`, `metrics_json`, `status` (`training`/`challenger`/`champion`/`archived`), `created_at`, `promoted_at`.
-- `model_artifacts`: blob storage refs (Supabase Storage bucket `model-artifacts`, private).
-- `feature_registry`: tracks feature schema versions and their builders.
+**New helpers:**
+- `supabase/functions/_shared/ratings.ts`
+- `supabase/functions/_shared/metrics.ts`
+- `supabase/functions/_shared/dataset.ts`
 
-### Edge functions
-- `promote-model`: gate — challenger must beat champion on log loss AND Brier AND not regress calibration ECE > 1pp. Updates `status`, sets `promoted_at`.
-- `rollback-model`: flips champion back to a previous `model_version`.
-- `generate-statistical-prediction` loads the current champion artifact at request time (cached).
+**New edge functions:**
+- `supabase/functions/append-training-example/index.ts`
+- `supabase/functions/maybe-trigger-retraining/index.ts`
+- `supabase/functions/train-challenger-model/index.ts`
+- `supabase/functions/evaluate-challenger-model/index.ts`
 
-### Done when
-- Every served prediction stamps the `model_version` it came from.
-- Rollback is a single function call that takes effect on the next inference.
+**Edits:**
+- `supabase/functions/update-online-ratings/index.ts` (also upsert `team_rating_state`)
+- `supabase/functions/generate-statistical-prediction/index.ts` (snapshot team ratings into `feature_snapshot`)
+- `supabase/functions/auto-sync/index.ts` (add training chain after calibration)
+- `supabase/functions/append-calibration-events/index.ts` (defensive assertion on `run_type`)
 
----
-
-## Phase 5 — LLM cleanup (explanation-only)
-
-Goal: LLM cannot influence probabilities.
-
-### Changes
-- `generate-ai-prediction` and `football-intelligence`: refactored signatures take `probabilities`, `expected_goals`, `score_distribution` as inputs and return only text fields (`ai_reasoning`, `match_narrative`, caveats). Server-side guard rejects writes to numeric prediction columns.
-- Confidence computation moves entirely into the statistical layer (Confidence Engine V2 already exists — keep it numeric-only).
-- Add a feature flag `LLM_EXPLANATIONS_ENABLED`. With it off, the system still serves complete predictions.
-
-### Done when
-- Disabling the LLM does not change a single probability in `prediction_runs`.
-- Diff of `predictions` numeric columns before/after AI step is always zero.
+**Tests:**
+- `supabase/functions/update-online-ratings/index_test.ts`
+- `supabase/functions/_shared/metrics_test.ts`
+- `supabase/functions/append-training-example/index_test.ts`
+- `supabase/functions/train-challenger-model/index_test.ts`
 
 ---
 
-## Cross-cutting: monitoring & guardrails
+## Out of scope (Phase 4)
 
-- New view `v_learning_health` aggregating: % matches with immutable pre-match run, % with calibration events written, ratings-update lag, retrain cadence, champion vs challenger metric gap.
-- Extend `coverage-alert` to alert on:
-  - matches completed >30m without `match_labels`,
-  - `prediction_runs` written after kickoff,
-  - calibration ECE drift per league > threshold,
-  - promotion happened without holdout metrics row.
-- Admin-only gate (reuse `is-admin.ts`) on: `train-challenger-model`, `promote-model`, `rollback-model`, `maybe-trigger-retraining`.
+- Model artifact storage / `model_registry`.
+- Inference loading the challenger artifact.
+- Rollback flow.
 
----
-
-## Suggested execution order (sprints)
-
-1. **Sprint 1 (Phase 1):** `prediction_runs` + `match_labels` migration; refactor `generate-statistical-prediction` & `generate-ai-prediction`; switch readers.
-2. **Sprint 2 (Phase 2):** `team_rating_history` + `calibration_events`; `finalize-match-label`, `update-online-ratings`, `append-calibration-events`; wire into `auto-sync`.
-3. **Sprint 3 (Phase 3):** `training_examples`, `training_jobs`; trainer + evaluator functions; nightly cron.
-4. **Sprint 4 (Phase 4):** `model_registry`, artifact storage, promote/rollback; inference loads champion artifact.
-5. **Sprint 5 (Phase 5):** LLM probability lock; feature flag; monitoring views and alerts.
-
-Each sprint ships independently and leaves the system in a working state.
-
----
-
-## Definition of done (system level)
-
-- Every finished match → `match_labels` row + `team_rating_history` updates + `calibration_events` within minutes.
-- Every served prediction → an immutable `prediction_runs` row with `model_version` + `feature_version`.
-- Retraining is reproducible from snapshots; promotion gated on log loss + Brier + calibration.
-- LLM off ⇒ probabilities unchanged.
-- `v_learning_health` shows a non-zero, improving champion-vs-previous gap over time.
-
-## Out of scope (explicit)
-
-- Building a full external ML training cluster — Phase 3 trainer runs as an edge function or scheduled worker; heavier infra is a follow-up if metrics demand it.
-- Replacing API-Football as the data source.
-- Public-facing UI changes beyond exposing model_version on prediction cards (optional).
+Approve and I'll ship 2.5 + 3 in one go on the next turn.
