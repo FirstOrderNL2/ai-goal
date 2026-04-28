@@ -46,10 +46,7 @@ export async function buildPointInTimeDataset(
 ): Promise<DatasetRow[]> {
   let q = supabase
     .from("prediction_runs")
-    .select(
-      "id, match_id, run_type, prediction_cutoff_ts, probabilities, expected_goals, feature_snapshot, " +
-      "matches!inner(id, league, team_home_id, team_away_id, match_date)"
-    )
+    .select("id, match_id, run_type, prediction_cutoff_ts, probabilities, expected_goals, feature_snapshot")
     .eq("run_type", "pre_match"); // CONFIRMATION 2: pre-match only, hard filter
 
   if (opts.cutoffStart) q = q.gte("prediction_cutoff_ts", opts.cutoffStart);
@@ -61,8 +58,16 @@ export async function buildPointInTimeDataset(
   const runRows = (runs ?? []) as any[];
   if (!runRows.length) return [];
 
-  // Join to labels
+  // Manual join to matches (no FK declared, so PostgREST embed is unavailable)
   const matchIds = Array.from(new Set(runRows.map((r) => r.match_id)));
+  const { data: matches } = await supabase
+    .from("matches")
+    .select("id, league, team_home_id, team_away_id, match_date")
+    .in("id", matchIds);
+  const matchById = new Map<string, any>();
+  for (const m of (matches ?? []) as any[]) matchById.set(m.id, m);
+
+  // Join to labels
   const { data: labels } = await supabase
     .from("match_labels")
     .select("match_id, outcome, goals_home, goals_away, btts, over_25")
