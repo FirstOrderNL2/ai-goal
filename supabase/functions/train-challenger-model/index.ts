@@ -5,16 +5,12 @@
 // Promotion requires beating champion on log loss AND Brier, with ECE not regressing > 1pp.
 // NOTE: this phase records decisions only — it does NOT persist a model artifact for serving.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { requireAdmin, corsHeaders } from "../_shared/admin-auth.ts";
 import {
   multiclassLogLoss, brier1x2, rankedProbabilityScore,
   expectedCalibrationError, accuracy1x2, maeGoals,
   type ProbVec3, type Outcome,
 } from "../_shared/metrics.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
 
 const MAX_ROWS = 5000;
 const FEATURE_KEYS = [
