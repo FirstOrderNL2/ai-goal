@@ -365,8 +365,8 @@ export default function Accuracy() {
             {/* Pipeline Health — generation/recheck reliability */}
             <PipelineHealthCard />
 
-            {/* ML Readiness — Phase 1–5 data foundation */}
-            <MLReadinessPanel />
+            {/* ML Readiness — Phase 1–5 data foundation (admin-only ops) */}
+            {admin && <MLReadinessPanel />}
 
             {/* Model Version Header */}
             {perf?.model_version != null && (() => {
