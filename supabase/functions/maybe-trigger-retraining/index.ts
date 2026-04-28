@@ -2,16 +2,14 @@
 // Cheap heuristic: enqueue a training_jobs row when ≥50 new training_examples have been
 // added since the last succeeded job for this (model_family, dataset_version).
 import { createClient } from "npm:@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { requireAdmin, corsHeaders } from "../_shared/admin-auth.ts";
 
 const MIN_NEW_EXAMPLES = 50;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.resp;
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,

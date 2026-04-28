@@ -68,9 +68,36 @@ Deno.serve(async (req) => {
       per_league: perLeague,
     });
 
-    if (!gate.passes && !force) {
+    // Phase 4.5 evidence gate: even if metric gates pass, require enough total
+    // labeled examples and holdout volume before any production promotion.
+    // Forcing bypasses both metric and evidence gates (admin override only).
+    const MIN_HOLDOUT_FOR_PROMOTION = 100;
+    const MIN_TOTAL_LABELED = 400;
+    const evidenceReasons: string[] = [];
+    if ((artifact.n_holdout ?? 0) < MIN_HOLDOUT_FOR_PROMOTION) {
+      evidenceReasons.push(`insufficient_holdout_for_promotion:${artifact.n_holdout ?? 0}<${MIN_HOLDOUT_FOR_PROMOTION}`);
+    }
+    {
+      const { count: totalLabeled } = await supabase
+        .from("training_examples")
+        .select("id", { count: "exact", head: true })
+        .eq("model_family", artifact.model_family);
+      if ((totalLabeled ?? 0) < MIN_TOTAL_LABELED) {
+        evidenceReasons.push(`insufficient_total_labeled:${totalLabeled ?? 0}<${MIN_TOTAL_LABELED}`);
+      }
+    }
+
+    const allReasons = [...gate.reasons, ...evidenceReasons];
+    const blocked = (!gate.passes || evidenceReasons.length > 0);
+    if (blocked && !force) {
       return new Response(
-        JSON.stringify({ ok: false, decision: "blocked", reasons: gate.reasons }),
+        JSON.stringify({
+          ok: false,
+          decision: "blocked",
+          reasons: allReasons,
+          gate_reasons: gate.reasons,
+          evidence_reasons: evidenceReasons,
+        }),
         { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }

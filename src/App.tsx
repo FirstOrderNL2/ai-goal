@@ -24,6 +24,8 @@ import AuthCallback from "./pages/AuthCallback";
 import Upgrade from "./pages/Upgrade";
 import UpgradeSuccess from "./pages/UpgradeSuccess";
 import NotFound from "./pages/NotFound";
+import AdminModels from "./pages/AdminModels";
+import { AdminRoute } from "@/components/AdminRoute";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -129,6 +131,7 @@ function LangRoutes() {
         <Route path="profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
         <Route path="upgrade" element={<ProtectedRoute><Upgrade /></ProtectedRoute>} />
         <Route path="upgrade/success" element={<ProtectedRoute><UpgradeSuccess /></ProtectedRoute>} />
+        <Route path="admin/models" element={<AdminRoute><AdminModels /></AdminRoute>} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </LocaleSync>
