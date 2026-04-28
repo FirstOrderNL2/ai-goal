@@ -47,31 +47,62 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const { data: upcomingMatches, error: matchErr } = await supabase
-      .from("matches")
-      .select("id, team_home_id, team_away_id, league")
-      .eq("status", "upcoming")
-      .order("match_date", { ascending: true })
-      .limit(500);
+    // Optional per-match mode: { match_id, as_of }
+    let bodyMatchId: string | null = null;
+    let bodyAsOf: string | null = null;
+    try {
+      const body = await req.json();
+      bodyMatchId = body?.match_id ?? null;
+      bodyAsOf = body?.as_of ?? null;
+    } catch { /* no body — full slate mode */ }
+
+    let upcomingMatches: any[] | null = null;
+    let matchErr: any = null;
+    if (bodyMatchId) {
+      // Per-match mode: compute exactly one row, scoped to point-in-time.
+      const r = await supabase
+        .from("matches")
+        .select("id, team_home_id, team_away_id, league, match_date")
+        .eq("id", bodyMatchId)
+        .maybeSingle();
+      matchErr = r.error;
+      upcomingMatches = r.data ? [r.data] : [];
+    } else {
+      const r = await supabase
+        .from("matches")
+        .select("id, team_home_id, team_away_id, league, match_date")
+        .eq("status", "upcoming")
+        .order("match_date", { ascending: true })
+        .limit(500);
+      matchErr = r.error;
+      upcomingMatches = r.data ?? null;
+    }
 
     if (matchErr) throw matchErr;
     if (!upcomingMatches || upcomingMatches.length === 0) {
-      return new Response(JSON.stringify({ success: true, computed: 0, message: "No upcoming matches" }), {
+      return new Response(JSON.stringify({ success: true, computed: 0, message: "No matches to compute" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Cutoff for time-safe history loading. Per-match: use as_of or match_date. Full slate: no extra filter.
+    const cutoffIso: string | null = bodyMatchId
+      ? (bodyAsOf ?? upcomingMatches[0].match_date ?? null)
+      : null;
 
     const teamIds = [...new Set(upcomingMatches.flatMap(m => [m.team_home_id, m.team_away_id]))];
     const leagues = [...new Set(upcomingMatches.map(m => m.league))];
 
     // Get completed matches for form + H2H + league averages
-    const { data: completedMatches } = await supabase
+    let completedQ = supabase
       .from("matches")
       .select("team_home_id, team_away_id, goals_home, goals_away, match_date, league, home_team:teams!matches_team_home_id_fkey(name), away_team:teams!matches_team_away_id_fkey(name)")
       .eq("status", "completed")
       .or(teamIds.map(id => `team_home_id.eq.${id},team_away_id.eq.${id}`).join(","))
       .order("match_date", { ascending: false })
       .limit(1000);
+    if (cutoffIso) completedQ = completedQ.lt("match_date", cutoffIso);
+    const { data: completedMatches } = await completedQ;
 
     const { data: teamStats } = await supabase
       .from("team_statistics")
