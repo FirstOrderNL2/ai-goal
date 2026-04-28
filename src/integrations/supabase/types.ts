@@ -1232,6 +1232,42 @@ export type Database = {
         }
         Relationships: []
       }
+      team_rating_state: {
+        Row: {
+          attack: number
+          defense: number
+          last_match_at: string | null
+          last_match_id: string | null
+          league: string | null
+          matches_counted: number
+          rating_winloss: number
+          team_id: string
+          updated_at: string
+        }
+        Insert: {
+          attack?: number
+          defense?: number
+          last_match_at?: string | null
+          last_match_id?: string | null
+          league?: string | null
+          matches_counted?: number
+          rating_winloss?: number
+          team_id: string
+          updated_at?: string
+        }
+        Update: {
+          attack?: number
+          defense?: number
+          last_match_at?: string | null
+          last_match_id?: string | null
+          league?: string | null
+          matches_counted?: number
+          rating_winloss?: number
+          team_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       team_statistics: {
         Row: {
           avg_goals_conceded: number
@@ -1349,6 +1385,108 @@ export type Database = {
           name?: string
           sportmonks_id?: number | null
           sportradar_id?: string | null
+        }
+        Relationships: []
+      }
+      training_examples: {
+        Row: {
+          created_at: string
+          dataset_version: string
+          feature_snapshot: Json
+          id: string
+          label_snapshot: Json
+          league: string | null
+          match_id: string
+          model_family: string
+          prediction_cutoff_ts: string
+          prediction_run_id: string
+        }
+        Insert: {
+          created_at?: string
+          dataset_version?: string
+          feature_snapshot: Json
+          id?: string
+          label_snapshot: Json
+          league?: string | null
+          match_id: string
+          model_family?: string
+          prediction_cutoff_ts: string
+          prediction_run_id: string
+        }
+        Update: {
+          created_at?: string
+          dataset_version?: string
+          feature_snapshot?: Json
+          id?: string
+          label_snapshot?: Json
+          league?: string | null
+          match_id?: string
+          model_family?: string
+          prediction_cutoff_ts?: string
+          prediction_run_id?: string
+        }
+        Relationships: []
+      }
+      training_jobs: {
+        Row: {
+          champion_metrics_json: Json | null
+          created_at: string
+          dataset_version: string
+          decision: string | null
+          error: string | null
+          finished_at: string | null
+          holdout_window_end: string | null
+          holdout_window_start: string | null
+          id: string
+          metrics_json: Json | null
+          model_family: string
+          n_holdout: number | null
+          n_train: number | null
+          notes: string | null
+          started_at: string | null
+          status: string
+          train_window_end: string | null
+          train_window_start: string | null
+        }
+        Insert: {
+          champion_metrics_json?: Json | null
+          created_at?: string
+          dataset_version: string
+          decision?: string | null
+          error?: string | null
+          finished_at?: string | null
+          holdout_window_end?: string | null
+          holdout_window_start?: string | null
+          id?: string
+          metrics_json?: Json | null
+          model_family: string
+          n_holdout?: number | null
+          n_train?: number | null
+          notes?: string | null
+          started_at?: string | null
+          status?: string
+          train_window_end?: string | null
+          train_window_start?: string | null
+        }
+        Update: {
+          champion_metrics_json?: Json | null
+          created_at?: string
+          dataset_version?: string
+          decision?: string | null
+          error?: string | null
+          finished_at?: string | null
+          holdout_window_end?: string | null
+          holdout_window_start?: string | null
+          id?: string
+          metrics_json?: Json | null
+          model_family?: string
+          n_holdout?: number | null
+          n_train?: number | null
+          notes?: string | null
+          started_at?: string | null
+          status?: string
+          train_window_end?: string | null
+          train_window_start?: string | null
         }
         Relationships: []
       }

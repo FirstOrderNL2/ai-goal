@@ -234,6 +234,10 @@ Deno.serve(async (req) => {
   if (effectiveMode === "full" || effectiveMode === "idle") {
     await callFunction("update-online-ratings", { lookback_days: 30, limit: 200 });
     await callFunction("append-calibration-events", { lookback_days: 30, limit: 500 });
+
+    // Phase 3: build training examples from labeled pre-match runs, then maybe enqueue retraining.
+    await callFunction("append-training-example", { lookback_days: 60, limit: 1000 });
+    await callFunction("maybe-trigger-retraining", { model_family: "baseline", dataset_version: "v1" });
   }
 
   if (effectiveMode === "full" || effectiveMode === "pre_match" || effectiveMode === "live") {

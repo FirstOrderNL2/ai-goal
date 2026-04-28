@@ -51,12 +51,26 @@ Deno.serve(async (req) => {
   const matchIds = labels.map((l: any) => l.match_id);
   const labelByMatch = new Map(labels.map((l: any) => [l.match_id, l]));
 
-  // Get pre-match runs for those matches
+  // Get pre-match runs for those matches.
+  // CONFIRMATION 1 (Phase 3): calibration MUST only consume pre_match runs — never halftime
+  // or live runs. The filter below is the single source of truth; do not widen it.
+  const RUN_TYPE_FILTER = "pre_match" as const;
   const { data: runs, error: runErr } = await supabase
     .from("prediction_runs")
-    .select("id, match_id, model_version, probabilities")
+    .select("id, match_id, model_version, probabilities, run_type")
     .in("match_id", matchIds)
-    .eq("run_type", "pre_match");
+    .eq("run_type", RUN_TYPE_FILTER);
+
+  // Defensive assertion — if any non-pre_match row slips through, abort and log.
+  for (const r of (runs ?? []) as any[]) {
+    if (r.run_type !== "pre_match") {
+      console.error(`[append-calibration-events] BUG: non-pre_match run leaked: ${r.id} (${r.run_type})`);
+      return new Response(JSON.stringify({
+        success: false,
+        error: `non-pre_match run detected: ${r.id} (${r.run_type})`,
+      }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+  }
 
   if (runErr) {
     return new Response(JSON.stringify({ success: false, error: runErr.message }), {

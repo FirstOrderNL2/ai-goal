@@ -171,8 +171,53 @@ Deno.serve(async (req) => {
         .from("team_rating_history")
         .upsert(rows, { onConflict: "team_id,match_id", ignoreDuplicates: true });
 
-      if (insErr) errors.push(`${m.id}: ${insErr.message}`);
-      else processed++;
+      if (insErr) {
+        errors.push(`${m.id}: ${insErr.message}`);
+        continue;
+      }
+
+      // Phase 2.5: also update the latest-per-team serving snapshot.
+      // Newer-wins guard: only overwrite if the new match is at-or-after the existing snapshot.
+      // Implemented as read-then-conditional-upsert (atomic enough at this rate; idempotent on rerun
+      // because the same match yields identical rating_after values from a deterministic update).
+      for (const teamRow of rows) {
+        const { data: existingState } = await supabase
+          .from("team_rating_state")
+          .select("last_match_at, matches_counted")
+          .eq("team_id", teamRow.team_id)
+          .maybeSingle();
+
+        const existingTs = existingState?.last_match_at ? new Date(existingState.last_match_at).getTime() : -1;
+        const newTs = new Date(teamRow.updated_at).getTime();
+        if (existingTs > newTs) {
+          // Out-of-order replay; do NOT regress state.
+          continue;
+        }
+
+        // matches_counted: if this is a new match for the team, +1; if we're re-running on the
+        // same match (same last_match_id), keep the same count → idempotent.
+        const sameMatch = existingState && existingTs === newTs;
+        const nextCount = sameMatch
+          ? (existingState!.matches_counted ?? 0)
+          : ((existingState?.matches_counted ?? 0) + 1);
+
+        const { error: stateErr } = await supabase
+          .from("team_rating_state")
+          .upsert({
+            team_id: teamRow.team_id,
+            league: teamRow.league,
+            rating_winloss: teamRow.rating_winloss_after,
+            attack: teamRow.attack_after,
+            defense: teamRow.defense_after,
+            matches_counted: nextCount,
+            last_match_id: teamRow.match_id,
+            last_match_at: teamRow.updated_at,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: "team_id" });
+
+        if (stateErr) errors.push(`state ${teamRow.team_id}: ${stateErr.message}`);
+      }
+      processed++;
     } catch (e) {
       errors.push(`${m.id}: ${(e as Error).message}`);
     }
