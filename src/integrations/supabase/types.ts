@@ -339,6 +339,51 @@ export type Database = {
           },
         ]
       }
+      match_labels: {
+        Row: {
+          btts: boolean
+          finalized_at: string
+          goals_away: number
+          goals_home: number
+          match_id: string
+          outcome: string
+          over_05: boolean
+          over_15: boolean
+          over_25: boolean
+          over_35: boolean
+          source: string
+          total_goals: number
+        }
+        Insert: {
+          btts: boolean
+          finalized_at?: string
+          goals_away: number
+          goals_home: number
+          match_id: string
+          outcome: string
+          over_05: boolean
+          over_15: boolean
+          over_25: boolean
+          over_35: boolean
+          source?: string
+          total_goals: number
+        }
+        Update: {
+          btts?: boolean
+          finalized_at?: string
+          goals_away?: number
+          goals_home?: number
+          match_id?: string
+          outcome?: string
+          over_05?: boolean
+          over_15?: boolean
+          over_25?: boolean
+          over_35?: boolean
+          source?: string
+          total_goals?: number
+        }
+        Relationships: []
+      }
       matches: {
         Row: {
           ai_accuracy_score: number | null
@@ -750,6 +795,63 @@ export type Database = {
           },
         ]
       }
+      prediction_runs: {
+        Row: {
+          artifact_version: string | null
+          created_at: string
+          expected_goals: Json
+          feature_snapshot: Json | null
+          feature_version: string
+          id: string
+          match_id: string
+          model_version: string
+          notes: string | null
+          prediction_cutoff_ts: string
+          probabilities: Json
+          publish_status: string
+          run_type: string
+          score_distribution: Json | null
+          source_function: string | null
+          training_only: boolean
+        }
+        Insert: {
+          artifact_version?: string | null
+          created_at?: string
+          expected_goals?: Json
+          feature_snapshot?: Json | null
+          feature_version?: string
+          id?: string
+          match_id: string
+          model_version?: string
+          notes?: string | null
+          prediction_cutoff_ts: string
+          probabilities?: Json
+          publish_status?: string
+          run_type: string
+          score_distribution?: Json | null
+          source_function?: string | null
+          training_only?: boolean
+        }
+        Update: {
+          artifact_version?: string | null
+          created_at?: string
+          expected_goals?: Json
+          feature_snapshot?: Json | null
+          feature_version?: string
+          id?: string
+          match_id?: string
+          model_version?: string
+          notes?: string | null
+          prediction_cutoff_ts?: string
+          probabilities?: Json
+          publish_status?: string
+          run_type?: string
+          score_distribution?: Json | null
+          source_function?: string | null
+          training_only?: boolean
+        }
+        Relationships: []
+      }
       prediction_votes: {
         Row: {
           created_at: string
@@ -797,6 +899,7 @@ export type Database = {
           best_pick_confidence: number | null
           btts: string | null
           created_at: string
+          current_run_id: string | null
           draw: number
           expected_goals_away: number
           expected_goals_home: number
@@ -810,6 +913,7 @@ export type Database = {
           last_prediction_at: string | null
           match_id: string
           model_confidence: number
+          model_version: string | null
           over_under_25: string
           pre_match_snapshot: Json | null
           predicted_score_away: number | null
@@ -829,6 +933,7 @@ export type Database = {
           best_pick_confidence?: number | null
           btts?: string | null
           created_at?: string
+          current_run_id?: string | null
           draw: number
           expected_goals_away: number
           expected_goals_home: number
@@ -842,6 +947,7 @@ export type Database = {
           last_prediction_at?: string | null
           match_id: string
           model_confidence?: number
+          model_version?: string | null
           over_under_25?: string
           pre_match_snapshot?: Json | null
           predicted_score_away?: number | null
@@ -861,6 +967,7 @@ export type Database = {
           best_pick_confidence?: number | null
           btts?: string | null
           created_at?: string
+          current_run_id?: string | null
           draw?: number
           expected_goals_away?: number
           expected_goals_home?: number
@@ -874,6 +981,7 @@ export type Database = {
           last_prediction_at?: string | null
           match_id?: string
           model_confidence?: number
+          model_version?: string | null
           over_under_25?: string
           pre_match_snapshot?: Json | null
           predicted_score_away?: number | null
