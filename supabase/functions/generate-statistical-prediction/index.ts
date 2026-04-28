@@ -799,25 +799,26 @@ Deno.serve(async (req) => {
     // ----- Phase 1: write immutable prediction_run BEFORE updating serving projection -----
     const MODEL_VERSION = "baseline-v1";
     const FEATURE_VERSION = "v1";
-    const nowIso = new Date().toISOString();
-    const runMatchDateIso = (matchData as any)?.match_date ?? nowIso;
-    const cutoffIso = (as_of as string | undefined) ?? (new Date(runMatchDateIso) < new Date() ? runMatchDateIso : nowIso);
+    const runNowIso = new Date().toISOString();
+    const runMatchDateIso = (matchData as any)?.match_date ?? runNowIso;
+    // Reuse cutoffIso computed earlier (line ~170) so feature reads and the run row agree.
+    const runCutoffIso = cutoffIso ?? runMatchDateIso;
 
     // Determine run_type from time-to-kickoff
-    const minsToKickoff = (new Date(runMatchDateIso).getTime() - Date.now()) / 60000;
+    const runMinsToKickoff = (new Date(runMatchDateIso).getTime() - Date.now()) / 60000;
     let runType: string = "pre_match";
-    if (minsToKickoff <= 15 && minsToKickoff > -5) runType = "t_minus_15";
-    else if (minsToKickoff <= 60 && minsToKickoff > 15) runType = "t_minus_60";
-    else if (minsToKickoff <= -5) runType = "post_match";
+    if (runMinsToKickoff <= 15 && runMinsToKickoff > -5) runType = "t_minus_15";
+    else if (runMinsToKickoff <= 60 && runMinsToKickoff > 15) runType = "t_minus_60";
+    else if (runMinsToKickoff <= -5) runType = "post_match";
 
-    const probabilities = {
+    const runProbabilities = {
       home_win: Math.round(poissonHW * 1000) / 1000,
       draw: Math.round(poissonDR * 1000) / 1000,
       away_win: Math.round(poissonAW * 1000) / 1000,
       btts_yes: typeof goalLines?.btts_yes === "number" ? goalLines.btts_yes : null,
       over_25: typeof goalLines?.over_25 === "number" ? goalLines.over_25 : null,
     };
-    const expectedGoals = {
+    const runExpectedGoals = {
       home: Math.round(lambdaHome * 100) / 100,
       away: Math.round(lambdaAway * 100) / 100,
     };
