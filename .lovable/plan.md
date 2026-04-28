@@ -1,112 +1,91 @@
+# Fix prediction pipeline: leakage, mutability & duplicate paths
 
-# Why predictions are still off — and what's missing
+This plan addresses the senior ML audit. It is staged so we ship the highest-impact, lowest-risk fixes first (P0 leakage + P1 mutability), then tackle structural cleanups. We are **not** rewriting the architecture into separate packages right now — that is too large a blast radius for this repo. We tighten the existing edge functions instead.
 
-I pulled the actual numbers behind the last 30 days of live published predictions and traced what data actually feeds each one. Three findings, ordered by impact.
+## Goals (in priority order)
 
-## TL;DR
+1. **P0** Stop temporal leakage: backfilled predictions must never see future data.
+2. **P1** Make pre-match predictions immutable once kickoff hits.
+3. **P1** Make `compute-features` truly per-match when given a `match_id`.
+4. **P1** Stop `sync-football-data` from writing low-fidelity prediction rows.
+5. **P1** Fix internal contradiction: 1X2 / xG / goal lines must be derived from the *same* final lambdas.
+6. **P2** Stop `football-intelligence` from freezing on the very first run.
+7. **P2** Restrict admin/ops triggers from public client pages.
 
-**The model IS learning** (Brier improved from 0.857 in Aug 2025 to 0.638 today; v12 holdout passed validation with +0.0175 Brier improvement; calibration weights flow into every new prediction). 
+We are **deferring** (out of scope, separate plan): immutable `prediction_runs` table + `current_predictions` view, true replay-based weight validation, Dixon-Coles upgrade, monorepo split, full feature store.
 
-**But it's hitting a hard ceiling at ~42% outcome accuracy** because:
-1. **It almost never commits to a confident prediction** — 85% of all live predictions have a top probability between 35% and 55%. The model is essentially saying "I don't really know" on 9 out of 10 matches.
-2. **It is missing the data that would let it commit** — lineups confirmed: 0/415, weather: 0/415, referee: 1/415, odds movement: 16/415, real-time market signal: 111/415. The enrichment layer exists but is empty.
-3. **Where the model IS confident (≥50%), accuracy jumps to 60–100%.** The engine works; it's starving for signal.
+---
 
-## Finding 1 — The model is uncertainty-locked, not wrong
+## Changes
 
-Confidence distribution across the last 415 live published predictions:
+### 1. P0 — Time-safe historical loads in `generate-statistical-prediction`
 
-| Top probability | # of predictions | % of total |
-|---|---|---|
-| <35% | 3 | 0.7% |
-| 35–45% | 329 | **79.3%** |
-| 45–55% | 98 | 23.6% |
-| 55–65% | 64 | 15.4% |
-| >65% | 34 | 8.2% |
+`supabase/functions/generate-statistical-prediction/index.ts` lines ~166-200:
+- Compute `cutoffIso = as_of ?? match.match_date` **before** the parallel block.
+- Add `.lt("match_date", cutoffIso)` to all three history queries:
+  - `homeMatches` (line 182-185)
+  - `awayMatches` (line 186-189)
+  - `leagueMatches` (line 190-193)
+- Pass `as_of` through to the inline `compute-features` call (line 208-213) and to `enrich-match-context` / `football-intelligence` whenever called from a backfill context.
 
-When the engine actually has signal, it does well:
+In `compute-features/index.ts`:
+- Accept `{ match_id, as_of }` in the request body.
+- When `match_id` is provided, scope `upcomingMatches` to that single row and apply `match_date < as_of` to the completed-matches query (line 68-74) and to the league averages calculation.
 
-| Confidence bucket | n | Hit rate |
-|---|---|---|
-| 50–60% | 22 | **63.6%** |
-| 60–70% | 8 | 50.0% |
-| 70–80% | 8 | **75.0%** |
-| >80% | 2 | 100.0% |
+### 2. P1 — Per-match mode for `compute-features`
 
-So the loss isn't in the math — it's that 79% of predictions cluster around the "I have no idea" zone, where outcome is essentially a coin flip among three buckets. The model's overall 42.5% accuracy is the weighted average of "great when I'm sure" + "random when I'm not" with the latter dominating volume.
+`supabase/functions/compute-features/index.ts`:
+- At the top of the handler, parse `{ match_id?, as_of? }`.
+- If `match_id` is set, replace the 500-row scan (line 50-55) with a single `select(...).eq("id", match_id)` lookup, then run the existing logic for just that one match. Today every per-match call recomputes the entire upcoming slate — this is both leaky and slow.
 
-## Finding 2 — The enrichment layer is wired up but mostly empty
+### 3. P1 — Pre-kickoff immutability guard in `generate-ai-prediction`
 
-For 415 recent live predictions:
+`supabase/functions/generate-ai-prediction/index.ts` (around line 1158, the `upsert`):
+- Before upserting, fetch the existing `predictions` row.
+- If `match.match_date <= now()` (kickoff passed) AND the existing row already has `pre_match_snapshot` set, **abort**: return the existing row unchanged. This prevents post-kickoff drift caused by the auto-trigger in `MatchDetail.tsx` line 74-83.
+- Also gate the live re-fetch of context (line ~931 region) behind a "still pre-match" check for backfill calls (`backfill: true`).
 
-| Data source | Coverage | What's missing |
-|---|---|---|
-| `match_features` (xG, form, position) | 100% | OK |
-| `match_enrichment` row exists | 82% | OK shell |
-| └─ `lineup_confirmed` | **0%** | Never marked true even at kickoff |
-| └─ `referee_cards_avg` | **0.2%** | 1 of 415 |
-| └─ `weather_impact` | **0%** | Field exists, nothing populates it |
-| └─ `odds_movement_home/away` | **3.9%** | Almost no movement tracked |
-| `match_intelligence` | 27% | Most matches have no AI tactical layer |
-| └─ `market_signal` | 27% | Same |
-| `odds` table | 29% | Most matches have no odds at all |
-| `match_context` (injuries, news) | **7.5%** | Scraper isn't keeping up |
+`src/pages/MatchDetail.tsx` line 74-83:
+- Tighten `isIncomplete`: only auto-trigger if `prediction == null` OR (`!prediction.ai_reasoning` AND `match_date > now() - 2h`). Stop auto-firing on completed matches with partial data.
 
-The Poisson backbone is therefore running on **just team form + league averages + position**. That's enough to separate Bayern at home vs. a relegation team, but not enough to separate two mid-table teams in form, which is most of the schedule.
+### 4. P1 — Remove fallback prediction writes from `sync-football-data`
 
-## Finding 3 — Confusion matrix shows the specific failure mode
+`supabase/functions/sync-football-data/index.ts` lines 750-790 (the `mode === "full"` prediction-writing block):
+- Delete this block entirely. The richer pipeline (`pre-match-predictions` → `generate-statistical-prediction`) is already triggered by `auto-sync` Step 7 and will populate predictions properly.
+- Sync should ingest data only — never write predictions.
 
-Last 30 days, predicted vs. actual outcome:
+### 5. P1 — Fix internal consistency: 1X2 ↔ xG ↔ goal lines
 
-| Predicted ↓ / Actual → | home | draw | away | Total | Hit % |
-|---|---|---|---|---|---|
-| **home** (118 picks) | 61 | 25 | 32 | 118 | 51.7 |
-| **draw** (42 picks) | 21 | 7 | 14 | 42 | 16.7 |
-| **away** (66 picks) | 21 | 16 | 29 | 66 | 43.9 |
+`supabase/functions/generate-statistical-prediction/index.ts`:
+- Currently 1X2 (line 408-417) is computed from `lambdaHome`/`lambdaAway`, then lambdas are mutated again at lines ~427-453 (stage, championship regression, relegation), then goal lines are derived from the *new* lambdas (line 474-476). The output row is internally inconsistent.
+- Fix: move the entire stage/competition/championship/relegation lambda-adjustment block to **before** the 1X2 Poisson summation. After all lambda mutations are done, compute 1X2, goal lines, distribution, BTTS, and predicted score from the same final pair.
+- Keep the post-Poisson calibration deltas (`homeBiasAdj`, `drawCalAdj`, etc.) where they are — those are probability-space corrections, not lambda corrections.
 
-Two clear failures:
-- **Predicted draws hit 16.7%** — when the model commits to a draw, it's wrong 5 out of 6 times. Predicted-goal totals on those: 2.45 avg expected vs. 3.86 actual when away wins, vs. 3.43 when home wins. The "draw" label is firing on matches that turn out to be high-scoring blowouts. The xG model is failing to detect mismatches.
-- **Predicted away wins hit only 43.9%** — and 16 of 66 turn into draws (avg actual goals 1.75 vs predicted 3.12). Translation: when xG slightly favors the away side, the actual game is *defensive and low-scoring* and ends 1-1.
+### 6. P2 — Don't freeze on first football-intelligence run
 
-Both failures point to the same gap: **the model can't see in-match context** (lineup strength, injury impact, motivation, weather, ref). Without those, two fixtures with identical xG profiles are treated identically, even when one is a relegation 6-pointer and the other is a dead-rubber end-of-season game.
+`supabase/functions/football-intelligence/index.ts` ~line 358:
+- Only set `frozen_at` when we are within T-2h of kickoff (mirroring the rule we already use in `enrich-match-context`). Earlier runs should leave `frozen_at = null` so later runs can pick up lineups/news.
+- Line 37 (skip-if-frozen): keep, but it's now safe because we only freeze at T-2h.
 
-## Is the AI actually learning?
+### 7. P2 — Hide ops triggers from public pages
 
-**Yes, but slowly and with the wrong leverage:**
+- `src/pages/Index.tsx` (line ~42), `src/pages/Accuracy.tsx` (line ~239), `src/components/MLReadinessPanel.tsx` (line ~67): wrap any button that invokes `auto-sync`, `backfill-*`, `compute-model-performance`, `batch-*` behind a check `subscription?.tier === 'admin'` (or a new `is_admin` flag — simplest: gate by a hardcoded admin user_id list in a shared helper, since this app has no roles table yet).
+- Note for the user: a proper `user_roles` table is the right long-term fix; for now we just hide the buttons. Calling the functions directly still works for service-role callers.
 
-- v12 model holds **15 league-specific lambda shifts**, **2 shape-conditional draw calibrations**, **6 confidence bucket corrections**, **3 error-type weights**. All flow into every new prediction (verified in feature_snapshot dump above).
-- 7-day holdout Brier validation: v12 improved 0.0175 vs. v11. Real signal.
-- BUT: every weight learned so far is a **post-hoc calibration on outputs**, not a new input feature. Learning to say "Eredivisie home goals -0.184" is helpful but it's polishing a model that's blind. You can't calibrate your way out of missing data.
+---
 
-## What it actually needs to get past 42% accuracy
+## Verification (after deploy)
 
-Ranked by expected lift if the existing pipelines were filled:
+- `select count(*) from predictions p join matches m on m.id=p.match_id where p.training_only=true and (p.feature_snapshot->>'as_of')::timestamptz >= m.match_date` → 0
+- Pick any prediction row, run `generate-statistical-prediction` again with `as_of = match_date - 1 day`: the resulting `home_win + draw + away_win` ≈ 1, and `expected_goals_home/away` matches the lambdas used for `goal_lines`.
+- `select count(*) from predictions where update_reason='initial' and quality_score < 0.3` (i.e. sync-written fallbacks) stops growing.
+- A completed match opened in `MatchDetail` does **not** generate a new `prediction_logs` row.
+- `compute-features` invoked with `{match_id}` returns within ~1s and writes exactly one `match_features` row.
 
-1. **Confirmed lineups at T-60min** (currently 0%). A missing key striker or starting GK swings xG by 0.4–0.7 goals — bigger than any learned league shift. The `match_enrichment.lineup_confirmed` flag exists; the scraper needs to be wired up or use API-Football's `/fixtures/lineups` endpoint at T-60.
-2. **Live odds & odds movement** (currently 4–29%). Sharp money moves before kickoff are the single most predictive single signal in football betting research. We have the `odds` table; we just don't poll it.
-3. **Injury / suspension list** (currently 7.5% via match_context). API-Football has `/injuries` per fixture. Each missing first-team player is roughly worth 0.15 goals in xG.
-4. **Referee profile** (currently 0.2%). `referees` table exists with `yellow_avg`, `foul_avg`, `penalty_avg` — populated but not joined into match_enrichment for predictions.
-5. **Weather at venue** (currently 0%). Wind > 25 km/h or rain reduces total goals by ~0.3. Cheap API call.
-6. **Match-importance / motivation** (partially exists as `match_importance` numeric). Cup finals, relegation 6-pointers, and dead rubbers behave differently — this is set on most matches but isn't bucketed cleanly.
+## Out of scope (future plan)
 
-Once these inputs exist, the calibration loop will have something meaningful to learn from. **Calibration on a blind model is what we have today.** Calibration on a sighted model is where the real accuracy gains live.
-
-## Suggested fix sequence (no code yet — just the plan)
-
-| Phase | Change | Expected lift |
-|---|---|---|
-| P1 | Wire `enrich-match-context` to API-Football `/fixtures/lineups` at T-60 → set `lineup_confirmed`, capture starting XI strength | +3–5% accuracy on imminent matches |
-| P2 | Backfill `odds` table via API-Football `/odds` (avg + opening + closing) for next-7-days fixtures every 6h | +2–4% accuracy, unlocks value-bet card |
-| P3 | Pull `/injuries` into `match_context.injuries_home/away` daily; deduct 0.1–0.3 from xG per missing first-team player | +2–3% accuracy |
-| P4 | Join `referees.yellow_avg/foul_avg` into `match_enrichment.referee_cards_avg` at fixture creation | smaller, but improves O/U calibration |
-| P5 | Add weather fetch (free OpenWeather/Open-Meteo) at T-2h → populate `weather_impact` | +1–2% on outdoor matches |
-| P6 | Once inputs exist, expand `compute-model-performance` to learn weights for these new features (right now they're not in the feature space) | compounding |
-
-Realistic ceiling once P1–P3 are live: **48–52% outcome accuracy, Brier ≈ 0.55**. Industry benchmarks for purely statistical models without insider info top out around 54%, so this would put GoalGPT in the credible zone.
-
-## What I'd like to confirm before building
-
-1. Should I start with **P1 (lineups)** since it has the biggest single lift and we already poll API-Football?
-2. Should I keep the current `compute-model-performance` cadence or move it to its own daily cron (per the previous audit)?
-
-If you say "go" I'll start with P1+P2+P3 in parallel since they're independent fetches into independent tables.
+- `prediction_runs` immutable history + `current_predictions` view.
+- True point-in-time replay for `compute-model-performance` validation.
+- Dixon-Coles / bivariate Poisson upgrade and bookmaker-prior blending.
+- Repo split into `model-core` / `model-serving` / `model-training` packages.
+- Proper `user_roles` table + RLS-enforced admin separation.

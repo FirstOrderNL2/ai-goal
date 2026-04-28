@@ -12,6 +12,8 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MLReadinessPanel } from "@/components/MLReadinessPanel";
 import { PipelineHealthCard } from "@/components/PipelineHealthCard";
+import { useAuth } from "@/hooks/useAuth";
+import { isAdmin } from "@/lib/is-admin";
 
 function usePredictionReviews() {
   return useQuery({
@@ -84,6 +86,8 @@ export default function Accuracy() {
   const { data: publishStats } = usePredictionPublishStats();
   const [computing, setComputing] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const { user } = useAuth();
+  const admin = isAdmin(user);
 
   // Local computation from completed matches (fallback when no model_performance row)
   const stats = completed
@@ -291,14 +295,18 @@ export default function Accuracy() {
                 )}
               </Badge>
             )}
-            <button onClick={runBatchReview} disabled={reviewing}
-              className="text-xs px-3 py-1.5 rounded-md bg-muted text-muted-foreground hover:bg-muted/80 disabled:opacity-50">
-              {reviewing ? "Reviewing…" : "Batch Review"}
-            </button>
-            <button onClick={runCompute} disabled={computing}
-              className="text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
-              {computing ? "Computing…" : "Refresh Metrics"}
-            </button>
+            {admin && (
+              <>
+                <button onClick={runBatchReview} disabled={reviewing}
+                  className="text-xs px-3 py-1.5 rounded-md bg-muted text-muted-foreground hover:bg-muted/80 disabled:opacity-50">
+                  {reviewing ? "Reviewing…" : "Batch Review"}
+                </button>
+                <button onClick={runCompute} disabled={computing}
+                  className="text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                  {computing ? "Computing…" : "Refresh Metrics"}
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -357,8 +365,8 @@ export default function Accuracy() {
             {/* Pipeline Health — generation/recheck reliability */}
             <PipelineHealthCard />
 
-            {/* ML Readiness — Phase 1–5 data foundation */}
-            <MLReadinessPanel />
+            {/* ML Readiness — Phase 1–5 data foundation (admin-only ops) */}
+            {admin && <MLReadinessPanel />}
 
             {/* Model Version Header */}
             {perf?.model_version != null && (() => {
