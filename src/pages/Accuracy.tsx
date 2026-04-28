@@ -366,6 +366,9 @@ export default function Accuracy() {
             {/* Pipeline Health — generation/recheck reliability */}
             <PipelineHealthCard />
 
+            {/* Phase 3.5 — Learning loop self-feed counts */}
+            <LearningPipelineCard />
+
             {/* ML Readiness — Phase 1–5 data foundation (admin-only ops) */}
             {admin && <MLReadinessPanel />}
 
