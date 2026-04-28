@@ -219,7 +219,7 @@ Deno.serve(async (req) => {
         await fetch(`${supabaseUrl}/functions/v1/compute-features`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
-          body: JSON.stringify({ match_id }),
+          body: JSON.stringify({ match_id, as_of: cutoffIso }),
           signal: ctrl.signal,
         }).catch(() => {});
         clearTimeout(t);
