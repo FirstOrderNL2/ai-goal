@@ -14,6 +14,45 @@ export type Database = {
   }
   public: {
     Tables: {
+      calibration_events: {
+        Row: {
+          actual_outcome: boolean
+          bucket: string
+          created_at: string
+          id: string
+          league: string | null
+          market: string
+          match_id: string
+          model_version: string
+          predicted_probability: number
+          prediction_run_id: string
+        }
+        Insert: {
+          actual_outcome: boolean
+          bucket: string
+          created_at?: string
+          id?: string
+          league?: string | null
+          market: string
+          match_id: string
+          model_version?: string
+          predicted_probability: number
+          prediction_run_id: string
+        }
+        Update: {
+          actual_outcome?: boolean
+          bucket?: string
+          created_at?: string
+          id?: string
+          league?: string | null
+          market?: string
+          match_id?: string
+          model_version?: string
+          predicted_probability?: number
+          prediction_run_id?: string
+        }
+        Relationships: []
+      }
       comment_likes: {
         Row: {
           comment_id: string
@@ -1133,6 +1172,63 @@ export type Database = {
           team_id?: string
           updated_at?: string | null
           yellow_avg?: number | null
+        }
+        Relationships: []
+      }
+      team_rating_history: {
+        Row: {
+          attack_after: number
+          attack_before: number
+          defense_after: number
+          defense_before: number
+          goals_against: number
+          goals_for: number
+          home_adv_context: number | null
+          id: string
+          is_home: boolean
+          k_factor: number
+          league: string | null
+          match_id: string
+          rating_winloss_after: number
+          rating_winloss_before: number
+          team_id: string
+          updated_at: string
+        }
+        Insert: {
+          attack_after?: number
+          attack_before?: number
+          defense_after?: number
+          defense_before?: number
+          goals_against: number
+          goals_for: number
+          home_adv_context?: number | null
+          id?: string
+          is_home: boolean
+          k_factor?: number
+          league?: string | null
+          match_id: string
+          rating_winloss_after?: number
+          rating_winloss_before?: number
+          team_id: string
+          updated_at?: string
+        }
+        Update: {
+          attack_after?: number
+          attack_before?: number
+          defense_after?: number
+          defense_before?: number
+          goals_against?: number
+          goals_for?: number
+          home_adv_context?: number | null
+          id?: string
+          is_home?: boolean
+          k_factor?: number
+          league?: string | null
+          match_id?: string
+          rating_winloss_after?: number
+          rating_winloss_before?: number
+          team_id?: string
+          updated_at?: string
         }
         Relationships: []
       }
