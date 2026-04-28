@@ -16,46 +16,50 @@ export function AdminRoute({ children }: { children: React.ReactNode }) {
   const prefix =
     lang && supportedLangs.includes(lang as SupportedLang) ? `/${lang}` : "/en";
 
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const [adminCheck, setAdminCheck] = useState<{ userId: string | null; isAdmin: boolean } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     if (authLoading) {
-      setIsAdmin(null);
+      setAdminCheck(null);
       return () => { cancelled = true; };
     }
 
     (async () => {
       if (!session?.user) {
-        if (!cancelled) setIsAdmin(false);
+        if (!cancelled) setAdminCheck({ userId: null, isAdmin: false });
         return;
       }
 
-      setIsAdmin(null);
+      const userId = session.user.id;
+      setAdminCheck(null);
 
       // Query the admin_users table directly. RLS allows admins to view it,
       // so a returned row proves admin status; no row = not admin.
       const { data, error } = await supabase
         .from("admin_users")
         .select("id")
-        .eq("user_id", session.user.id)
+        .eq("user_id", userId)
         .maybeSingle();
 
-      if (!cancelled) setIsAdmin(!error && !!data);
+      if (!cancelled) setAdminCheck({ userId, isAdmin: !error && !!data });
     })();
 
     return () => { cancelled = true; };
   }, [authLoading, session?.user?.id]);
 
-  if (authLoading || isAdmin === null) {
+  const userId = session?.user?.id ?? null;
+  const adminCheckIsCurrent = adminCheck?.userId === userId;
+
+  if (authLoading || !adminCheckIsCurrent) {
     return <div className="min-h-screen bg-background" />;
   }
   if (!session) {
     const currentPath = location.pathname + location.search;
     return <Navigate to={`${prefix}/login?redirect=${encodeURIComponent(currentPath)}`} replace />;
   }
-  if (!isAdmin) {
+  if (!adminCheck.isAdmin) {
     return <Navigate to={`${prefix}/dashboard`} replace />;
   }
   return <>{children}</>;
