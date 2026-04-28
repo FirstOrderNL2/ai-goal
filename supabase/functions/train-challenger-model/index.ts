@@ -179,20 +179,21 @@ Deno.serve(async (req) => {
     });
   }
 
+  const SHADOW_THRESHOLD = 200; // Phase 3.5: keep shadow-only until ≥ 200 labeled examples
   await supabase.from("training_jobs").update({ status: "running", started_at: new Date().toISOString() }).eq("id", job.id);
 
   try {
     // Pull training examples ordered by cutoff (oldest first)
     const { data: rowsData, error: rowsErr } = await supabase
       .from("training_examples")
-      .select("prediction_cutoff_ts, feature_snapshot, label_snapshot")
+      .select("prediction_cutoff_ts, feature_snapshot, label_snapshot, league")
       .eq("model_family", job.model_family)
       .eq("dataset_version", job.dataset_version)
       .order("prediction_cutoff_ts", { ascending: true })
       .limit(MAX_ROWS);
 
     if (rowsErr) throw rowsErr;
-    const rows = (rowsData ?? []) as Example[];
+    const rows = (rowsData ?? []) as (Example & { league?: string | null })[];
     if (rows.length < 100) {
       throw new Error(`not enough training examples: ${rows.length} (need ≥ 100)`);
     }
@@ -214,22 +215,112 @@ Deno.serve(async (req) => {
     // Train challenger
     const X = train.map(featurize);
     const y: Outcome[] = train.map((r) => r.label_snapshot.outcome);
-    const challenger = trainLogReg(X, y);
+    const trained = trainLogRegWithWeights(X, y);
+    const challenger = trained.predictor;
 
-    // Champion = baseline Poisson alone (production proxy until Phase 4)
+    // Evaluate on holdout (overall + recent 25% slice + per-league)
     const championMetrics = evaluateOn(holdout, baselinePredict, baselineGoals);
     const challengerMetrics = evaluateOn(
       holdout,
       (ex) => challenger(featurize(ex)),
-      baselineGoals, // challenger doesn't predict goals yet — Phase 4
+      baselineGoals,
     );
     const valMetrics = evaluateOn(val, (ex) => challenger(featurize(ex)), baselineGoals);
 
-    // Promotion gate
+    // Recent holdout slice (last 25% by time)
+    const recentStart = Math.floor(holdout.length * 0.75);
+    const recent = holdout.slice(recentStart);
+    const recentChallenger = evaluateOn(recent, (ex) => challenger(featurize(ex)), baselineGoals);
+    const recentChampion = evaluateOn(recent, baselinePredict, baselineGoals);
+
+    // Per-league (top 5 by holdout volume)
+    const leagueGroups = new Map<string, typeof holdout>();
+    for (const r of holdout) {
+      const k = String(r.league ?? "unknown");
+      if (!leagueGroups.has(k)) leagueGroups.set(k, []);
+      leagueGroups.get(k)!.push(r);
+    }
+    const perLeague = [...leagueGroups.entries()]
+      .sort((a, b) => b[1].length - a[1].length)
+      .slice(0, 5)
+      .map(([league, group]) => ({
+        league,
+        n: group.length,
+        challenger: { log_loss: evaluateOn(group, (ex) => challenger(featurize(ex)), baselineGoals).log_loss },
+        champion: { log_loss: evaluateOn(group, baselinePredict, baselineGoals).log_loss },
+      }));
+
+    const totalLabeled = rows.length;
+    const inShadowMode = totalLabeled < SHADOW_THRESHOLD;
+
+    // Phase 3.5: keep_champion always while in shadow mode
     const beatsLL = challengerMetrics.log_loss < championMetrics.log_loss;
     const beatsBrier = challengerMetrics.brier < championMetrics.brier;
     const eceOk = challengerMetrics.ece <= championMetrics.ece + 0.01;
-    const decision = (beatsLL && beatsBrier && eceOk) ? "promote" : "keep_champion";
+    const naturalDecision = (beatsLL && beatsBrier && eceOk) ? "promote" : "keep_champion";
+    const decision = inShadowMode ? "keep_champion" : naturalDecision;
+    const shadowNote = inShadowMode ? `shadow_mode: ${totalLabeled} < ${SHADOW_THRESHOLD} labeled examples` : "";
+
+    const metricsJson = {
+      overall: challengerMetrics,
+      recent_holdout: recentChallenger,
+      val: valMetrics,
+      per_league: perLeague,
+    };
+    const championMetricsJson = {
+      overall: championMetrics,
+      recent_holdout: recentChampion,
+    };
+
+    // Phase 4: persist model artifact in shadow status
+    const { data: artifact, error: artErr } = await supabase
+      .from("model_artifacts")
+      .insert({
+        model_family: job.model_family,
+        feature_version: "v1",
+        dataset_version: job.dataset_version,
+        hyperparameters: { lr: 0.05, epochs: 60, l2: 1e-4, batch: 32, feature_keys: FEATURE_KEYS },
+        weights: { W: trained.W, b: trained.b, feature_keys: FEATURE_KEYS },
+        train_window_start: train[0].prediction_cutoff_ts,
+        train_window_end: trainMaxTs,
+        validation_window_start: val[0]?.prediction_cutoff_ts ?? null,
+        validation_window_end: val[val.length - 1]?.prediction_cutoff_ts ?? null,
+        holdout_window_start: holdoutMinTs,
+        holdout_window_end: holdout[holdout.length - 1].prediction_cutoff_ts,
+        n_train: train.length,
+        n_val: val.length,
+        n_holdout: holdout.length,
+        metrics_json: metricsJson,
+        status: "shadow",
+        created_by_job_id: job.id,
+        notes: shadowNote || `auto-trained job ${job.id}`,
+      })
+      .select("id")
+      .single();
+    if (artErr) console.error("[model_artifacts] insert failed:", artErr.message);
+
+    // Phase 4: log an evaluation_runs row vs current champion (if any)
+    const { data: currentChampion } = await supabase
+      .from("model_artifacts")
+      .select("id")
+      .eq("model_family", job.model_family)
+      .eq("status", "champion")
+      .maybeSingle();
+
+    if (artifact) {
+      await supabase.from("evaluation_runs").insert({
+        artifact_id: artifact.id,
+        champion_artifact_id: currentChampion?.id ?? null,
+        window_start: holdoutMinTs,
+        window_end: holdout[holdout.length - 1].prediction_cutoff_ts,
+        n_examples: holdout.length,
+        metrics_challenger: metricsJson,
+        metrics_champion: championMetricsJson,
+        per_league_json: { entries: perLeague },
+        passes_gate: !inShadowMode && naturalDecision === "promote",
+        gate_reasons: inShadowMode ? [shadowNote] : (naturalDecision === "promote" ? [] : ["overall_metrics_not_better"]),
+      });
+    }
 
     await supabase.from("training_jobs").update({
       status: "succeeded",
@@ -240,16 +331,18 @@ Deno.serve(async (req) => {
       holdout_window_end: holdout[holdout.length - 1].prediction_cutoff_ts,
       n_train: train.length,
       n_holdout: holdout.length,
-      metrics_json: { holdout: challengerMetrics, val: valMetrics },
-      champion_metrics_json: { holdout: championMetrics },
+      metrics_json: metricsJson,
+      champion_metrics_json: championMetricsJson,
       decision,
-      notes: `${job.notes ?? ""} | ll: ${challengerMetrics.log_loss.toFixed(4)} vs ${championMetrics.log_loss.toFixed(4)} | brier: ${challengerMetrics.brier.toFixed(4)} vs ${championMetrics.brier.toFixed(4)}`,
+      notes: `${job.notes ?? ""} | ${shadowNote} | ll: ${challengerMetrics.log_loss.toFixed(4)} vs ${championMetrics.log_loss.toFixed(4)} | brier: ${challengerMetrics.brier.toFixed(4)} vs ${championMetrics.brier.toFixed(4)} | artifact: ${artifact?.id ?? "n/a"}`,
     }).eq("id", job.id);
 
     return new Response(JSON.stringify({
       success: true,
       job_id: job.id,
+      artifact_id: artifact?.id ?? null,
       decision,
+      shadow_mode: inShadowMode,
       challenger: challengerMetrics,
       champion: championMetrics,
       n_train: train.length,
