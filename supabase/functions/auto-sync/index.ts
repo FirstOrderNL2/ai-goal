@@ -229,7 +229,13 @@ Deno.serve(async (req) => {
     errors.push(`match-labels: ${(e as Error).message}`);
   }
 
-  // Step 5: Compute features — full, pre_match, and live modes
+  // Step 4d: Phase 2 — Online learning state updates after match_labels exist
+  // (Elo + attack/defense ratings, then calibration events for any pre-match runs.)
+  if (effectiveMode === "full" || effectiveMode === "idle") {
+    await callFunction("update-online-ratings", { lookback_days: 30, limit: 200 });
+    await callFunction("append-calibration-events", { lookback_days: 30, limit: 500 });
+  }
+
   if (effectiveMode === "full" || effectiveMode === "pre_match" || effectiveMode === "live") {
     await callFunction("compute-features");
   }
